@@ -100,5 +100,45 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(data.job.printState, PrintState.Completed);
   });
 
+  await t.test('5. Payment Webhook confirms pending job & triggers queue state', async () => {
+    const samplePdfBase64 = Buffer.from('%PDF-1.4 payment test').toString('base64');
+    
+    // Create job with autoApprove=false
+    const createRes = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: createdPrinterId,
+        fileName: 'invoice.pdf',
+        fileBase64: samplePdfBase64,
+        pageCount: 2,
+        copies: 1,
+        isColor: true,
+      }),
+    });
+
+    assert.strictEqual(createRes.status, 201);
+    const createData = (await createRes.json()) as any;
+    const pendingJobId = createData.job.id;
+    assert.strictEqual(createData.job.printState, PrintState.AwaitingPayment);
+
+    // Call Payment Webhook
+    const webhookRes = await fetch(`${baseUrl}/api/payments/webhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        paymentId: 'pay_9988776655',
+        jobId: pendingJobId,
+        amountInCents: 2000,
+        signature: 'valid_mock_signature',
+      }),
+    });
+
+    assert.strictEqual(webhookRes.status, 200);
+    const webhookData = (await webhookRes.json()) as any;
+    assert.strictEqual(webhookData.success, true);
+    assert.strictEqual(webhookData.job.printState, PrintState.Queued);
+  });
+
   server.close();
 });

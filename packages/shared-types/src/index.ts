@@ -126,3 +126,33 @@ export interface AgentUpdateStatusDto {
   printState: PrintState;
   errorMessage?: string;
 }
+
+/**
+ * DTO: Payment Webhook Input
+ */
+export interface PaymentWebhookDto {
+  paymentId: string;
+  jobId: string;
+  amountInCents: number;
+  signature: string;
+}
+
+/**
+ * DTO: WebSocket Event Messages for Agent
+ */
+export interface AgentWsMessage {
+  type: 'PING' | 'PONG' | 'JOB_QUEUED' | 'AUTH_SUCCESS' | 'AUTH_ERROR';
+  payload?: any;
+}
+
+export interface JobQueuedEvent {
+  jobId: string;
+  printerId: string;
+  fileName: string;
+  fileUrl: string;
+  fileChecksum: string;
+  pageCount: number;
+  copies: number;
+  isColor: boolean;
+}
+

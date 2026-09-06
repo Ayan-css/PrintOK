@@ -33,6 +33,9 @@ public class PrintAgentWorker : BackgroundService
     {
         _logger.LogInformation("PrintOk Windows Print Agent started. Polling interval: {Interval}ms", _pollIntervalMs);
 
+        // Start background WebSocket push listener with auto-reconnect
+        _ = Task.Run(() => ConnectAndListenWebSocketAsync(stoppingToken), stoppingToken);
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -49,6 +52,49 @@ public class PrintAgentWorker : BackgroundService
             }
 
             await Task.Delay(_pollIntervalMs, stoppingToken);
+        }
+    }
+
+    private async Task ConnectAndListenWebSocketAsync(CancellationToken cancellationToken)
+    {
+        int backoffMs = 1000;
+        var baseUri = _httpClient.BaseAddress?.ToString() ?? "http://localhost:4000";
+        var wsUri = baseUri.Replace("http://", "ws://").Replace("https://", "wss://").TrimEnd('/') + $"/ws/agent?apiKey={_apiKey}";
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                using var ws = new System.Net.WebSockets.ClientWebSocket();
+                _logger.LogInformation("Connecting WebSocket push channel to {Uri}...", wsUri);
+                await ws.ConnectAsync(new Uri(wsUri), cancellationToken);
+                _logger.LogInformation("WebSocket push channel connected.");
+                backoffMs = 1000; // Reset backoff on successful connection
+
+                var buffer = new byte[4096];
+                while (ws.State == System.Net.WebSockets.WebSocketState.Open && !cancellationToken.IsCancellationRequested)
+                {
+                    var result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken);
+                    if (result.MessageType == System.Net.WebSockets.WebSocketMessageType.Close)
+                    {
+                        await ws.CloseAsync(System.Net.WebSockets.WebSocketCloseStatus.NormalClosure, "Closing", cancellationToken);
+                        break;
+                    }
+
+                    string messageJson = System.Text.Encoding.UTF8.GetString(buffer, 0, result.Count);
+                    if (messageJson.Contains("JOB_QUEUED"))
+                    {
+                        _logger.LogInformation("Received real-time JOB_QUEUED push notification! Triggering immediate job processing...");
+                        await PollAndProcessJobsAsync(cancellationToken);
+                    }
+                }
+            }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogWarning("WebSocket push connection lost ({Message}). Reconnecting in {Backoff}ms...", ex.Message, backoffMs);
+                await Task.Delay(backoffMs, cancellationToken);
+                backoffMs = Math.Min(backoffMs * 2, 30000); // Max backoff 30 seconds
+            }
         }
     }
 

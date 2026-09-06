@@ -9,10 +9,19 @@ export interface IStorageProvider {
   createPrinter(shopId: string, printerName: string, qrTargetUrl: string, qrCodeDataUrl: string): Promise<Printer>;
   getPrinter(id: string): Promise<Printer | undefined>;
   getPrinterByApiKey(apiKey: string): Promise<Printer | undefined>;
-  createPrintJob(printerId: string, fileName: string, fileBase64: string, pageCount: number, copies: number, isColor: boolean): Promise<PrintJob>;
+  createPrintJob(
+    printerId: string,
+    fileName: string,
+    fileBase64: string,
+    pageCount: number,
+    copies: number,
+    isColor: boolean,
+    autoApprovePayment?: boolean
+  ): Promise<PrintJob>;
   getPrintJob(id: string): Promise<PrintJob | undefined>;
   getPendingJobsForPrinter(printerId: string): Promise<PrintJob[]>;
   updateJobPrintState(id: string, printState: PrintState, errorMessage?: string): Promise<PrintJob | undefined>;
+  confirmPaymentAndQueueJob(id: string): Promise<PrintJob | undefined>;
 }
 
 export class MemoryStorage implements IStorageProvider {
@@ -82,7 +91,8 @@ export class MemoryStorage implements IStorageProvider {
     fileBase64: string,
     pageCount: number,
     copies: number,
-    isColor: boolean
+    isColor: boolean,
+    autoApprovePayment = true
   ): Promise<PrintJob> {
     const id = `job_${crypto.randomBytes(6).toString('hex')}`;
     const fileChecksum = this.calculateChecksum(fileBase64);
@@ -103,12 +113,23 @@ export class MemoryStorage implements IStorageProvider {
       copies,
       isColor,
       totalPriceInCents,
-      paymentState: PaymentState.Paid,
-      printState: PrintState.Queued,
+      paymentState: autoApprovePayment ? PaymentState.Paid : PaymentState.Pending,
+      printState: autoApprovePayment ? PrintState.Queued : PrintState.AwaitingPayment,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
+    this.printJobs.set(id, job);
+    return job;
+  }
+
+  public async confirmPaymentAndQueueJob(id: string): Promise<PrintJob | undefined> {
+    const job = this.printJobs.get(id);
+    if (!job) return undefined;
+
+    job.paymentState = PaymentState.Paid;
+    job.printState = PrintState.Queued;
+    job.updatedAt = new Date().toISOString();
     this.printJobs.set(id, job);
     return job;
   }

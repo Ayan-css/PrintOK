@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "build": "echo 'customer-web: static app, no build step required'",
     "dev": "node server.js",
     "start": "node server.js"
   },

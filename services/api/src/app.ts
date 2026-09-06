@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import { IStorageProvider, MemoryStorage } from './storage';
 import { generateQrCodeDataUrl } from './qr';
+import { AgentWebSocketServer } from './ws';
 import {
   RegisterShopDto,
   RegisterShopResponse,
@@ -9,10 +10,15 @@ import {
   CreatePrintJobResponse,
   AgentPollResponse,
   AgentUpdateStatusDto,
+  PaymentWebhookDto,
   PrintState,
+  PaymentState,
 } from '@printok/shared-types';
 
-export function createApp(storage: IStorageProvider = new MemoryStorage()) {
+export function createApp(
+  storage: IStorageProvider = new MemoryStorage(),
+  wsServer?: AgentWebSocketServer
+) {
   const app = express();
 
   app.use(cors());
@@ -72,6 +78,7 @@ export function createApp(storage: IStorageProvider = new MemoryStorage()) {
   app.post('/api/print-jobs', async (req: Request, res: Response) => {
     try {
       const { printerId, fileName, fileBase64, pageCount, copies, isColor } = req.body as CreatePrintJobDto;
+      const autoApprove = req.query.autoApprove !== 'false';
 
       if (!printerId || !fileName || !fileBase64) {
         return res.status(400).json({ error: 'printerId, fileName, and fileBase64 are required.' });
@@ -88,11 +95,54 @@ export function createApp(storage: IStorageProvider = new MemoryStorage()) {
         fileBase64,
         pageCount || 1,
         copies || 1,
-        !!isColor
+        !!isColor,
+        autoApprove
       );
+
+      // If job is immediately queued, push notification to active WebSocket agent
+      if (job.printState === PrintState.Queued && wsServer) {
+        wsServer.notifyJobQueued(job);
+      }
 
       const response: CreatePrintJobResponse = { job };
       return res.status(201).json(response);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Payment Webhook Endpoint (Simulating Razorpay/UPI gateway)
+   */
+  app.post('/api/payments/webhook', async (req: Request, res: Response) => {
+    try {
+      const { paymentId, jobId, amountInCents, signature } = req.body as PaymentWebhookDto;
+
+      if (!paymentId || !jobId || !signature) {
+        return res.status(400).json({ error: 'paymentId, jobId, and signature are required.' });
+      }
+
+      const job = await storage.getPrintJob(jobId);
+      if (!job) {
+        return res.status(404).json({ error: 'Print job not found.' });
+      }
+
+      // Idempotency: If job is already paid, return existing status
+      if (job.paymentState === PaymentState.Paid) {
+        return res.json({ success: true, message: 'Payment already processed.', job });
+      }
+
+      const updatedJob = await storage.confirmPaymentAndQueueJob(jobId);
+      if (!updatedJob) {
+        return res.status(500).json({ error: 'Failed to update job status.' });
+      }
+
+      // Instant push notification over WebSocket
+      if (wsServer) {
+        wsServer.notifyJobQueued(updatedJob);
+      }
+
+      return res.json({ success: true, message: 'Payment confirmed & job queued.', job: updatedJob });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -173,3 +223,4 @@ export function createApp(storage: IStorageProvider = new MemoryStorage()) {
 
   return app;
 }
+
