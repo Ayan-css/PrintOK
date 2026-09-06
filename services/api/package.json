@@ -1,0 +1,22 @@
+{
+  "name": "@printok/api",
+  "version": "0.1.0",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsc -w",
+    "test": "node --test dist/tests/api.test.js"
+  },
+  "dependencies": {
+    "@printok/shared-types": "file:../../packages/shared-types",
+    "express": "^4.19.2",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

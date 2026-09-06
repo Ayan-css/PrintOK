@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PrintOk — Instant Mobile Printing</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="mobile-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="logo-icon">🖨️</div>
+        <div>
+          <h1>PrintOk</h1>
+          <p class="tagline">Hardware-Free Printing</p>
+        </div>
+      </div>
+      <div class="shop-badge" id="shopBadge">
+        <span class="pulse-dot"></span>
+        <span id="shopNameDisplay">Connecting...</span>
+      </div>
+    </header>
+
+    <!-- Main Card -->
+    <main class="main-content">
+      <!-- Upload Zone -->
+      <section class="card upload-card" id="uploadSection">
+        <h2 class="section-title">Upload Document</h2>
+        <div class="drop-zone" id="dropZone">
+          <input type="file" id="fileInput" accept=".pdf,application/pdf" hidden>
+          <div class="upload-icon">📄</div>
+          <p class="upload-prompt">Tap to select or drop a <strong>PDF document</strong></p>
+          <p class="upload-hint">Supported formats: PDF (Max 25MB)</p>
+          <div class="selected-file-pill hidden" id="filePill">
+            <span class="file-icon">📑</span>
+            <span class="file-name" id="fileNameText">document.pdf</span>
+            <button class="remove-btn" id="removeFileBtn">✕</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Print Settings -->
+      <section class="card settings-card" id="settingsSection">
+        <h2 class="section-title">Print Options</h2>
+        
+        <div class="setting-row">
+          <label class="setting-label">
+            <span>Color Mode</span>
+            <small>Black & White or Full Color</small>
+          </label>
+          <div class="segmented-control">
+            <button class="segment active" id="bwBtn" data-color="false">B&W (₹2/pg)</button>
+            <button class="segment" id="colorBtn" data-color="true">Color (₹10/pg)</button>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <label class="setting-label">
+            <span>Copies</span>
+            <small>Number of physical copies</small>
+          </label>
+          <div class="counter-control">
+            <button class="counter-btn" id="minusCopyBtn">-</button>
+            <span class="counter-val" id="copiesVal">1</span>
+            <button class="counter-btn" id="plusCopyBtn">+</button>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <label class="setting-label">
+            <span>Estimated Pages</span>
+          </label>
+          <div class="page-input-wrapper">
+            <input type="number" id="pageCountInput" min="1" value="1" class="page-input">
+            <span class="unit">pages</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Payment & Action Bar -->
+      <section class="action-section">
+        <div class="price-summary">
+          <span>Total Price</span>
+          <span class="price-val" id="totalPriceText">₹2.00</span>
+        </div>
+        <button class="pay-btn" id="payPrintBtn" disabled>
+          <span>Pay & Print Now</span>
+          <span class="arrow">→</span>
+        </button>
+      </section>
+
+      <!-- Live Job Tracker (Overlay / Card) -->
+      <section class="card tracker-card hidden" id="trackerSection">
+        <div class="tracker-header">
+          <span class="tracker-title">Print Status</span>
+          <span class="status-badge" id="statusBadge">Queued</span>
+        </div>
+        <div class="progress-bar-container">
+          <div class="progress-bar-fill" id="progressFill" style="width: 25%;"></div>
+        </div>
+        <div class="status-steps">
+          <div class="step active" id="step1">1. Queued</div>
+          <div class="step" id="step2">2. Downloading</div>
+          <div class="step" id="step3">3. Printing</div>
+          <div class="step" id="step4">4. Done</div>
+        </div>
+        <p class="tracker-desc" id="trackerDesc">Your job is sent to the shop printer agent...</p>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
