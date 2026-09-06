@@ -1,0 +1,48 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Shop {
+  id         String    @id
+  name       String
+  ownerEmail String
+  createdAt  DateTime  @default(now())
+  printers   Printer[]
+}
+
+model Printer {
+  id            String     @id
+  shopId        String
+  shop          Shop       @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  printerName   String
+  qrTargetUrl   String
+  qrCodeDataUrl String
+  apiKey        String     @unique
+  status        String     @default("online")
+  createdAt     DateTime   @default(now())
+  jobs          PrintJob[]
+}
+
+model PrintJob {
+  id                String   @id
+  printerId         String
+  printer           Printer  @relation(fields: [printerId], references: [id], onDelete: Cascade)
+  fileName          String
+  s3Key             String?
+  fileUrl           String
+  fileChecksum      String
+  pageCount         Int
+  copies            Int
+  isColor           Boolean
+  totalPriceInCents Int
+  paymentState      String
+  printState        String
+  errorMessage      String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}

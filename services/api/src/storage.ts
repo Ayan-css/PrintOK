@@ -1,18 +1,31 @@
 import crypto from 'crypto';
 import { Shop, Printer, PrintJob, PaymentState, PrintState } from '@printok/shared-types';
+import { S3StorageService } from './s3Storage';
 
-export class MemoryStorage {
+export interface IStorageProvider {
+  calculateChecksum(content: string | Buffer): string;
+  createShop(name: string, ownerEmail: string): Promise<Shop>;
+  getShop(id: string): Promise<Shop | undefined>;
+  createPrinter(shopId: string, printerName: string, qrTargetUrl: string, qrCodeDataUrl: string): Promise<Printer>;
+  getPrinter(id: string): Promise<Printer | undefined>;
+  getPrinterByApiKey(apiKey: string): Promise<Printer | undefined>;
+  createPrintJob(printerId: string, fileName: string, fileBase64: string, pageCount: number, copies: number, isColor: boolean): Promise<PrintJob>;
+  getPrintJob(id: string): Promise<PrintJob | undefined>;
+  getPendingJobsForPrinter(printerId: string): Promise<PrintJob[]>;
+  updateJobPrintState(id: string, printState: PrintState, errorMessage?: string): Promise<PrintJob | undefined>;
+}
+
+export class MemoryStorage implements IStorageProvider {
   private shops = new Map<string, Shop>();
   private printers = new Map<string, Printer>();
   private printJobs = new Map<string, PrintJob>();
+  private s3Service = new S3StorageService();
 
-  // Helper: Create MD5/SHA256 checksum for PDF content verification
   public calculateChecksum(content: string | Buffer): string {
     return crypto.createHash('sha256').update(content).digest('hex');
   }
 
-  // Shop Operations
-  public createShop(name: string, ownerEmail: string): Shop {
+  public async createShop(name: string, ownerEmail: string): Promise<Shop> {
     const id = `shop_${crypto.randomBytes(6).toString('hex')}`;
     const shop: Shop = {
       id,
@@ -24,17 +37,16 @@ export class MemoryStorage {
     return shop;
   }
 
-  public getShop(id: string): Shop | undefined {
+  public async getShop(id: string): Promise<Shop | undefined> {
     return this.shops.get(id);
   }
 
-  // Printer Operations
-  public createPrinter(
+  public async createPrinter(
     shopId: string,
     printerName: string,
     qrTargetUrl: string,
     qrCodeDataUrl: string
-  ): Printer {
+  ): Promise<Printer> {
     const id = `prn_${crypto.randomBytes(6).toString('hex')}`;
     const apiKey = `prn_key_${crypto.randomBytes(16).toString('hex')}`;
     const printer: Printer = {
@@ -51,11 +63,11 @@ export class MemoryStorage {
     return printer;
   }
 
-  public getPrinter(id: string): Printer | undefined {
+  public async getPrinter(id: string): Promise<Printer | undefined> {
     return this.printers.get(id);
   }
 
-  public getPrinterByApiKey(apiKey: string): Printer | undefined {
+  public async getPrinterByApiKey(apiKey: string): Promise<Printer | undefined> {
     for (const printer of this.printers.values()) {
       if (printer.apiKey === apiKey) {
         return printer;
@@ -64,19 +76,20 @@ export class MemoryStorage {
     return undefined;
   }
 
-  // Print Job Operations
-  public createPrintJob(
+  public async createPrintJob(
     printerId: string,
     fileName: string,
     fileBase64: string,
     pageCount: number,
     copies: number,
     isColor: boolean
-  ): PrintJob {
+  ): Promise<PrintJob> {
     const id = `job_${crypto.randomBytes(6).toString('hex')}`;
     const fileChecksum = this.calculateChecksum(fileBase64);
     
-    // Simple Pricing logic: 200 cents (₹2 / $2) per BW page, 1000 cents for color page
+    // Store in S3 / Temp Storage
+    const storageResult = await this.s3Service.storeDocument(id, fileName, fileBase64);
+
     const pricePerPage = isColor ? 1000 : 200;
     const totalPriceInCents = pricePerPage * pageCount * copies;
 
@@ -84,14 +97,14 @@ export class MemoryStorage {
       id,
       printerId,
       fileName,
-      fileUrl: `data:application/pdf;base64,${fileBase64}`,
+      fileUrl: storageResult.fileUrl,
       fileChecksum,
       pageCount,
       copies,
       isColor,
       totalPriceInCents,
-      paymentState: PaymentState.Paid, // Auto-marked Paid for Milestone 1 prototype
-      printState: PrintState.Queued,   // Queued immediately after payment
+      paymentState: PaymentState.Paid,
+      printState: PrintState.Queued,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -100,11 +113,11 @@ export class MemoryStorage {
     return job;
   }
 
-  public getPrintJob(id: string): PrintJob | undefined {
+  public async getPrintJob(id: string): Promise<PrintJob | undefined> {
     return this.printJobs.get(id);
   }
 
-  public getPendingJobsForPrinter(printerId: string): PrintJob[] {
+  public async getPendingJobsForPrinter(printerId: string): Promise<PrintJob[]> {
     const pending: PrintJob[] = [];
     for (const job of this.printJobs.values()) {
       if (job.printerId === printerId && job.printState === PrintState.Queued) {
@@ -114,11 +127,11 @@ export class MemoryStorage {
     return pending;
   }
 
-  public updateJobPrintState(
+  public async updateJobPrintState(
     id: string,
     printState: PrintState,
     errorMessage?: string
-  ): PrintJob | undefined {
+  ): Promise<PrintJob | undefined> {
     const job = this.printJobs.get(id);
     if (!job) return undefined;
 
@@ -128,6 +141,13 @@ export class MemoryStorage {
       job.errorMessage = errorMessage;
     }
     this.printJobs.set(id, job);
+
+    // Privacy Cleanup: If job is Completed or Failed, delete temporary document from S3
+    if (printState === PrintState.Completed || printState === PrintState.Failed) {
+      const s3Key = `temp_docs/${job.id}_${job.fileName}`;
+      await this.s3Service.deleteDocument(s3Key);
+    }
+
     return job;
   }
 }
