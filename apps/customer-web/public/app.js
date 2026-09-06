@@ -1,133 +1,292 @@
 /**
- * PrintOk Customer Mobile Web Client Logic
+ * PrintOk Customer Mobile Web Client
+ * Milestone 4 — Neo-Brutalist UX Redesign
  */
 
 document.addEventListener('DOMContentLoaded', () => {
   const API_BASE = 'http://localhost:4000';
 
-  // State Variables
+  // ============================================================
+  //  STATE
+  // ============================================================
   let selectedFile = null;
   let fileBase64 = null;
   let isColor = false;
   let copies = 1;
   let pageCount = 1;
   let currentPrinterId = null;
+  let pollingTimer = null;
 
-  // DOM Elements
-  const shopNameDisplay = document.getElementById('shopNameDisplay');
-  const dropZone = document.getElementById('dropZone');
-  const fileInput = document.getElementById('fileInput');
-  const filePill = document.getElementById('filePill');
-  const fileNameText = document.getElementById('fileNameText');
-  const removeFileBtn = document.getElementById('removeFileBtn');
-  const bwBtn = document.getElementById('bwBtn');
-  const colorBtn = document.getElementById('colorBtn');
-  const minusCopyBtn = document.getElementById('minusCopyBtn');
-  const plusCopyBtn = document.getElementById('plusCopyBtn');
-  const copiesVal = document.getElementById('copiesVal');
-  const pageCountInput = document.getElementById('pageCountInput');
-  const totalPriceText = document.getElementById('totalPriceText');
-  const payPrintBtn = document.getElementById('payPrintBtn');
-  const trackerSection = document.getElementById('trackerSection');
-  const statusBadge = document.getElementById('statusBadge');
-  const progressFill = document.getElementById('progressFill');
-  const trackerDesc = document.getElementById('trackerDesc');
+  // ============================================================
+  //  DOM REFS
+  // ============================================================
+  const screenLanding        = document.getElementById('screenLanding');
+  const screenUpload         = document.getElementById('screenUpload');
+  const actionBar            = document.getElementById('actionBar');
+  const trackerSection       = document.getElementById('trackerSection');
 
-  // Extract Printer ID / Shop ID from URL query or path
-  const pathParts = window.location.pathname.split('/');
-  const urlParams = new URLSearchParams(window.location.search);
-  currentPrinterId = urlParams.get('printer') || (pathParts[2] ? pathParts[2] : null);
+  const shopNameDisplay      = document.getElementById('shopNameDisplay');
+  const shopNameSkeleton     = document.getElementById('shopNameSkeleton');
 
-  // Initialize Shop Metadata
-  fetchShopInfo();
+  const dropZone             = document.getElementById('dropZone');
+  const fileInput            = document.getElementById('fileInput');
+  const fileSelectedDisplay  = document.getElementById('fileSelectedDisplay');
+  const fileNameText         = document.getElementById('fileNameText');
+  const fileSizeText         = document.getElementById('fileSizeText');
+  const removeFileBtn        = document.getElementById('removeFileBtn');
+  const fileError            = document.getElementById('fileError');
 
-  async function fetchShopInfo() {
-    if (!currentPrinterId) {
-      shopNameDisplay.textContent = 'Demo Print Shop';
-      return;
+  const bwBtn                = document.getElementById('bwBtn');
+  const colorBtn             = document.getElementById('colorBtn');
+  const minusCopyBtn         = document.getElementById('minusCopyBtn');
+  const plusCopyBtn          = document.getElementById('plusCopyBtn');
+  const copiesVal            = document.getElementById('copiesVal');
+  const pageCountInput       = document.getElementById('pageCountInput');
+  const totalPriceText       = document.getElementById('totalPriceText');
+  const payPrintBtn          = document.getElementById('payPrintBtn');
+
+  const statusBadge          = document.getElementById('statusBadge');
+  const progressFill         = document.getElementById('progressFill');
+  const progressBar          = document.getElementById('progressBar');
+  const trackerMessage       = document.getElementById('trackerMessage');
+  const printAnotherBtn      = document.getElementById('printAnotherBtn');
+
+  // ============================================================
+  //  TOAST SYSTEM
+  // ============================================================
+  const toastContainer = document.getElementById('toastContainer');
+
+  function showToast(type, title, message, duration = 4000) {
+    const icons = {
+      success: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="2 8 6 12 14 4"/></svg>`,
+      warning: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 2L15 14H1L8 2z"/><line x1="8" y1="7" x2="8" y2="10"/><circle cx="8" cy="12" r="0.5" fill="currentColor"/></svg>`,
+      danger:  `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="3" x2="13" y2="13"/><line x1="13" y1="3" x2="3" y2="13"/></svg>`,
+      info:    `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><line x1="8" y1="6" x2="8" y2="6"/><line x1="8" y1="9" x2="8" y2="12"/></svg>`,
+    };
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.setAttribute('role', 'status');
+    toast.innerHTML = `
+      <div class="toast-icon" aria-hidden="true">${icons[type] || icons.info}</div>
+      <div class="toast-body">
+        <div class="toast-title">${title}</div>
+        ${message ? `<div class="toast-msg">${message}</div>` : ''}
+      </div>
+      <button class="toast-close" aria-label="Dismiss notification" type="button">&times;</button>
+    `;
+
+    toast.querySelector('.toast-close').addEventListener('click', () => dismissToast(toast));
+    toastContainer.appendChild(toast);
+
+    const timer = setTimeout(() => dismissToast(toast), duration);
+    toast._timer = timer;
+  }
+
+  function dismissToast(toast) {
+    clearTimeout(toast._timer);
+    toast.classList.add('toast-out');
+    toast.addEventListener('animationend', () => toast.remove(), { once: true });
+  }
+
+  // ============================================================
+  //  SCREEN / VIEW STATE MANAGER
+  // ============================================================
+  function showScreen(screen) {
+    screenLanding.hidden = true;
+    screenUpload.hidden  = true;
+    actionBar.hidden     = true;
+    trackerSection.hidden = true;
+
+    if (screen === 'landing') {
+      screenLanding.hidden = false;
+    } else if (screen === 'upload') {
+      screenUpload.hidden = false;
+      actionBar.hidden    = false;
+    } else if (screen === 'tracker') {
+      screenUpload.hidden   = false; // keep settings visible (greyed via disabled)
+      trackerSection.hidden = false;
+      actionBar.hidden      = true;
     }
+  }
 
+  // ============================================================
+  //  INITIALISE — extract printer ID from URL
+  // ============================================================
+  const pathParts  = window.location.pathname.split('/');
+  const urlParams  = new URLSearchParams(window.location.search);
+  currentPrinterId = urlParams.get('printer') || (pathParts[2] || null);
+
+  if (!currentPrinterId) {
+    // No printer in URL — show landing screen
+    showScreen('landing');
+    hideSkeleton('Demo Shop');
+  } else {
+    showScreen('upload');
+    fetchShopInfo();
+  }
+
+  // ============================================================
+  //  SHOP INFO
+  // ============================================================
+  async function fetchShopInfo() {
     try {
       const res = await fetch(`${API_BASE}/api/printers/${currentPrinterId}`);
       if (res.ok) {
         const data = await res.json();
-        shopNameDisplay.textContent = data.shop ? data.shop.name : 'PrintOk Shop';
+        hideSkeleton(data.shop ? data.shop.name : 'PrintOk Shop');
       } else {
-        shopNameDisplay.textContent = 'PrintOk Partner Shop';
+        hideSkeleton('Partner Shop');
       }
-    } catch (err) {
-      shopNameDisplay.textContent = 'PrintOk Partner Shop';
+    } catch {
+      hideSkeleton('Partner Shop');
     }
   }
 
-  // File Selection
+  function hideSkeleton(shopName) {
+    if (shopNameSkeleton) shopNameSkeleton.remove();
+    shopNameDisplay.textContent = shopName;
+  }
+
+  // ============================================================
+  //  FILE HANDLING
+  // ============================================================
+
+  // Click to open file dialog
   dropZone.addEventListener('click', () => fileInput.click());
 
-  fileInput.addEventListener('change', (e) => {
-    if (e.target.files.length > 0) {
-      handleFile(e.target.files[0]);
+  // Keyboard accessibility for drop zone
+  dropZone.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      fileInput.click();
     }
+  });
+
+  fileInput.addEventListener('change', (e) => {
+    if (e.target.files.length > 0) handleFile(e.target.files[0]);
+  });
+
+  // Drag & Drop
+  dropZone.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+
+  dropZone.addEventListener('dragleave', (e) => {
+    if (!dropZone.contains(e.relatedTarget)) {
+      dropZone.classList.remove('drag-over');
+    }
+  });
+
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
   });
 
   removeFileBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    selectedFile = null;
-    fileBase64 = null;
-    filePill.classList.add('hidden');
-    payPrintBtn.disabled = true;
+    clearFile();
   });
 
   function handleFile(file) {
-    if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
-      alert('Please select a valid PDF document.');
+    clearFileError();
+
+    // Validate type
+    const isPdf = file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf';
+    if (!isPdf) {
+      showFileError('Only PDF documents are accepted. Please choose a .pdf file.');
+      dropZone.classList.add('has-error');
+      return;
+    }
+
+    // Validate size (25 MB)
+    const maxBytes = 25 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      showFileError(`This file is ${formatSize(file.size)} — the limit is 25 MB. Please compress or split the PDF.`);
+      dropZone.classList.add('has-error');
       return;
     }
 
     selectedFile = file;
     fileNameText.textContent = file.name;
-    filePill.classList.remove('hidden');
+    fileSizeText.textContent = formatSize(file.size);
+    fileSelectedDisplay.classList.add('visible');
+    dropZone.classList.add('has-file');
+    dropZone.classList.remove('has-error');
 
     const reader = new FileReader();
     reader.onload = () => {
       fileBase64 = reader.result.split(',')[1];
       payPrintBtn.disabled = false;
     };
+    reader.onerror = () => {
+      showFileError('Could not read the file. Please try again.');
+    };
     reader.readAsDataURL(file);
   }
 
-  // Color Mode Toggle
-  bwBtn.addEventListener('click', () => {
-    isColor = false;
-    bwBtn.classList.add('active');
-    colorBtn.classList.remove('active');
-    updatePrice();
-  });
+  function clearFile() {
+    selectedFile = null;
+    fileBase64 = null;
+    fileInput.value = '';
+    fileSelectedDisplay.classList.remove('visible');
+    dropZone.classList.remove('has-file', 'has-error', 'drag-over');
+    clearFileError();
+    payPrintBtn.disabled = true;
+  }
 
-  colorBtn.addEventListener('click', () => {
-    isColor = true;
-    colorBtn.classList.add('active');
-    bwBtn.classList.remove('active');
-    updatePrice();
-  });
+  function showFileError(msg) {
+    fileError.textContent = msg;
+    fileError.classList.add('visible');
+  }
 
-  // Copies Counter
+  function clearFileError() {
+    fileError.textContent = '';
+    fileError.classList.remove('visible');
+  }
+
+  function formatSize(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  // ============================================================
+  //  COLOR MODE
+  // ============================================================
+  bwBtn.addEventListener('click', () => setColorMode(false));
+  colorBtn.addEventListener('click', () => setColorMode(true));
+
+  function setColorMode(color) {
+    isColor = color;
+    bwBtn.classList.toggle('active', !color);
+    bwBtn.setAttribute('aria-pressed', String(!color));
+    colorBtn.classList.toggle('active', color);
+    colorBtn.setAttribute('aria-pressed', String(color));
+    updatePrice();
+  }
+
+  // ============================================================
+  //  COPIES
+  // ============================================================
   minusCopyBtn.addEventListener('click', () => {
-    if (copies > 1) {
-      copies--;
-      copiesVal.textContent = copies;
-      updatePrice();
-    }
+    if (copies > 1) { copies--; copiesVal.textContent = copies; updatePrice(); }
   });
-
   plusCopyBtn.addEventListener('click', () => {
-    copies++;
-    copiesVal.textContent = copies;
-    updatePrice();
+    if (copies < 99) { copies++; copiesVal.textContent = copies; updatePrice(); }
   });
 
   pageCountInput.addEventListener('input', (e) => {
     const val = parseInt(e.target.value, 10);
-    pageCount = val > 0 ? val : 1;
+    pageCount = (!isNaN(val) && val > 0) ? val : 1;
     updatePrice();
   });
 
@@ -137,12 +296,13 @@ document.addEventListener('DOMContentLoaded', () => {
     totalPriceText.textContent = `₹${total.toFixed(2)}`;
   }
 
-  // Pay & Print Action
+  // ============================================================
+  //  PAY & PRINT
+  // ============================================================
   payPrintBtn.addEventListener('click', async () => {
-    if (!fileBase64) return;
+    if (!fileBase64 || !selectedFile) return;
 
-    payPrintBtn.disabled = true;
-    payPrintBtn.innerHTML = '<span>Processing...</span>';
+    setPayBtnLoading(true);
 
     try {
       const res = await fetch(`${API_BASE}/api/print-jobs`, {
@@ -159,26 +319,34 @@ document.addEventListener('DOMContentLoaded', () => {
       });
 
       const data = await res.json();
-      if (res.ok) {
+
+      if (res.ok && data.job) {
+        showScreen('tracker');
         startJobTracking(data.job.id);
+        showToast('success', 'Job submitted!', 'Your document is on its way to the printer.');
       } else {
-        alert(`Error: ${data.error || 'Failed to submit job.'}`);
-        payPrintBtn.disabled = false;
-        payPrintBtn.innerHTML = '<span>Pay & Print Now</span><span class="arrow">→</span>';
+        const msg = data.error || 'Failed to submit the print job. Please try again.';
+        showToast('danger', 'Submission failed', msg);
+        setPayBtnLoading(false);
       }
-    } catch (err) {
-      alert('Network error contacting PrintOk API server.');
-      payPrintBtn.disabled = false;
-      payPrintBtn.innerHTML = '<span>Pay & Print Now</span><span class="arrow">→</span>';
+    } catch {
+      showToast('danger', 'Network error', 'Could not reach the PrintOk server. Check your connection.');
+      setPayBtnLoading(false);
     }
   });
 
-  // Live Job Status Polling
-  function startJobTracking(jobId) {
-    trackerSection.classList.remove('hidden');
-    trackerSection.scrollIntoView({ behavior: 'smooth' });
+  function setPayBtnLoading(loading) {
+    payPrintBtn.disabled = loading;
+    payPrintBtn.classList.toggle('loading', loading);
+  }
 
-    const pollInterval = setInterval(async () => {
+  // ============================================================
+  //  JOB STATUS POLLING
+  // ============================================================
+  function startJobTracking(jobId) {
+    updateTrackerUI('Queued');
+
+    pollingTimer = setInterval(async () => {
       try {
         const res = await fetch(`${API_BASE}/api/print-jobs/${jobId}`);
         if (res.ok) {
@@ -186,66 +354,89 @@ document.addEventListener('DOMContentLoaded', () => {
           const state = data.job.printState;
           updateTrackerUI(state);
 
-          if (state === 'Completed' || state === 'Failed') {
-            clearInterval(pollInterval);
+          if (state === 'Completed' || state === 'Failed' || state === 'Cancelled') {
+            clearInterval(pollingTimer);
+            pollingTimer = null;
           }
         }
-      } catch (err) {
-        console.error('Polling error:', err);
+      } catch {
+        // Silently continue polling on network hiccups
       }
-    }, 1000);
+    }, 1500);
   }
+
+  // ============================================================
+  //  TRACKER UI
+  // ============================================================
+  const STEP_CONFIG = {
+    Queued:      { progress: 20, badgeClass: 'badge-queued',   badgeLabel: 'Queued',      stepId: 'step-Queued',     msg: 'Your print job is queued — the shop printer agent is picking it up.' },
+    Downloading: { progress: 50, badgeClass: 'badge-download', badgeLabel: 'Downloading', stepId: 'step-Downloading',msg: 'The printer agent is securely fetching your document.' },
+    Printing:    { progress: 75, badgeClass: 'badge-printing', badgeLabel: 'Printing',    stepId: 'step-Printing',   msg: 'Your document is spooling to the physical printer right now.' },
+    Completed:   { progress: 100,badgeClass: 'badge-success',  badgeLabel: 'Done ✓',      stepId: 'step-Done',       msg: '🎉 Print complete! Collect your document from the printer tray.' },
+    Failed:      { progress: 100,badgeClass: 'badge-danger',   badgeLabel: 'Failed',      stepId: null,              msg: '❌ Printing failed. Please speak to the shop counter for help.' },
+    Cancelled:   { progress: 100,badgeClass: 'badge-neutral',  badgeLabel: 'Cancelled',   stepId: null,              msg: 'This print job was cancelled.' },
+  };
+
+  const STEP_ORDER = ['step-Queued', 'step-Downloading', 'step-Printing', 'step-Done'];
 
   function updateTrackerUI(state) {
-    statusBadge.textContent = state;
+    const config = STEP_CONFIG[state];
+    if (!config) return;
 
-    const step1 = document.getElementById('step1');
-    const step2 = document.getElementById('step2');
-    const step3 = document.getElementById('step3');
-    const step4 = document.getElementById('step4');
+    // Badge
+    statusBadge.className = `badge ${config.badgeClass}`;
+    statusBadge.textContent = config.badgeLabel;
 
-    step1.classList.remove('active');
-    step2.classList.remove('active');
-    step3.classList.remove('active');
-    step4.classList.remove('active');
+    // Progress bar
+    progressFill.style.width = `${config.progress}%`;
+    progressBar.setAttribute('aria-valuenow', config.progress);
+    if (state === 'Completed') progressFill.classList.add('complete');
+    if (state === 'Failed')    progressFill.classList.add('failed');
 
-    switch (state) {
-      case 'Queued':
-        progressFill.style.width = '25%';
-        step1.classList.add('active');
-        trackerDesc.textContent = 'Print job created and queued for shop printer...';
-        break;
-      case 'Downloading':
-        progressFill.style.width = '50%';
-        step1.classList.add('active');
-        step2.classList.add('active');
-        trackerDesc.textContent = 'Shop Windows Print Agent is downloading PDF payload...';
-        break;
-      case 'Printing':
-        progressFill.style.width = '75%';
-        step1.classList.add('active');
-        step2.classList.add('active');
-        step3.classList.add('active');
-        trackerDesc.textContent = 'Document is spooling to physical printer...';
-        break;
-      case 'Completed':
-        progressFill.style.width = '100%';
-        progressFill.style.background = '#10b981';
-        step1.classList.add('active');
-        step2.classList.add('active');
-        step3.classList.add('active');
-        step4.classList.add('active');
-        statusBadge.style.background = 'rgba(16, 185, 129, 0.2)';
-        statusBadge.style.color = '#34d399';
-        trackerDesc.textContent = '✨ Print complete! Collect your paper from the tray.';
-        break;
-      case 'Failed':
-        progressFill.style.width = '100%';
-        progressFill.style.background = '#ef4444';
-        statusBadge.style.background = 'rgba(239, 68, 68, 0.2)';
-        statusBadge.style.color = '#f87171';
-        trackerDesc.textContent = '❌ Printing failed. Please notify shop counter.';
-        break;
+    // Steps
+    const activeIndex = config.stepId ? STEP_ORDER.indexOf(config.stepId) : -1;
+
+    STEP_ORDER.forEach((stepId, idx) => {
+      const el = document.getElementById(stepId);
+      if (!el) return;
+      el.classList.remove('step-active', 'step-done', 'step-failed');
+      el.removeAttribute('aria-current');
+
+      if (state === 'Failed' || state === 'Cancelled') {
+        if (idx < activeIndex) el.classList.add('step-done');
+        // no active step on failure
+      } else {
+        if (idx < activeIndex)  { el.classList.add('step-done'); }
+        if (idx === activeIndex) { el.classList.add('step-active'); el.setAttribute('aria-current', 'step'); }
+      }
+    });
+
+    // Failed marker on last completed step
+    if (state === 'Failed') {
+      // find last done step and mark it red
+      const lastEl = document.getElementById('step-Printing') || document.getElementById('step-Downloading');
+      if (lastEl) lastEl.classList.add('step-failed');
+    }
+
+    // Message
+    trackerMessage.textContent = config.msg;
+
+    // Post-completion actions
+    if (state === 'Completed') {
+      printAnotherBtn.classList.remove('hidden');
     }
   }
+
+  // "Print another document" button
+  printAnotherBtn.addEventListener('click', () => {
+    clearFile();
+    copies = 1; copiesVal.textContent = 1;
+    pageCount = 1; pageCountInput.value = 1;
+    setColorMode(false);
+    updatePrice();
+    setPayBtnLoading(false);
+    showScreen('upload');
+    printAnotherBtn.classList.add('hidden');
+  });
+
 });
