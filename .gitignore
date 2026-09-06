@@ -1,0 +1,60 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build & Compilation Outputs
+.next/
+out/
+dist/
+build/
+bin/
+obj/
+
+# Environment & Secrets (NEVER COMMIT SECRETS)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.cer
+*.crt
+credentials.json
+secrets.json
+
+# Temporary Files & Customer Documents (Privacy & Security)
+tmp/
+temp/
+downloads/
+*.pdf
+*.doc
+*.docx
+*.jpg
+*.jpeg
+*.png
+
+# Database & Storage
+*.sqlite
+*.db
+*.dump
+*.sql
+
+# Graphify Knowledge Graph Artifacts
+graphify-out/
+
+# OS & Editor Files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+.idea/
+
+# Testing & Coverage
+coverage/
+.nyc_output/
+playwright-report/
+test-results/

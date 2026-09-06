@@ -1,0 +1,25 @@
+{
+  "name": "printok-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hardware-free stationery printing platform",
+  "workspaces": [
+    "apps/*",
+    "services/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "echo \"Run specific app/service dev server\"",
+    "build": "echo \"Building workspaces...\"",
+    "test": "echo \"Running tests...\"",
+    "lint": "echo \"Running linter...\"",
+    "graphify": "graphify ."
+  },
+  "keywords": [
+    "printok",
+    "printing",
+    "windows-print-agent"
+  ],
+  "author": "PrintOk Team",
+  "license": "MIT"
+}
