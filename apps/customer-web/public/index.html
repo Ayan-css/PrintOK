@@ -250,9 +250,14 @@
                   <div>Printer ID: <code id="dashPrinterId" style="background:#fff; padding:2px 6px; border-radius:4px; font-weight:bold; user-select: all;"></code></div>
                   <div>Agent API Key: <code id="dashApiKey" style="background:#fff; padding:2px 6px; border-radius:4px; font-weight:bold; user-select: all;"></code></div>
                 </div>
-                <button class="btn btn-secondary btn-full btn-sm" id="btnCopyAgentConfig" type="button" style="margin-bottom: 6px;">
-                  📋 Copy All Agent Settings JSON
-                </button>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px;">
+                  <a class="btn btn-primary btn-sm" id="btnDownloadAgentSource" href="https://github.com/Ayan-css/PrintOK/tree/main/agent/windows-print-agent" target="_blank" style="text-decoration: none; text-align: center; font-size: 11px;">
+                    ⬇️ Agent Source (.NET 8)
+                  </a>
+                  <button class="btn btn-secondary btn-sm" id="btnCopyAgentConfig" type="button" style="font-size: 11px;">
+                    📋 Copy Settings JSON
+                  </button>
+                </div>
                 <button class="btn btn-outline btn-full btn-sm" id="btnToggleSimulatedAgent" type="button">
                   ▶️ Start Simulated Windows Agent
                 </button>
