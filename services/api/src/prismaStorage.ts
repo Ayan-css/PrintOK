@@ -68,11 +68,16 @@ export class PrismaStorage implements IStorageProvider {
   public async createPrinter(
     shopId: string,
     printerName: string,
-    qrTargetUrl: string,
-    qrCodeDataUrl: string
+    baseUrlOrTargetUrl: string,
+    qrCodeDataUrl?: string,
+    qrGeneratorFn?: (url: string) => Promise<string>
   ): Promise<Printer> {
     const id = `prn_${crypto.randomBytes(6).toString('hex')}`;
     const apiKey = `prn_key_${crypto.randomBytes(16).toString('hex')}`;
+
+    const cleanBase = baseUrlOrTargetUrl.split('/?printer=')[0].split('/p/')[0].replace(/\/$/, '');
+    const qrTargetUrl = `${cleanBase}/?printer=${id}`;
+    const finalQrDataUrl = qrGeneratorFn ? await qrGeneratorFn(qrTargetUrl) : (qrCodeDataUrl || qrTargetUrl);
 
     const printer = await this.prisma.printer.create({
       data: {
@@ -80,7 +85,7 @@ export class PrismaStorage implements IStorageProvider {
         shopId,
         printerName,
         qrTargetUrl,
-        qrCodeDataUrl,
+        qrCodeDataUrl: finalQrDataUrl,
         apiKey,
         status: 'online',
       },

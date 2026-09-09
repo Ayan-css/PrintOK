@@ -58,11 +58,17 @@ export function createApp(
 
       const shop = await storage.createShop(shopName, ownerEmail, upiId, bankAccountNumber, bankIfsc);
       
-      const baseUrl = process.env.PUBLIC_WEB_URL || 'http://localhost:3000';
-      const qrTargetUrl = `${baseUrl}/p/${shop.id}`;
-      const qrCodeDataUrl = await generateQrCodeDataUrl(qrTargetUrl);
+      // PUBLIC_WEB_URL must be set to the Vercel frontend URL in Render env vars (e.g. https://printok.vercel.app)
+      const baseUrl = (process.env.PUBLIC_WEB_URL || 'http://localhost:3000').replace(/\/$/, '');
 
-      const printer = await storage.createPrinter(shop.id, printerName, qrTargetUrl, qrCodeDataUrl);
+      // Pass baseUrl + QR generator so createPrinter builds the correct URL after the ID is known
+      const printer = await storage.createPrinter(
+        shop.id,
+        printerName,
+        baseUrl,
+        undefined,
+        generateQrCodeDataUrl
+      );
 
       const response: RegisterShopResponse = { shop, printer };
       return res.status(201).json(response);
@@ -151,6 +157,11 @@ export function createApp(
       const { printerId } = req.params;
       const telemetry = await storage.getPrinterTelemetry(printerId);
       return res.json(telemetry);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   /**
    * Download Pre-Configured appsettings.json for Windows Print Agent
    */

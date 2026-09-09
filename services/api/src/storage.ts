@@ -7,7 +7,7 @@ export interface IStorageProvider {
   calculateChecksum(content: string | Buffer): string;
   createShop(name: string, ownerEmail: string, upiId?: string, bankAccountNumber?: string, bankIfsc?: string): Promise<Shop>;
   getShop(id: string): Promise<Shop | undefined>;
-  createPrinter(shopId: string, printerName: string, qrTargetUrl: string, qrCodeDataUrl: string): Promise<Printer>;
+  createPrinter(shopId: string, printerName: string, baseUrlOrTargetUrl: string, qrCodeDataUrl?: string, qrGeneratorFn?: (url: string) => Promise<string>): Promise<Printer>;
   getPrinter(id: string): Promise<Printer | undefined>;
   getPrinterByApiKey(apiKey: string): Promise<Printer | undefined>;
   createPrintJob(
@@ -76,17 +76,22 @@ export class MemoryStorage implements IStorageProvider {
   public async createPrinter(
     shopId: string,
     printerName: string,
-    qrTargetUrl: string,
-    qrCodeDataUrl: string
+    baseUrlOrTargetUrl: string,
+    qrCodeDataUrl?: string,
+    qrGeneratorFn?: (url: string) => Promise<string>
   ): Promise<Printer> {
     const id = `prn_${crypto.randomBytes(6).toString('hex')}`;
     const apiKey = `prn_key_${crypto.randomBytes(16).toString('hex')}`;
+    const cleanBase = baseUrlOrTargetUrl.split('/?printer=')[0].split('/p/')[0].replace(/\/$/, '');
+    const qrTargetUrl = `${cleanBase}/?printer=${id}`;
+    const finalQrDataUrl = qrGeneratorFn ? await qrGeneratorFn(qrTargetUrl) : (qrCodeDataUrl || qrTargetUrl);
+
     const printer: Printer = {
       id,
       shopId,
       printerName,
       qrTargetUrl,
-      qrCodeDataUrl,
+      qrCodeDataUrl: finalQrDataUrl,
       apiKey,
       status: 'online',
       createdAt: new Date().toISOString(),
