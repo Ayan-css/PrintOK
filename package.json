@@ -10,8 +10,8 @@
   ],
   "scripts": {
     "dev": "echo \"Run specific app/service dev server\"",
-    "build": "echo \"Building workspaces...\"",
-    "test": "echo \"Running tests...\"",
+    "build": "npm run build --workspace=@printok/shared-types && npm run build --workspace=@printok/api",
+    "test": "npm test --workspace=@printok/api",
     "lint": "echo \"Running linter...\"",
     "graphify": "graphify ."
   },
