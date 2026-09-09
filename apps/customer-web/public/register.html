@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="PrintOk Merchant Registration — Register your stationery shop, pair your printer, and generate your shop QR code in minutes.">
+  <meta name="theme-color" content="#0d0d0d">
+  <title>Register Shop — PrintOk Merchant Portal</title>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="bg-paper">
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+  <div class="app-wrapper">
+    <div class="page-container">
+      
+      <!-- Top Navigation -->
+      <header class="app-header">
+        <a href="/" class="brand" style="text-decoration: none; color: inherit;">
+          <div class="brand-mark">
+            <svg viewBox="0 0 18 18" fill="none">
+              <rect x="2" y="2" width="14" height="11" rx="1" stroke="white" stroke-width="2"/>
+              <rect x="5" y="13" width="8" height="4" rx="0.5" stroke="white" stroke-width="1.5"/>
+              <rect x="5" y="6" width="5" height="2" rx="0.5" fill="white"/>
+            </svg>
+          </div>
+          <div class="brand-text">
+            <div class="brand-name">PrintOk</div>
+            <div class="brand-tagline">Merchant Onboarding</div>
+          </div>
+        </a>
+        <div style="display: flex; gap: 8px;">
+          <a href="/dashboard" class="btn btn-outline btn-sm" style="text-decoration: none; font-size: 11px;">🏬 Merchant Dashboard</a>
+        </div>
+      </header>
+
+      <!-- Main Registration View -->
+      <main class="main-content">
+        
+        <!-- Hero Header -->
+        <div class="hero-banner">
+          <span class="badge badge-success">Zero Hardware Fee</span>
+          <h1 class="hero-title" style="margin-top: 6px;">Start Accepting Mobile Print Jobs at Your Shop</h1>
+          <p class="hero-sub">Generate your custom shop QR code, pair your existing Windows printer, and receive direct payments instantly.</p>
+        </div>
+
+        <!-- Registration Card Container -->
+        <div class="card card--elevated">
+          
+          <!-- Step Progress Indicator -->
+          <div class="step-wizard" id="stepWizard">
+            <div class="step-item active" id="stepNav1">
+              <div class="step-number">1</div>
+              <div class="step-label">Shop Details</div>
+            </div>
+            <div class="step-line"></div>
+            <div class="step-item" id="stepNav2">
+              <div class="step-number">2</div>
+              <div class="step-label">Rates &amp; Payout</div>
+            </div>
+            <div class="step-line"></div>
+            <div class="step-item" id="stepNav3">
+              <div class="step-number">3</div>
+              <div class="step-label">QR &amp; Agent</div>
+            </div>
+          </div>
+
+          <!-- STEP 1 FORM: Shop Information -->
+          <form id="formStep1" class="wizard-pane active">
+            <div class="form-group">
+              <label class="form-label" for="regShopName">Shop Name <span class="text-danger">*</span></label>
+              <input type="text" id="regShopName" class="form-input" placeholder="e.g. Metro Speed Copy Center" required value="Metro Print &amp; Stationers">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="regOwnerEmail">Owner Email Address <span class="text-danger">*</span></label>
+              <input type="email" id="regOwnerEmail" class="form-input" placeholder="owner@myshop.com" required value="owner@metroprint.com">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="regPrinterName">Primary Printer Model <span class="text-danger">*</span></label>
+              <input type="text" id="regPrinterName" class="form-input" placeholder="e.g. Canon ImageRUNNER 2525 / HP LaserJet M404" required value="Canon ImageRUNNER 2525">
+            </div>
+
+            <button type="button" id="btnNextStep1" class="btn btn-primary btn-full" style="margin-top: 10px;">
+              Next: Set Rates &amp; UPI Payout ➔
+            </button>
+          </form>
+
+          <!-- STEP 2 FORM: Pricing Matrix & UPI -->
+          <form id="formStep2" class="wizard-pane" hidden>
+            <div class="form-group">
+              <label class="form-label" for="regUpiId">UPI ID for Payouts <span class="text-danger">*</span></label>
+              <input type="text" id="regUpiId" class="form-input" placeholder="e.g. metroprint@upi" required value="metroprint@upi">
+              <div class="form-help">Customer payments are credited to this UPI ID or shop counter.</div>
+            </div>
+
+            <div class="form-section-title">Initial Per-Page Rates (INR ₹)</div>
+            
+            <div class="grid-2">
+              <div class="form-group">
+                <label class="form-label">B&amp;W Single (₹)</label>
+                <input type="number" id="regRateBwSingle" class="form-input" value="2.00" step="0.5">
+              </div>
+              <div class="form-group">
+                <label class="form-label">B&amp;W Duplex (₹)</label>
+                <input type="number" id="regRateBwDuplex" class="form-input" value="1.50" step="0.5">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Color Single (₹)</label>
+                <input type="number" id="regRateColorSingle" class="form-input" value="10.00" step="1">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Color Duplex (₹)</label>
+                <input type="number" id="regRateColorDuplex" class="form-input" value="8.00" step="1">
+              </div>
+            </div>
+
+            <div class="grid-2" style="margin-top: 10px;">
+              <button type="button" id="btnPrevStep2" class="btn btn-outline">
+                ⬅️ Back
+              </button>
+              <button type="button" id="btnSubmitRegister" class="btn btn-primary">
+                ✨ Register Shop &amp; Get QR
+              </button>
+            </div>
+          </form>
+
+          <!-- STEP 3 RESULT: QR Code & Agent Downloads -->
+          <div id="formStep3" class="wizard-pane" hidden>
+            <div class="registration-success-banner">
+              <div class="success-icon">🎉</div>
+              <h3>Shop Registered Successfully!</h3>
+              <p>Your shop is live on PrintOk. Place your QR poster on your shop counter and download the Windows Agent.</p>
+            </div>
+
+            <!-- QR Code Display Box -->
+            <div class="qr-poster-preview">
+              <div class="qr-shop-title" id="resShopTitle">Metro Print &amp; Stationers</div>
+              <div class="qr-printer-title" id="resPrinterTitle">Canon ImageRUNNER 2525</div>
+              
+              <div class="qr-image-wrapper">
+                <img id="resQrImage" src="" alt="Shop QR Code">
+              </div>
+              
+              <div class="qr-url-badge" id="resQrUrlDisplay">https://printok.vercel.app/?printer=prn_xxx</div>
+              
+              <div class="grid-2" style="margin-top: 12px;">
+                <button type="button" id="btnDownloadPosterPng" class="btn btn-secondary btn-sm">
+                  📥 Download QR Poster (PNG)
+                </button>
+                <a id="btnGoToDashboard" href="/dashboard" class="btn btn-primary btn-sm" style="text-decoration: none; text-align: center;">
+                  ⚡ Open Control Dashboard
+                </a>
+              </div>
+            </div>
+
+            <!-- Agent Pairing Box -->
+            <div class="card card--accent" style="margin-top: 16px;">
+              <div class="card-header">
+                <h4 class="card-title">🖨️ Windows Agent Installation</h4>
+                <span class="badge badge-queued">Shop PC Setup</span>
+              </div>
+
+              <div class="key-value-list">
+                <div class="key-value-row">
+                  <span>Shop ID:</span>
+                  <code id="resShopId">--</code>
+                </div>
+                <div class="key-value-row">
+                  <span>Printer ID:</span>
+                  <code id="resPrinterId">--</code>
+                </div>
+                <div class="key-value-row">
+                  <span>Agent API Key:</span>
+                  <code id="resApiKey">--</code>
+                </div>
+              </div>
+
+              <div class="grid-2" style="margin-top: 12px;">
+                <a id="btnDownloadAgentExe" href="https://prinok-api.onrender.com/api/agent-installer" target="_blank" class="btn btn-primary btn-sm" style="text-decoration: none; text-align: center;">
+                  ⬇️ Download PrintAgent.exe
+                </a>
+                <a id="btnDownloadAgentConfig" href="#" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration: none; text-align: center;">
+                  ⚙️ Auto-Config (.json)
+                </a>
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+
+      </main>
+
+      <!-- Footer -->
+      <footer class="app-footer">
+        <div>PrintOk Hardware-Free Printing System</div>
+        <div style="margin-top: 4px;"><a href="/" style="color: var(--color-primary); font-weight:600;">Customer Interface</a> • <a href="/dashboard" style="color: var(--color-primary); font-weight:600;">Merchant Dashboard</a></div>
+      </footer>
+
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

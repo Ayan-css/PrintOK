@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="PrintOk Merchant Control Dashboard — Manage live print queue, approve cash payments, monitor agent connectivity, and update rates.">
+  <meta name="theme-color" content="#0d0d0d">
+  <title>Merchant Dashboard — PrintOk</title>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="bg-paper">
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+  <div class="app-wrapper">
+    <div class="page-container page-container--wide">
+      
+      <!-- Top Navigation Header -->
+      <header class="app-header">
+        <a href="/" class="brand" style="text-decoration: none; color: inherit;">
+          <div class="brand-mark">
+            <svg viewBox="0 0 18 18" fill="none">
+              <rect x="2" y="2" width="14" height="11" rx="1" stroke="white" stroke-width="2"/>
+              <rect x="5" y="13" width="8" height="4" rx="0.5" stroke="white" stroke-width="1.5"/>
+              <rect x="5" y="6" width="5" height="2" rx="0.5" fill="white"/>
+            </svg>
+          </div>
+          <div class="brand-text">
+            <div class="brand-name">PrintOk</div>
+            <div class="brand-tagline">Merchant Console</div>
+          </div>
+        </a>
+
+        <!-- Agent Telemetry Live Badge -->
+        <div class="agent-live-pill" id="dashTelemetryPill">
+          <div class="status-pulse-dot online" id="dashAgentDot"></div>
+          <span id="dashAgentStatusText">Checking Agent...</span>
+        </div>
+
+        <div style="display: flex; gap: 8px;">
+          <button id="btnRefreshQueue" class="btn btn-outline btn-sm" type="button" title="Refresh Live Queue">
+            🔄 Refresh
+          </button>
+          <a href="/register" class="btn btn-secondary btn-sm" style="text-decoration: none; font-size: 11px;">+ New Shop</a>
+        </div>
+      </header>
+
+      <!-- Main Dashboard Grid -->
+      <main class="main-content">
+
+        <!-- Header Shop Info Banner -->
+        <div class="dash-shop-header">
+          <div>
+            <div class="dash-shop-badge" id="dashShopIdBadge">Shop ID: --</div>
+            <h1 class="dash-shop-title" id="dashShopTitle">Metro Print &amp; Stationers</h1>
+            <div class="dash-printer-subtitle" id="dashPrinterTitle">Canon ImageRUNNER 2525</div>
+          </div>
+          <div class="dash-header-actions">
+            <a id="btnCustomerLink" href="/?printer=prn_test" target="_blank" class="btn btn-outline btn-sm" style="text-decoration: none;">
+              📱 Open Customer View
+            </a>
+          </div>
+        </div>
+
+        <!-- KPI Metrics Grid -->
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-icon">💰</div>
+            <div class="kpi-body">
+              <div class="kpi-label">Today's Revenue</div>
+              <div class="kpi-value" id="statTodayRevenue">₹0.00</div>
+              <div class="kpi-sub">Direct Payouts</div>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-icon">⚡</div>
+            <div class="kpi-body">
+              <div class="kpi-label">Queued Jobs</div>
+              <div class="kpi-value" id="statQueuedCount">0</div>
+              <div class="kpi-sub">Awaiting Agent / Cash</div>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-icon">📄</div>
+            <div class="kpi-body">
+              <div class="kpi-label">Printed Pages</div>
+              <div class="kpi-value" id="statPrintedPages">0</div>
+              <div class="kpi-sub">Total Spooled</div>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-icon">🖨️</div>
+            <div class="kpi-body">
+              <div class="kpi-label">Agent Latency</div>
+              <div class="kpi-value" id="statAgentLatency">-- ms</div>
+              <div class="kpi-sub" id="statAgentStatusSub">Heartbeat 30s</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tabbed Dashboard Navigation -->
+        <div class="card card--elevated" style="padding: 0;">
+          <div class="dash-tabs-bar">
+            <button class="dash-tab-btn active" id="tabBtnQueue" data-tab="tabQueue" type="button">
+              ⚡ Live Print Queue
+            </button>
+            <button class="dash-tab-btn" id="tabBtnPricing" data-tab="tabPricing" type="button">
+              ⚙️ Rates Matrix
+            </button>
+            <button class="dash-tab-btn" id="tabBtnQr" data-tab="tabQr" type="button">
+              🖨️ QR Poster &amp; Agent
+            </button>
+            <button class="dash-tab-btn" id="tabBtnStats" data-tab="tabStats" type="button">
+              📊 Revenue Analytics
+            </button>
+          </div>
+
+          <!-- TAB 1: LIVE QUEUE & CASH APPROVALS -->
+          <div id="tabQueue" class="dash-tab-pane active" style="padding: 16px;">
+            <div class="table-toolbar">
+              <div class="label-text">Counter Orders Feed</div>
+              <div class="filter-pills">
+                <button class="filter-pill active" data-filter="all">All</button>
+                <button class="filter-pill" data-filter="AWAITING_PAYMENT">Awaiting Cash</button>
+                <button class="filter-pill" data-filter="QUEUED">Queued</button>
+                <button class="filter-pill" data-filter="COMPLETED">Printed</button>
+              </div>
+            </div>
+
+            <!-- Queue Feed Container -->
+            <div id="liveQueueList" class="queue-list">
+              <div class="empty-state">
+                <div class="empty-icon">📭</div>
+                <div class="empty-title">No Print Jobs Yet</div>
+                <div class="empty-sub">Customer print requests will appear here in real-time as they scan your shop QR code.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- TAB 2: PRICING MATRIX CONFIGURATION -->
+          <div id="tabPricing" class="dash-tab-pane" hidden style="padding: 20px;">
+            <div class="card-header" style="padding:0 0 12px 0;">
+              <div>
+                <h3 class="card-title">Custom Per-Page Print Rates</h3>
+                <p class="meta-text">Configure default rates charged to customers scanning your QR code.</p>
+              </div>
+            </div>
+
+            <form id="formDashboardPricing">
+              <div class="grid-2">
+                <div class="form-group">
+                  <label class="form-label">B&amp;W Single-Sided Rate (₹ / page)</label>
+                  <input type="number" id="rateBwSingle" class="form-input" value="2.00" step="0.5" min="0.5">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">B&amp;W Duplex Rate (₹ / page)</label>
+                  <input type="number" id="rateBwDuplex" class="form-input" value="1.50" step="0.5" min="0.5">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Color Single-Sided Rate (₹ / page)</label>
+                  <input type="number" id="rateColorSingle" class="form-input" value="10.00" step="1" min="1">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Color Duplex Rate (₹ / page)</label>
+                  <input type="number" id="rateColorDuplex" class="form-input" value="8.00" step="1" min="1">
+                </div>
+              </div>
+
+              <button class="btn btn-primary" id="btnSavePricing" type="button" style="margin-top: 10px;">
+                💾 Save Rates Matrix
+              </button>
+            </form>
+          </div>
+
+          <!-- TAB 3: QR POSTER & AGENT PAIRING -->
+          <div id="tabQr" class="dash-tab-pane" hidden style="padding: 20px;">
+            <div class="grid-2">
+              
+              <!-- QR Poster Card -->
+              <div class="card">
+                <div class="card-header">
+                  <h4 class="card-title">Shop Counter QR Poster</h4>
+                </div>
+                <div class="qr-poster-preview" style="background:#fff;">
+                  <div class="qr-shop-title" id="dashQrShopName">Metro Print &amp; Stationers</div>
+                  <div class="qr-printer-title" id="dashQrPrinterName">Canon ImageRUNNER 2525</div>
+                  
+                  <div class="qr-image-wrapper">
+                    <img id="dashQrImg" src="" alt="Shop QR Code">
+                  </div>
+                  
+                  <div class="qr-url-badge" id="dashQrTargetUrl">--</div>
+                </div>
+
+                <div class="grid-2" style="margin-top: 12px;">
+                  <button type="button" id="btnDownloadQr" class="btn btn-secondary btn-sm">
+                    📥 Download QR Sign (PNG)
+                  </button>
+                  <button type="button" id="btnOpenCustomerView" class="btn btn-outline btn-sm">
+                    📱 Test Customer Flow
+                  </button>
+                </div>
+              </div>
+
+              <!-- Windows Agent Pairing Box -->
+              <div class="card card--accent">
+                <div class="card-header">
+                  <h4 class="card-title">🖨️ Windows Agent Configuration</h4>
+                  <span class="badge badge-queued">Shop PC Setup</span>
+                </div>
+
+                <div class="key-value-list">
+                  <div class="key-value-row">
+                    <span>Shop ID:</span>
+                    <code id="dashShopId">--</code>
+                  </div>
+                  <div class="key-value-row">
+                    <span>Printer ID:</span>
+                    <code id="dashPrinterId">--</code>
+                  </div>
+                  <div class="key-value-row">
+                    <span>Agent API Key:</span>
+                    <code id="dashApiKey">--</code>
+                  </div>
+                </div>
+
+                <div class="grid-2" style="margin-top: 12px;">
+                  <a id="btnDownloadAgentExe" href="https://prinok-api.onrender.com/api/agent-installer" target="_blank" class="btn btn-primary btn-sm" style="text-decoration: none; text-align: center;">
+                    ⬇️ Download PrintAgent.exe
+                  </a>
+                  <a id="btnDownloadAgentConfigFile" href="#" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration: none; text-align: center;">
+                    ⚙️ Auto-Config (.json)
+                  </a>
+                </div>
+
+                <div class="grid-2" style="margin-top: 8px;">
+                  <button class="btn btn-outline btn-sm" id="btnCopyAgentConfig" type="button">
+                    📋 Copy Settings JSON
+                  </button>
+                  <button class="btn btn-outline btn-sm" id="btnToggleSimulatedAgent" type="button">
+                    ▶️ Test In Browser
+                  </button>
+                </div>
+
+                <div id="agentStatusText" class="meta-text" style="margin-top: 8px; font-weight: 600; color: var(--color-primary);">
+                  Agent Status: Offline
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- TAB 4: FINANCIAL ANALYTICS -->
+          <div id="tabStats" class="dash-tab-pane" hidden style="padding: 20px;">
+            <div class="card-header" style="padding: 0 0 12px 0;">
+              <div>
+                <h3 class="card-title">Earnings &amp; Payout Summary</h3>
+                <p class="meta-text">Real-time overview of customer print payments and payout history.</p>
+              </div>
+            </div>
+
+            <div class="grid-3">
+              <div class="stat-box">
+                <div class="stat-box-label">Gross Revenue Today</div>
+                <div class="stat-box-value" id="statGrossRevenue">₹0.00</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-box-label">Paid via UPI / Online</div>
+                <div class="stat-box-value" id="statUpiRevenue">₹0.00</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-box-label">Counter Cash Approved</div>
+                <div class="stat-box-value" id="statCashRevenue">₹0.00</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </main>
+
+      <!-- Footer -->
+      <footer class="app-footer">
+        <div>PrintOk Merchant Control Dashboard</div>
+        <div style="margin-top: 4px;"><a href="/" style="color: var(--color-primary); font-weight:600;">Customer Interface</a> • <a href="/register" style="color: var(--color-primary); font-weight:600;">Register New Shop</a></div>
+      </footer>
+
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

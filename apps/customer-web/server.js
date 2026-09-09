@@ -6,10 +6,18 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.get('*', (req, res) => {
+app.get('/register', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'register.html'));
+});
+
+app.get('/dashboard', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+});
+
+app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.listen(PORT, () => {
-  console.log(`[PrintOk Customer Web App] Listening on http://localhost:${PORT}`);
+  console.log(`[PrintOk Web App] Listening on http://localhost:${PORT}`);
 });
