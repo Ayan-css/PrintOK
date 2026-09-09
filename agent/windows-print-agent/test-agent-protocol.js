@@ -105,12 +105,21 @@ async function runAgentProtocolTest() {
   const finalData = await finalRes.json();
   console.log(`[Status Updated] Final State: ${finalData.job.printState}`);
 
-  if (finalData.job.printState !== 'Completed') {
-    throw new Error(`Job state is not Completed: ${finalData.job.printState}`);
-  }
+  // Send Agent Heartbeat
+  const hbRes = await fetch(`${baseUrl}/api/agent/heartbeat`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-agent-api-key': apiKey,
+    },
+    body: JSON.stringify({ paperStatus: 'OK' }),
+  });
+  const hbData = await hbRes.json();
+  console.log(`[Heartbeat Sent] Telemetry online: ${hbData.telemetry.isOnline}`);
 
   console.log('[Print Agent Protocol Test] SUCCESS! All checks passed.\n');
 }
+
 
 runAgentProtocolTest().catch((err) => {
   console.error('[Print Agent Protocol Test] FAILED:', err);

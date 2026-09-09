@@ -59,18 +59,49 @@ export interface Printer {
   createdAt: string;
 }
 
+export interface PrinterTelemetry {
+  printerId: string;
+  lastHeartbeat: string;
+  isOnline: boolean;
+  paperStatus?: string;
+}
+
+export interface MerchantPricingConfig {
+  bwSinglePerPageCents: number;
+  bwDuplexPerPageCents: number;
+  colorSinglePerPageCents: number;
+  colorDuplexPerPageCents: number;
+  a3Multiplier?: number;
+  bulkDiscountThreshold?: number;
+  bulkDiscountPercent?: number;
+  enableSeparatorPage?: boolean;
+  separatorMinPages?: number;
+}
+
+export interface MerchantStats {
+  shopId: string;
+  todayRevenueCents: number;
+  todayJobsCount: number;
+  completedJobsCount: number;
+  pendingJobsCount: number;
+}
+
+
 /**
  * Print Job definition
  */
 export interface PrintJob {
   id: string;
   printerId: string;
+  tokenNumber?: string;
   fileName: string;
   fileUrl: string;
   fileChecksum: string;
   pageCount: number;
   copies: number;
   isColor: boolean;
+  isDuplex?: boolean;
+  paperSize?: string;
   totalPriceInCents: number;
   paymentState: PaymentState;
   printState: PrintState;
@@ -109,6 +140,8 @@ export interface CreatePrintJobDto {
   pageCount: number;
   copies: number;
   isColor: boolean;
+  isDuplex?: boolean;
+  paperSize?: string;
 }
 
 /**
@@ -155,11 +188,15 @@ export interface AgentWsMessage {
 export interface JobQueuedEvent {
   jobId: string;
   printerId: string;
+  tokenNumber?: string;
   fileName: string;
   fileUrl: string;
   fileChecksum: string;
   pageCount: number;
   copies: number;
   isColor: boolean;
+  isDuplex?: boolean;
+  paperSize?: string;
 }
+
 

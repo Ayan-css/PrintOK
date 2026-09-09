@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { PrismaClient } from '@prisma/client';
-import { Shop, Printer, PrintJob, PaymentState, PrintState } from '@printok/shared-types';
+import { Shop, Printer, PrintJob, PaymentState, PrintState, PrinterTelemetry, MerchantPricingConfig, MerchantStats } from '@printok/shared-types';
 import { IStorageProvider } from './storage';
 import { S3StorageService } from './s3Storage';
 
@@ -11,6 +11,7 @@ import { S3StorageService } from './s3Storage';
 export class PrismaStorage implements IStorageProvider {
   private prisma = new PrismaClient();
   private s3Service = new S3StorageService();
+  private telemetries = new Map<string, { lastHeartbeat: string; paperStatus?: string }>();
 
   public calculateChecksum(content: string | Buffer): string {
     return crypto.createHash('sha256').update(content).digest('hex');
@@ -107,7 +108,9 @@ export class PrismaStorage implements IStorageProvider {
     pageCount: number,
     copies: number,
     isColor: boolean,
-    autoApprovePayment = true
+    autoApprovePayment = true,
+    isDuplex = false,
+    paperSize = 'A4'
   ): Promise<PrintJob> {
     const id = `job_${crypto.randomBytes(6).toString('hex')}`;
 
@@ -198,6 +201,103 @@ export class PrismaStorage implements IStorageProvider {
     return this.mapPrintJob(job);
   }
 
+  public async recordHeartbeat(printerId: string, paperStatus: string = 'OK'): Promise<PrinterTelemetry> {
+    const nowIso = new Date().toISOString();
+    this.telemetries.set(printerId, { lastHeartbeat: nowIso, paperStatus });
+    return {
+      printerId,
+      lastHeartbeat: nowIso,
+      isOnline: true,
+      paperStatus,
+    };
+  }
+
+  public async getPrinterTelemetry(printerId: string): Promise<PrinterTelemetry> {
+    const record = this.telemetries.get(printerId);
+    if (!record) {
+      return {
+        printerId,
+        lastHeartbeat: '',
+        isOnline: false,
+        paperStatus: 'UNKNOWN',
+      };
+    }
+
+    const elapsedMs = Date.now() - new Date(record.lastHeartbeat).getTime();
+    const isOnline = elapsedMs <= 45000;
+
+    return {
+      printerId,
+      lastHeartbeat: record.lastHeartbeat,
+      isOnline,
+      paperStatus: record.paperStatus || 'OK',
+    };
+  }
+
+  public async getRecentJobsForShop(shopId: string, limit = 20): Promise<PrintJob[]> {
+    const printers = await this.prisma.printer.findMany({ where: { shopId } });
+    const printerIds = printers.map(p => p.id);
+
+    const jobs = await this.prisma.printJob.findMany({
+      where: { printerId: { in: printerIds } },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+
+    return jobs.map(j => this.mapPrintJob(j));
+  }
+
+  public async getShopPricing(shopId: string): Promise<MerchantPricingConfig> {
+    return {
+      bwSinglePerPageCents: 200,
+      bwDuplexPerPageCents: 150,
+      colorSinglePerPageCents: 1000,
+      colorDuplexPerPageCents: 800,
+      a3Multiplier: 2.0,
+      bulkDiscountThreshold: 50,
+      bulkDiscountPercent: 10,
+      enableSeparatorPage: false,
+      separatorMinPages: 5,
+    };
+  }
+
+  public async updateShopPricing(shopId: string, config: Partial<MerchantPricingConfig>): Promise<MerchantPricingConfig> {
+    const current = await this.getShopPricing(shopId);
+    return { ...current, ...config };
+  }
+
+  public async getShopStats(shopId: string): Promise<MerchantStats> {
+    const recent = await this.getRecentJobsForShop(shopId, 500);
+    const todayStr = new Date().toISOString().substring(0, 10);
+
+    let todayRevenueCents = 0;
+    let todayJobsCount = 0;
+    let completedJobsCount = 0;
+    let pendingJobsCount = 0;
+
+    for (const job of recent) {
+      if (job.createdAt.startsWith(todayStr)) {
+        todayJobsCount++;
+        if (job.paymentState === PaymentState.Paid) {
+          todayRevenueCents += job.totalPriceInCents;
+        }
+      }
+      if (job.printState === PrintState.Completed) {
+        completedJobsCount++;
+      } else if (job.printState === PrintState.Queued || job.printState === PrintState.Downloading || job.printState === PrintState.Printing) {
+        pendingJobsCount++;
+      }
+    }
+
+    return {
+      shopId,
+      todayRevenueCents,
+      todayJobsCount,
+      completedJobsCount,
+      pendingJobsCount,
+    };
+  }
+
   // --- Internal mappers: Prisma row → shared-types interface ---
 
   private mapPrinter(p: {
@@ -240,3 +340,5 @@ export class PrismaStorage implements IStorageProvider {
     };
   }
 }
+
+

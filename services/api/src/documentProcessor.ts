@@ -115,3 +115,76 @@ function getExtension(fileName: string): string {
   if (idx === -1) return '';
   return fileName.substring(idx).toLowerCase();
 }
+
+/**
+ * Generates a single-page PDF separator sheet containing Job Token & Metadata.
+ * Uses zero external dependencies by constructing standard PDF 1.4 syntax.
+ */
+export function generateSeparatorPage(
+  jobToken: string,
+  shopName: string = 'PrintOk Counter',
+  customerName: string = 'Customer',
+  fileName: string = 'Document'
+): Buffer {
+  const dateStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+  const cleanToken = jobToken.replace(/[()]/g, '');
+  const cleanShop = shopName.replace(/[()]/g, '');
+  const cleanCustomer = customerName.replace(/[()]/g, '');
+  const cleanFile = fileName.replace(/[()]/g, '');
+
+  const streamContent = `BT
+/F1 24 Tf
+100 700 Td
+(PRINTOK PRINT SEPARATOR) Tj
+/F1 48 Tf
+0 -60 Td
+(${cleanToken}) Tj
+/F1 16 Tf
+0 -50 Td
+(Shop: ${cleanShop}) Tj
+0 -25 Td
+(File: ${cleanFile}) Tj
+0 -25 Td
+(Customer: ${cleanCustomer}) Tj
+0 -25 Td
+(Date: ${dateStr}) Tj
+ET`;
+
+  const streamLength = Buffer.byteLength(streamContent);
+
+  const pdfString = `%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+5 0 obj
+<< /Length ${streamLength} >>
+stream
+${streamContent}
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000244 00000 n 
+0000000313 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+580
+%%EOF`;
+
+  return Buffer.from(pdfString, 'utf-8');
+}
+

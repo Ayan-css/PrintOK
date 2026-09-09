@@ -178,5 +178,90 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(badRes.status, 400);
   });
 
+  await t.test('7. Token Generation (#001 sequence), Duplex Pricing, & Manual Override', async () => {
+    const samplePdfBase64 = Buffer.from('%PDF-1.4 token test').toString('base64');
+    
+    // Create job with isDuplex: true
+    const res = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: createdPrinterId,
+        fileName: 'duplex_doc.pdf',
+        fileBase64: samplePdfBase64,
+        copies: 1,
+        isColor: false,
+        isDuplex: true,
+      }),
+    });
+
+    assert.strictEqual(res.status, 201);
+    const data = (await res.json()) as any;
+    assert.ok(data.job.tokenNumber);
+    assert.strictEqual(data.job.tokenNumber, '#004'); // Previous tests created #001, #002, #003
+    assert.strictEqual(data.job.totalPriceInCents, 150); // B&W Duplex = 150 cents per page
+
+    // Manual Override Endpoint
+    const overrideRes = await fetch(`${baseUrl}/api/print-jobs/${data.job.id}/manual-override`, {
+      method: 'POST',
+    });
+    assert.strictEqual(overrideRes.status, 200);
+    const overrideData = (await overrideRes.json()) as any;
+    assert.strictEqual(overrideData.job.printState, PrintState.Queued);
+  });
+
+  await t.test('8. Agent Heartbeat & Telemetry Status', async () => {
+    // Send Agent Heartbeat
+    const heartbeatRes = await fetch(`${baseUrl}/api/agent/heartbeat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-agent-api-key': agentApiKey,
+      },
+      body: JSON.stringify({ paperStatus: 'OK' }),
+    });
+
+    assert.strictEqual(heartbeatRes.status, 200);
+    const hbData = (await heartbeatRes.json()) as any;
+    assert.strictEqual(hbData.telemetry.isOnline, true);
+    assert.strictEqual(hbData.telemetry.paperStatus, 'OK');
+
+    // Fetch Printer Telemetry via Public API
+    const telemRes = await fetch(`${baseUrl}/api/printers/${createdPrinterId}/telemetry`);
+    assert.strictEqual(telemRes.status, 200);
+    const telemData = (await telemRes.json()) as any;
+    assert.strictEqual(telemData.isOnline, true);
+  });
+
+  await t.test('9. Shop Pricing Matrix CRUD & Shop Stats', async () => {
+    // Get default shop pricing
+    const pricingRes = await fetch(`${baseUrl}/api/shops/shop_test/pricing`);
+    assert.strictEqual(pricingRes.status, 200);
+    const pricingData = (await pricingRes.json()) as any;
+    assert.strictEqual(pricingData.pricing.bwSinglePerPageCents, 200);
+
+    // Update shop pricing
+    const updateRes = await fetch(`${baseUrl}/api/shops/shop_test/pricing`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bwSinglePerPageCents: 300,
+        colorSinglePerPageCents: 1200,
+      }),
+    });
+    assert.strictEqual(updateRes.status, 200);
+    const updatedData = (await updateRes.json()) as any;
+    assert.strictEqual(updatedData.pricing.bwSinglePerPageCents, 300);
+    assert.strictEqual(updatedData.pricing.colorSinglePerPageCents, 1200);
+
+    // Fetch shop stats
+    const statsRes = await fetch(`${baseUrl}/api/shops/shop_test/stats`);
+    assert.strictEqual(statsRes.status, 200);
+    const statsData = (await statsRes.json()) as any;
+    assert.ok(statsData.stats);
+  });
+
   server.close();
 });
+
+

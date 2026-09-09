@@ -75,12 +75,15 @@ export class AgentWebSocketServer {
       const eventPayload: JobQueuedEvent = {
         jobId: job.id,
         printerId: job.printerId,
+        tokenNumber: job.tokenNumber,
         fileName: job.fileName,
         fileUrl: job.fileUrl,
         fileChecksum: job.fileChecksum,
         pageCount: job.pageCount,
         copies: job.copies,
         isColor: job.isColor,
+        isDuplex: job.isDuplex,
+        paperSize: job.paperSize,
       };
 
       const msg: AgentWsMessage = {
@@ -93,4 +96,5 @@ export class AgentWebSocketServer {
     }
     return false;
   }
+
 }

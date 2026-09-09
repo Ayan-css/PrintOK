@@ -72,6 +72,59 @@ export function createApp(
   });
 
   /**
+   * Get Shop Pricing Config
+   */
+  app.get('/api/shops/:shopId/pricing', async (req: Request, res: Response) => {
+    try {
+      const { shopId } = req.params;
+      const pricing = await storage.getShopPricing(shopId);
+      return res.json({ pricing });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Update Shop Pricing Config
+   */
+  app.post('/api/shops/:shopId/pricing', async (req: Request, res: Response) => {
+    try {
+      const { shopId } = req.params;
+      const updatedPricing = await storage.updateShopPricing(shopId, req.body || {});
+      return res.json({ pricing: updatedPricing });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Get Shop Performance Stats & Analytics
+   */
+  app.get('/api/shops/:shopId/stats', async (req: Request, res: Response) => {
+    try {
+      const { shopId } = req.params;
+      const stats = await storage.getShopStats(shopId);
+      return res.json({ stats });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Get Recent Jobs for Shop Owner Dashboard
+   */
+  app.get('/api/shops/:shopId/jobs', async (req: Request, res: Response) => {
+    try {
+      const { shopId } = req.params;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
+      const jobs = await storage.getRecentJobsForShop(shopId, limit);
+      return res.json({ jobs });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
    * Get Printer & Shop Info by Printer ID
    */
   app.get('/api/printers/:printerId', async (req: Request, res: Response) => {
@@ -82,7 +135,22 @@ export function createApp(
         return res.status(404).json({ error: 'Printer not found.' });
       }
       const shop = await storage.getShop(printer.shopId);
-      return res.json({ printer, shop });
+      const telemetry = await storage.getPrinterTelemetry(printerId);
+      return res.json({ printer, shop, telemetry });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+
+  /**
+   * Get Printer Telemetry & Online Status
+   */
+  app.get('/api/printers/:printerId/telemetry', async (req: Request, res: Response) => {
+    try {
+      const { printerId } = req.params;
+      const telemetry = await storage.getPrinterTelemetry(printerId);
+      return res.json(telemetry);
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -93,7 +161,7 @@ export function createApp(
    */
   app.post('/api/print-jobs', async (req: Request, res: Response) => {
     try {
-      const { printerId, fileName, fileBase64, copies, isColor } = req.body as CreatePrintJobDto;
+      const { printerId, fileName, fileBase64, copies, isColor, isDuplex, paperSize } = req.body as CreatePrintJobDto;
       const autoApprove = req.query.autoApprove !== 'false';
 
       if (!printerId || !fileName || !fileBase64) {
@@ -123,7 +191,9 @@ export function createApp(
         verifiedPageCount,
         copies || 1,
         !!isColor,
-        autoApprove
+        autoApprove,
+        !!isDuplex,
+        paperSize || 'A4'
       );
 
       // If job is immediately queued, push notification to active WebSocket agent
@@ -137,6 +207,51 @@ export function createApp(
       return res.status(500).json({ error: err.message });
     }
   });
+
+  /**
+   * Windows Print Agent Heartbeat Endpoint
+   */
+  app.post('/api/agent/heartbeat', async (req: Request, res: Response) => {
+    try {
+      const apiKey = req.headers['x-agent-api-key'] as string;
+      if (!apiKey) {
+        return res.status(401).json({ error: 'Unauthorized: Missing x-agent-api-key header.' });
+      }
+
+      const printer = await storage.getPrinterByApiKey(apiKey);
+      if (!printer) {
+        return res.status(401).json({ error: 'Unauthorized: Invalid Agent API Key.' });
+      }
+
+      const { paperStatus } = req.body || {};
+      const telemetry = await storage.recordHeartbeat(printer.id, paperStatus || 'OK');
+      return res.json({ success: true, telemetry });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * One-Click Manual Print Override (For offline cash payment / merchant override)
+   */
+  app.post('/api/print-jobs/:id/manual-override', async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const job = await storage.confirmPaymentAndQueueJob(id);
+      if (!job) {
+        return res.status(404).json({ error: 'Print job not found.' });
+      }
+
+      if (wsServer) {
+        wsServer.notifyJobQueued(job);
+      }
+
+      return res.json({ success: true, message: 'Job manually approved & queued for print.', job });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
 
   /**
    * Create Razorpay Payment Order Endpoint

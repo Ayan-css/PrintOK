@@ -36,6 +36,9 @@ public class PrintAgentWorker : BackgroundService
         // Start background WebSocket push listener with auto-reconnect
         _ = Task.Run(() => ConnectAndListenWebSocketAsync(stoppingToken), stoppingToken);
 
+        // Start periodic background telemetry heartbeat (every 30s)
+        _ = Task.Run(() => StartHeartbeatLoopAsync(stoppingToken), stoppingToken);
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -54,6 +57,34 @@ public class PrintAgentWorker : BackgroundService
             await Task.Delay(_pollIntervalMs, stoppingToken);
         }
     }
+
+    private async Task StartHeartbeatLoopAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Post, "/api/agent/heartbeat")
+                {
+                    Content = JsonContent.Create(new { paperStatus = "OK" })
+                };
+                request.Headers.Add("x-agent-api-key", _apiKey);
+
+                using var response = await _httpClient.SendAsync(request, cancellationToken);
+                if (response.IsSuccessStatusCode)
+                {
+                    _logger.LogDebug("Heartbeat telemetry successfully sent to Cloud API.");
+                }
+            }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogWarning("Heartbeat send failed: {Message}", ex.Message);
+            }
+
+            await Task.Delay(30000, cancellationToken);
+        }
+    }
+
 
     private async Task ConnectAndListenWebSocketAsync(CancellationToken cancellationToken)
     {

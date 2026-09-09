@@ -48,13 +48,19 @@
 
         <!-- Shop status — updated by JS -->
         <div class="shop-status-badge" id="shopStatusBadge" aria-label="Shop connection status">
-          <div class="shop-status-dot" aria-hidden="true"></div>
+          <div class="shop-status-dot" id="shopStatusDot" aria-hidden="true"></div>
           <span class="shop-status-text" id="shopNameDisplay">
             <!-- skeleton while loading -->
             <span class="skeleton skeleton-badge" id="shopNameSkeleton" style="width:80px;height:14px;display:inline-block;"></span>
           </span>
         </div>
       </header>
+
+      <!-- Agent Offline Warning Banner -->
+      <div id="agentOfflineWarning" class="agent-offline-banner" hidden>
+        ⚠️ <strong>Printer Offline</strong>: Shop's Windows Agent is currently disconnected. Jobs will be queued until agent reconnects.
+      </div>
+
 
       <!-- ==============================
            SCREEN: LANDING (no printer ID)
@@ -81,29 +87,88 @@
         </div>
 
         <p class="landing-body">
-          Hardware-free printing platform for stationery shops. Scan QR, upload PDF from phone, pay & collect printouts.
+          Hardware-free stationery printing platform. Scan shop QR, upload PDF from phone, pay & collect printouts — zero merchant browser intervention required.
         </p>
 
         <!-- ==============================================
-             INTERACTIVE DEMO / SHOPKEEPER SANDBOX
+             TRANSPARENT PRICING & RATES MATRIX SECTION
+        ================================================== -->
+        <section class="card" style="margin-top: 12px; text-align: left;">
+          <div class="card-header">
+            <h2 class="card-title">Standard Printing Rates Matrix</h2>
+            <span class="badge badge-success">Transparent Pricing</span>
+          </div>
+
+          <div class="pricing-matrix-grid">
+            <div class="pricing-card">
+              <div class="pricing-card-type">B&amp;W Single-Sided</div>
+              <div class="pricing-card-rate">₹2.00 <span>/ page</span></div>
+              <div class="pricing-card-meta">Standard 80 GSM A4 Sheet</div>
+            </div>
+            <div class="pricing-card">
+              <div class="pricing-card-type">B&amp;W Back-to-Back</div>
+              <div class="pricing-card-rate">₹1.50 <span>/ page</span></div>
+              <div class="pricing-card-meta">Duplex (₹3.00 / sheet)</div>
+            </div>
+            <div class="pricing-card">
+              <div class="pricing-card-type">Color Single-Sided</div>
+              <div class="pricing-card-rate">₹10.00 <span>/ page</span></div>
+              <div class="pricing-card-meta">Vibrant Laser Color</div>
+            </div>
+            <div class="pricing-card">
+              <div class="pricing-card-type">Color Back-to-Back</div>
+              <div class="pricing-card-rate">₹8.00 <span>/ page</span></div>
+              <div class="pricing-card-meta">Color Duplex (₹16.00 / sheet)</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ==============================================
+             INTERACTIVE SHOPKEEPER REVENUE ESTIMATOR
         ================================================== -->
         <section class="card card--accent" style="margin-top: 12px; text-align: left;">
           <div class="card-header">
-            <h2 class="card-title">Shopkeeper Portal &amp; Interactive Demo</h2>
-            <span class="badge badge-queued">Live Sandbox</span>
+            <h2 class="card-title">Shopkeeper Revenue Estimator</h2>
+            <span class="badge badge-queued">Zero Setup Fee</span>
+          </div>
+
+          <div style="display:flex; flex-direction:column; gap: 10px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span class="label-text">Daily Customer Orders:</span>
+              <span class="counter-value" id="calcOrdersVal">40 orders/day</span>
+            </div>
+            <input type="range" id="calcOrdersRange" min="10" max="200" value="40" step="5" style="width:100%; accent-color: var(--color-primary);">
+            
+            <div class="revenue-estimate-box">
+              <div>
+                <div class="meta-text" style="color:rgba(255,255,255,0.7);">Estimated Monthly Revenue</div>
+                <div style="font-family: var(--font-display); font-size: 28px; font-weight: 800; color: var(--color-secondary);" id="calcRevenueText">₹18,000 / mo</div>
+              </div>
+              <div class="meta-text" style="color:rgba(255,255,255,0.6); text-align:right; max-width:140px;">100% Hardware Free • Instant UPI Payouts</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ==============================================
+             SHOPKEEPER DASHBOARD & CONTROL ROOM
+        ================================================== -->
+        <section class="card" style="margin-top: 12px; text-align: left;">
+          <div class="card-header">
+            <h2 class="card-title">Shopkeeper Control Dashboard</h2>
+            <span class="badge badge-neutral">Merchant Portal</span>
           </div>
 
           <!-- Step 1: Register Form -->
           <div id="shopRegisterForm">
             <p class="meta-text" style="margin-bottom: 12px; color: var(--color-text-secondary);">
-              Register a demo shop to generate a live QR code, receive API keys, and test customer uploads in real-time.
+              Register your shop to generate a permanent QR code sign, pair your printer agent, and configure custom pricing rates.
             </p>
             <div class="form-group" style="margin-bottom: 10px;">
               <label class="form-label" for="regShopName">Shop Name</label>
               <input type="text" id="regShopName" class="form-input" value="Ayan's Speed Print" placeholder="e.g. Speed Print Hub">
             </div>
             <div class="form-group" style="margin-bottom: 10px;">
-              <label class="form-label" for="regPrinterName">Printer Name / Model</label>
+              <label class="form-label" for="regPrinterName">Printer Model</label>
               <input type="text" id="regPrinterName" class="form-input" value="HP LaserJet Pro M404dn" placeholder="e.g. HP LaserJet">
             </div>
             <div class="form-group" style="margin-bottom: 14px;">
@@ -111,53 +176,100 @@
               <input type="text" id="regShopUpi" class="form-input" value="speedyprint@upi" placeholder="e.g. shopowner@upi">
             </div>
             <button class="btn btn-primary btn-full" id="btnRegisterShop" type="button">
-              ✨ Register Shop &amp; Generate QR Code
+              ✨ Register Shop &amp; Launch Control Dashboard
             </button>
           </div>
 
-          <!-- Step 2: Registered Shop View (hidden until created) -->
+          <!-- Step 2: Tabbed Dashboard Control Room -->
           <div id="shopDashboard" hidden>
-            <div style="background: var(--color-surface); border: var(--border); border-radius: var(--radius-md); padding: 16px; margin-bottom: 12px; text-align: center;">
-              <div class="label-text" id="dashShopTitle" style="font-size: 16px; margin-bottom: 4px;">Speedy Print Shop</div>
-              <div class="meta-text" id="dashPrinterTitle" style="margin-bottom: 4px;">HP LaserJet Pro M404dn</div>
-              <div class="meta-text" style="margin-bottom: 12px; color: var(--color-success); font-weight: 600;">Payout UPI: <span id="dashUpiDisplay">speedyprint@upi</span></div>
-
-              <!-- Generated QR Code Image -->
-              <div style="background: #fff; border: 2px solid var(--color-black); border-radius: 8px; padding: 12px; display: inline-block; box-shadow: var(--shadow-sm);">
-                <img id="dashQrImg" src="" alt="Shop QR Code" style="width: 160px; height: 160px; display: block; margin: 0 auto;">
-              </div>
-              <div class="meta-text" style="margin-top: 8px; font-size: 11px;">Customer Scan Target: <span id="dashQrTargetUrl" style="font-family: monospace; font-weight: 600;"></span></div>
-
-              <div style="display: flex; gap: 8px; margin-top: 12px;">
-                <button class="btn btn-secondary btn-full btn-sm" id="btnOpenCustomerView" type="button">
-                  📱 Open Customer Upload View
-                </button>
-              </div>
+            <!-- Dashboard Tab Bar -->
+            <div class="dash-tabs">
+              <button class="dash-tab-btn active" id="tabBtnQueue" data-tab="tabQueue" type="button">⚡ Live Queue</button>
+              <button class="dash-tab-btn" id="tabBtnPricing" data-tab="tabPricing" type="button">⚙️ Rates Matrix</button>
+              <button class="dash-tab-btn" id="tabBtnQr" data-tab="tabQr" type="button">🖨️ QR &amp; Agent</button>
+              <button class="dash-tab-btn" id="tabBtnStats" data-tab="tabStats" type="button">📊 Financials</button>
             </div>
 
-            <!-- Agent Pairing Box -->
-            <div style="background: var(--color-paper); border: var(--border); border-radius: var(--radius-md); padding: 12px; margin-bottom: 12px;">
-              <div class="label-text" style="font-size: 12px; margin-bottom: 4px;">🖨️ Windows Agent Integration</div>
-              <div class="meta-text" style="font-size: 11px; margin-bottom: 8px;">API Key: <code id="dashApiKey" style="background:#fff; padding:2px 6px; border-radius:4px; font-weight:bold;"></code></div>
-              <button class="btn btn-outline btn-full btn-sm" id="btnToggleSimulatedAgent" type="button">
-                ▶️ Start Simulated Windows Agent (Auto-Print Jobs)
-              </button>
-              <div id="agentStatusText" class="meta-text" style="margin-top: 6px; font-size: 11px; color: var(--color-primary); font-weight: 600;">Agent status: Offline</div>
-            </div>
-
-            <!-- Live Queue Monitor -->
-            <div>
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <div class="card-title">Live Shop Print Queue</div>
+            <!-- Tab 1: Live Queue -->
+            <div id="tabQueue" class="dash-tab-pane">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <div class="label-text">Live Counter Orders</div>
                 <span id="queueCountBadge" class="badge badge-neutral">0 Jobs</span>
               </div>
-              <div id="liveQueueList" style="display: flex; flex-direction: column; gap: 8px; max-height: 180px; overflow-y: auto;">
-                <div class="meta-text" style="text-align: center; padding: 12px;">No print jobs in queue yet. Open Customer View and submit a document!</div>
+              <div id="liveQueueList" style="display: flex; flex-direction: column; gap: 8px; max-height: 240px; overflow-y: auto;">
+                <div class="meta-text" style="text-align: center; padding: 12px;">No print jobs in queue yet. Scan QR to submit!</div>
+              </div>
+            </div>
+
+            <!-- Tab 2: Pricing Matrix Configuration -->
+            <div id="tabPricing" class="dash-tab-pane" hidden>
+              <div class="label-text" style="margin-bottom: 8px;">Configure Custom Per-Page Print Rates</div>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px;">
+                <div>
+                  <label class="form-label" style="font-size:11px;">B&amp;W Single (₹)</label>
+                  <input type="number" id="rateBwSingle" class="form-input input-sm" value="2.00" step="0.5">
+                </div>
+                <div>
+                  <label class="form-label" style="font-size:11px;">B&amp;W Duplex (₹)</label>
+                  <input type="number" id="rateBwDuplex" class="form-input input-sm" value="1.50" step="0.5">
+                </div>
+                <div>
+                  <label class="form-label" style="font-size:11px;">Color Single (₹)</label>
+                  <input type="number" id="rateColorSingle" class="form-input input-sm" value="10.00" step="1">
+                </div>
+                <div>
+                  <label class="form-label" style="font-size:11px;">Color Duplex (₹)</label>
+                  <input type="number" id="rateColorDuplex" class="form-input input-sm" value="8.00" step="1">
+                </div>
+              </div>
+              <button class="btn btn-primary btn-full btn-sm" id="btnSavePricing" type="button">💾 Save Custom Rates Matrix</button>
+            </div>
+
+            <!-- Tab 3: Shop QR & Agent Setup -->
+            <div id="tabQr" class="dash-tab-pane" hidden>
+              <div style="background: var(--color-surface); border: var(--border); border-radius: var(--radius-md); padding: 14px; text-align: center;">
+                <div class="label-text" id="dashShopTitle" style="font-size: 15px; margin-bottom: 2px;">Speedy Print Shop</div>
+                <div class="meta-text" id="dashPrinterTitle" style="margin-bottom: 8px;">HP LaserJet Pro M404dn</div>
+
+                <div style="background: #fff; border: 2px solid var(--color-black); border-radius: 8px; padding: 10px; display: inline-block;">
+                  <img id="dashQrImg" src="" alt="Shop QR Code" style="width: 140px; height: 140px; display: block; margin: 0 auto;">
+                </div>
+                <div class="meta-text" style="margin-top: 6px; font-size: 11px;">Scan Target: <span id="dashQrTargetUrl" style="font-family: monospace; font-weight: 600;"></span></div>
+
+                <div style="display: flex; gap: 8px; margin-top: 10px;">
+                  <button class="btn btn-secondary btn-full btn-sm" id="btnDownloadQr" type="button">📥 Download Printable QR Sign</button>
+                  <button class="btn btn-outline btn-full btn-sm" id="btnOpenCustomerView" type="button">📱 Customer View</button>
+                </div>
+              </div>
+
+              <!-- Windows Agent Pairing Box -->
+              <div style="background: var(--color-paper); border: var(--border); border-radius: var(--radius-md); padding: 10px; margin-top: 10px;">
+                <div class="label-text" style="font-size: 12px; margin-bottom: 2px;">🖨️ Agent Connectivity</div>
+                <div class="meta-text" style="font-size: 11px; margin-bottom: 6px;">API Key: <code id="dashApiKey" style="background:#fff; padding:2px 6px; border-radius:4px; font-weight:bold;"></code></div>
+                <button class="btn btn-outline btn-full btn-sm" id="btnToggleSimulatedAgent" type="button">
+                  ▶️ Start Simulated Windows Agent
+                </button>
+                <div id="agentStatusText" class="meta-text" style="margin-top: 4px; font-size: 11px; color: var(--color-primary); font-weight: 600;">Agent status: Offline</div>
+              </div>
+            </div>
+
+            <!-- Tab 4: Financials & Analytics -->
+            <div id="tabStats" class="dash-tab-pane" hidden>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                <div class="stat-card">
+                  <div class="stat-label">Today's Revenue</div>
+                  <div class="stat-value" id="statTodayRevenue">₹0.00</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-card-type">Today's Orders</div>
+                  <div class="stat-value" id="statTodayOrders">0</div>
+                </div>
               </div>
             </div>
           </div>
 
         </section>
+
 
         <ol class="landing-steps" aria-label="How PrintOk works" style="margin-top: 16px;">
           <li class="landing-step">
@@ -271,6 +383,34 @@
             </div>
           </div>
 
+          <!-- Print Sides (Single vs Duplex) -->
+          <div class="setting-row">
+            <div class="setting-label">
+              <div class="label-text">Print Sides</div>
+              <div class="meta-text">Single or Back-to-Back</div>
+            </div>
+            <div class="segmented" role="group" aria-label="Duplex side selection">
+              <button class="segment-btn active" id="singleSideBtn" data-duplex="false" type="button" aria-pressed="true">
+                Single Sided
+              </button>
+              <button class="segment-btn" id="duplexBtn" data-duplex="true" type="button" aria-pressed="false">
+                Duplex (₹1.50/pg)
+              </button>
+            </div>
+          </div>
+
+          <!-- Paper Size -->
+          <div class="setting-row">
+            <div class="setting-label">
+              <div class="label-text">Paper Size</div>
+              <div class="meta-text">Standard paper format</div>
+            </div>
+            <div class="segmented" role="group" aria-label="Paper size selection">
+              <button class="segment-btn active" id="paperA4Btn" data-size="A4" type="button" aria-pressed="true">A4</button>
+              <button class="segment-btn" id="paperA3Btn" data-size="A3" type="button" aria-pressed="false">A3</button>
+            </div>
+          </div>
+
           <!-- Copies -->
           <div class="setting-row">
             <div class="setting-label">
@@ -315,10 +455,21 @@
            SCREEN: STATUS TRACKER
       =============================== -->
       <aside id="trackerSection" class="tracker-card" aria-label="Print job status" hidden>
+        <!-- Token Banner Card -->
+        <div class="token-banner" id="tokenBanner">
+          <div class="token-header">
+            <span class="token-label">YOUR PRINT TOKEN</span>
+            <span class="token-badge">COUNTER PICKUP</span>
+          </div>
+          <div class="token-number" id="tokenNumberDisplay">#000</div>
+          <div class="token-hint">Show this token number at the shop counter tray</div>
+        </div>
+
         <div class="tracker-topbar">
           <span class="tracker-label">Print Status</span>
           <span class="badge badge-queued" id="statusBadge" aria-live="polite">Queued</span>
         </div>
+
 
         <div class="tracker-body">
           <!-- Progress bar -->

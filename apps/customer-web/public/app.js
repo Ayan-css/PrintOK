@@ -12,10 +12,13 @@ document.addEventListener('DOMContentLoaded', () => {
   let selectedFile = null;
   let fileBase64 = null;
   let isColor = false;
+  let isDuplex = false;
+  let paperSize = 'A4';
   let copies = 1;
   let pageCount = 1;
   let currentPrinterId = null;
   let pollingTimer = null;
+  let healthCheckTimer = null;
 
   // ============================================================
   //  DOM REFS
@@ -27,6 +30,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const shopNameDisplay      = document.getElementById('shopNameDisplay');
   const shopNameSkeleton     = document.getElementById('shopNameSkeleton');
+  const shopStatusDot        = document.getElementById('shopStatusDot');
+  const agentOfflineWarning  = document.getElementById('agentOfflineWarning');
 
   const dropZone             = document.getElementById('dropZone');
   const fileInput            = document.getElementById('fileInput');
@@ -38,6 +43,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const bwBtn                = document.getElementById('bwBtn');
   const colorBtn             = document.getElementById('colorBtn');
+  const singleSideBtn        = document.getElementById('singleSideBtn');
+  const duplexBtn            = document.getElementById('duplexBtn');
+  const paperA4Btn           = document.getElementById('paperA4Btn');
+  const paperA3Btn           = document.getElementById('paperA3Btn');
   const minusCopyBtn         = document.getElementById('minusCopyBtn');
   const plusCopyBtn          = document.getElementById('plusCopyBtn');
   const copiesVal            = document.getElementById('copiesVal');
@@ -45,11 +54,39 @@ document.addEventListener('DOMContentLoaded', () => {
   const totalPriceText       = document.getElementById('totalPriceText');
   const payPrintBtn          = document.getElementById('payPrintBtn');
 
+  const tokenNumberDisplay   = document.getElementById('tokenNumberDisplay');
   const statusBadge          = document.getElementById('statusBadge');
   const progressFill         = document.getElementById('progressFill');
   const progressBar          = document.getElementById('progressBar');
   const trackerMessage       = document.getElementById('trackerMessage');
   const printAnotherBtn      = document.getElementById('printAnotherBtn');
+
+  // ============================================================
+  //  HEALTH & TELEMETRY CHECK
+  // ============================================================
+  function startAgentHealthCheck(printerId) {
+    if (!printerId) return;
+    checkAgentHealth(printerId);
+    healthCheckTimer = setInterval(() => checkAgentHealth(printerId), 5000);
+  }
+
+  async function checkAgentHealth(printerId) {
+    try {
+      const res = await fetch(`${API_BASE}/api/printers/${printerId}/telemetry`);
+      if (res.ok) {
+        const telemetry = await res.json();
+        if (telemetry.isOnline) {
+          if (agentOfflineWarning) agentOfflineWarning.hidden = true;
+          if (shopStatusDot) shopStatusDot.className = 'shop-status-dot';
+        } else {
+          if (agentOfflineWarning) agentOfflineWarning.hidden = false;
+          if (shopStatusDot) shopStatusDot.className = 'shop-status-dot offline';
+        }
+      }
+    } catch {
+      // transient network error
+    }
+  }
 
   // ============================================================
   //  TOAST SYSTEM
@@ -124,6 +161,7 @@ document.addEventListener('DOMContentLoaded', () => {
   } else {
     showScreen('upload');
     fetchShopInfo();
+    startAgentHealthCheck(currentPrinterId);
   }
 
   // ============================================================
@@ -135,6 +173,12 @@ document.addEventListener('DOMContentLoaded', () => {
       if (res.ok) {
         const data = await res.json();
         hideSkeleton(data.shop ? data.shop.name : 'PrintOk Shop');
+        if (data.telemetry) {
+          if (!data.telemetry.isOnline && agentOfflineWarning) {
+            agentOfflineWarning.hidden = false;
+            if (shopStatusDot) shopStatusDot.className = 'shop-status-dot offline';
+          }
+        }
       } else {
         hideSkeleton('Partner Shop');
       }
@@ -263,10 +307,15 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ============================================================
-  //  COLOR MODE
+  //  COLOR MODE & DUPLEX & PAPER OPTIONS
   // ============================================================
   bwBtn.addEventListener('click', () => setColorMode(false));
   colorBtn.addEventListener('click', () => setColorMode(true));
+
+  if (singleSideBtn) singleSideBtn.addEventListener('click', () => setDuplexMode(false));
+  if (duplexBtn) duplexBtn.addEventListener('click', () => setDuplexMode(true));
+  if (paperA4Btn) paperA4Btn.addEventListener('click', () => setPaperSize('A4'));
+  if (paperA3Btn) paperA3Btn.addEventListener('click', () => setPaperSize('A3'));
 
   function setColorMode(color) {
     isColor = color;
@@ -277,8 +326,34 @@ document.addEventListener('DOMContentLoaded', () => {
     updatePrice();
   }
 
+  function setDuplexMode(duplex) {
+    isDuplex = duplex;
+    if (singleSideBtn) {
+      singleSideBtn.classList.toggle('active', !duplex);
+      singleSideBtn.setAttribute('aria-pressed', String(!duplex));
+    }
+    if (duplexBtn) {
+      duplexBtn.classList.toggle('active', duplex);
+      duplexBtn.setAttribute('aria-pressed', String(duplex));
+    }
+    updatePrice();
+  }
+
+  function setPaperSize(size) {
+    paperSize = size;
+    if (paperA4Btn) {
+      paperA4Btn.classList.toggle('active', size === 'A4');
+      paperA4Btn.setAttribute('aria-pressed', String(size === 'A4'));
+    }
+    if (paperA3Btn) {
+      paperA3Btn.classList.toggle('active', size === 'A3');
+      paperA3Btn.setAttribute('aria-pressed', String(size === 'A3'));
+    }
+    updatePrice();
+  }
+
   // ============================================================
-  //  COPIES
+  //  COPIES & PRICING
   // ============================================================
   minusCopyBtn.addEventListener('click', () => {
     if (copies > 1) { copies--; copiesVal.textContent = copies; updatePrice(); }
@@ -294,7 +369,8 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   function updatePrice() {
-    const pricePerPage = isColor ? 10.00 : 2.00;
+    let pricePerPage = isColor ? (isDuplex ? 8.00 : 10.00) : (isDuplex ? 1.50 : 2.00);
+    if (paperSize === 'A3') pricePerPage *= 2; // A3 double rate
     const total = pricePerPage * pageCount * copies;
     totalPriceText.textContent = `₹${total.toFixed(2)}`;
   }
@@ -318,6 +394,8 @@ document.addEventListener('DOMContentLoaded', () => {
           pageCount,
           copies,
           isColor,
+          isDuplex,
+          paperSize,
         }),
       });
 
@@ -325,8 +403,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (res.ok && data.job) {
         showScreen('tracker');
+        if (data.job.tokenNumber && tokenNumberDisplay) {
+          tokenNumberDisplay.textContent = data.job.tokenNumber;
+        }
         startJobTracking(data.job.id);
-        showToast('success', 'Job submitted!', 'Your document is on its way to the printer.');
+        showToast('success', `Token ${data.job.tokenNumber || ''} Generated!`, 'Your document is queued at printer.');
       } else {
         const msg = data.error || 'Failed to submit the print job. Please try again.';
         showToast('danger', 'Submission failed', msg);
@@ -337,6 +418,7 @@ document.addEventListener('DOMContentLoaded', () => {
       setPayBtnLoading(false);
     }
   });
+
 
   function setPayBtnLoading(loading) {
     payPrintBtn.disabled = loading;
@@ -354,6 +436,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const res = await fetch(`${API_BASE}/api/print-jobs/${jobId}`);
         if (res.ok) {
           const data = await res.json();
+          if (data.job && data.job.tokenNumber && tokenNumberDisplay) {
+            tokenNumberDisplay.textContent = data.job.tokenNumber;
+          }
           const state = data.job.printState;
           updateTrackerUI(state);
 
@@ -458,15 +543,51 @@ document.addEventListener('DOMContentLoaded', () => {
   const dashQrTargetUrl        = document.getElementById('dashQrTargetUrl');
   const dashApiKey             = document.getElementById('dashApiKey');
   const btnOpenCustomerView    = document.getElementById('btnOpenCustomerView');
+  const btnDownloadQr          = document.getElementById('btnDownloadQr');
+  const btnSavePricing         = document.getElementById('btnSavePricing');
   const btnToggleSimulatedAgent = document.getElementById('btnToggleSimulatedAgent');
   const agentStatusText        = document.getElementById('agentStatusText');
   const liveQueueList          = document.getElementById('liveQueueList');
   const queueCountBadge        = document.getElementById('queueCountBadge');
 
+  const rateBwSingle           = document.getElementById('rateBwSingle');
+  const rateBwDuplex           = document.getElementById('rateBwDuplex');
+  const rateColorSingle        = document.getElementById('rateColorSingle');
+  const rateColorDuplex        = document.getElementById('rateColorDuplex');
+
+  const statTodayRevenue       = document.getElementById('statTodayRevenue');
+  const statTodayOrders        = document.getElementById('statTodayOrders');
+
+  const calcOrdersRange        = document.getElementById('calcOrdersRange');
+  const calcOrdersVal          = document.getElementById('calcOrdersVal');
+  const calcRevenueText        = document.getElementById('calcRevenueText');
+
   let activeShopData           = null;
   let activePrinterData        = null;
   let isSimulatedAgentRunning  = false;
   let agentLoopTimer           = null;
+
+  // Revenue Estimator Slider
+  if (calcOrdersRange) {
+    calcOrdersRange.addEventListener('input', (e) => {
+      const orders = parseInt(e.target.value, 10);
+      if (calcOrdersVal) calcOrdersVal.textContent = `${orders} orders/day`;
+      const estMonthly = orders * 15 * 30; // ₹15 average order * 30 days
+      if (calcRevenueText) calcRevenueText.textContent = `₹${estMonthly.toLocaleString()} / mo`;
+    });
+  }
+
+  // Dashboard Tab Switching
+  document.querySelectorAll('.dash-tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.dash-tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.dash-tab-pane').forEach(p => p.hidden = true);
+      btn.classList.add('active');
+      const targetId = btn.getAttribute('data-tab');
+      const targetPane = document.getElementById(targetId);
+      if (targetPane) targetPane.hidden = false;
+    });
+  });
 
   if (btnRegisterShop) {
     btnRegisterShop.addEventListener('click', async () => {
@@ -506,13 +627,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
           showToast('success', 'Shop Registered!', `Printer ID: ${data.printer.id}`);
 
-          // Set up Customer View button
           btnOpenCustomerView.onclick = () => {
             window.location.href = `/?printer=${data.printer.id}`;
           };
 
-          // Auto-start simulated agent for seamless demo experience
+          // QR Download Helper
+          if (btnDownloadQr) {
+            btnDownloadQr.onclick = () => {
+              const a = document.createElement('a');
+              a.href = data.printer.qrCodeDataUrl;
+              a.download = `PrintOk_QR_${data.shop.name.replace(/\s+/g, '_')}.png`;
+              a.click();
+              showToast('info', 'QR Sign Downloaded', 'Print and display this QR card at your shop counter.');
+            };
+          }
+
+          // Auto-start simulated agent
           startSimulatedAgent();
+          fetchShopStats();
         } else {
           showToast('danger', 'Registration Failed', data.error || 'Could not register shop.');
           btnRegisterShop.disabled = false;
@@ -524,6 +656,45 @@ document.addEventListener('DOMContentLoaded', () => {
         btnRegisterShop.textContent = '✨ Register Shop & Generate QR Code';
       }
     });
+  }
+
+  // Save Pricing Matrix
+  if (btnSavePricing) {
+    btnSavePricing.addEventListener('click', async () => {
+      if (!activeShopData) return;
+      try {
+        const res = await fetch(`${API_BASE}/api/shops/${activeShopData.id}/pricing`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            bwSinglePerPageCents: Math.round(parseFloat(rateBwSingle.value) * 100),
+            bwDuplexPerPageCents: Math.round(parseFloat(rateBwDuplex.value) * 100),
+            colorSinglePerPageCents: Math.round(parseFloat(rateColorSingle.value) * 100),
+            colorDuplexPerPageCents: Math.round(parseFloat(rateColorDuplex.value) * 100),
+          }),
+        });
+
+        if (res.ok) {
+          showToast('success', 'Rates Saved!', 'Custom pricing matrix updated for all customer uploads.');
+        }
+      } catch {
+        showToast('danger', 'Error', 'Could not update shop pricing matrix.');
+      }
+    });
+  }
+
+  async function fetchShopStats() {
+    if (!activeShopData) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/shops/${activeShopData.id}/stats`);
+      if (res.ok) {
+        const data = await res.json();
+        if (statTodayRevenue) statTodayRevenue.textContent = `₹${(data.stats.todayRevenueCents / 100).toFixed(2)}`;
+        if (statTodayOrders) statTodayOrders.textContent = String(data.stats.todayJobsCount);
+      }
+    } catch {
+      // ignore transient error
+    }
   }
 
   if (btnToggleSimulatedAgent) {
@@ -571,9 +742,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const jobs = data.jobs || [];
 
       updateShopQueueUI(jobs);
+      fetchShopStats();
 
       for (const job of jobs) {
-        showToast('info', '🖨️ Agent Picked Up Job', `Downloading & Spooling ${job.fileName}...`);
+        showToast('info', '🖨️ Agent Picked Up Job', `Downloading & Spooling Token ${job.tokenNumber || ''} (${job.fileName})...`);
 
         // Update to Printing
         await fetch(`${API_BASE}/api/agent/jobs/${job.id}/status`, {
@@ -585,7 +757,6 @@ document.addEventListener('DOMContentLoaded', () => {
           body: JSON.stringify({ printState: 'Printing' }),
         });
 
-        // Simulate Hardware Spooling delay
         await new Promise(r => setTimeout(r, 1200));
 
         // Update to Completed
@@ -598,7 +769,7 @@ document.addEventListener('DOMContentLoaded', () => {
           body: JSON.stringify({ printState: 'Completed' }),
         });
 
-        showToast('success', '🎉 Printed Successfully!', `${job.fileName} delivered to tray.`);
+        showToast('success', '🎉 Printed Successfully!', `Token ${job.tokenNumber || ''} delivered to tray.`);
       }
     } catch {
       // ignore transient errors
@@ -610,19 +781,40 @@ document.addEventListener('DOMContentLoaded', () => {
     queueCountBadge.textContent = `${jobs.length} Active Job(s)`;
 
     if (jobs.length === 0) {
-      liveQueueList.innerHTML = `<div class="meta-text" style="text-align: center; padding: 12px; background: var(--color-surface); border: 1px dashed var(--color-border-muted); border-radius: 6px;">No pending jobs in queue. Tap 'Open Customer View' above to submit a PDF!</div>`;
+      liveQueueList.innerHTML = `<div class="meta-text" style="text-align: center; padding: 12px; background: var(--color-surface); border: 1px dashed var(--color-border-muted); border-radius: 6px;">No pending jobs in queue. Tap 'Customer View' to submit!</div>`;
       return;
     }
 
     liveQueueList.innerHTML = jobs.map(j => `
       <div style="background: var(--color-surface); border: var(--border); border-radius: 6px; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center;">
         <div>
+          <div style="font-family: var(--font-display); font-size: 13px; font-weight: 800; color: var(--color-primary);">Token ${j.tokenNumber || '#---'}</div>
           <div style="font-family: var(--font-display); font-size: 12px; font-weight: 700;">📄 ${escapeHtml(j.fileName)}</div>
           <div class="meta-text" style="font-size: 10px;">${j.pageCount} pg • ${j.copies} copy • ${j.isColor ? 'Color' : 'B&W'} • ₹${(j.totalPriceInCents/100).toFixed(2)}</div>
         </div>
-        <span class="badge badge-printing">${j.printState}</span>
+        <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end;">
+          <span class="badge badge-printing">${j.printState}</span>
+          <button class="btn btn-primary btn-sm btn-override-cash" data-jobid="${j.id}" type="button" style="padding:2px 6px; font-size:10px;">⚡ Cash Approve</button>
+        </div>
       </div>
     `).join('');
+
+    // Attach Cash Manual Override listeners
+    document.querySelectorAll('.btn-override-cash').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const jobId = e.target.getAttribute('data-jobid');
+        if (!jobId) return;
+        try {
+          const res = await fetch(`${API_BASE}/api/print-jobs/${jobId}/manual-override`, { method: 'POST' });
+          if (res.ok) {
+            showToast('success', 'Cash Approved!', 'Job queued for immediate auto-print.');
+            pollAndProcessJobs();
+          }
+        } catch {
+          showToast('danger', 'Error', 'Could not approve job.');
+        }
+      });
+    });
   }
 
   function escapeHtml(str) {
@@ -630,4 +822,5 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
 });
+
 
