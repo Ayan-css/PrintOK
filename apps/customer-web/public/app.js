@@ -1,6 +1,6 @@
 /**
  * PrintOk Web Application Client
- * Dedicated multi-page support for Customer View, Merchant Dashboard & Shop Registration.
+ * Multi-page support, Document Preview, Automatic Page Detection, Custom Page Ranges & Redirects.
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -15,19 +15,17 @@ document.addEventListener('DOMContentLoaded', () => {
   let isDuplex = false;
   let paperSize = 'A4';
   let copies = 1;
+  let detectedTotalPages = 1;
   let pageCount = 1;
+  let pageRangeMode = 'all'; // 'all' or 'custom'
+  let customPageRange = '';
   let currentPrinterId = null;
   let pollingTimer = null;
   let healthCheckTimer = null;
 
-  let activeShopData = null;
-  let activePrinterData = null;
-  let isSimulatedAgentRunning = false;
-  let agentLoopTimer = null;
-
-  // Detect current page
-  const pathname = window.location.pathname;
-  const isRegisterPage = pathname.includes('/register') || pathname.includes('register.html');
+  // Detect current page route
+  const pathname = window.location.pathname.toLowerCase();
+  const isRegisterPage = pathname.includes('/register') || pathname.includes('/registration') || pathname.includes('register.html');
   const isDashboardPage = pathname.includes('/dashboard') || pathname.includes('dashboard.html');
 
   // ============================================================
@@ -70,7 +68,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ============================================================
-  //  1. SHOP REGISTRATION PAGE DRIVER (/register)
+  //  1. SHOP REGISTRATION DRIVER (/register, /registration, register.html)
   // ============================================================
   if (isRegisterPage) {
     const btnNextStep1 = document.getElementById('btnNextStep1');
@@ -157,7 +155,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 a.href = data.printer.qrCodeDataUrl;
                 a.download = `PrintOk_QR_${data.shop.name.replace(/\s+/g, '_')}.png`;
                 a.click();
-                showToast('info', 'QR Card Downloaded', 'Print and place at shop counter.');
+                showToast('info', 'QR Sign Downloaded', 'Print and place at shop counter.');
               };
             }
 
@@ -177,7 +175,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ============================================================
-  //  2. MERCHANT DASHBOARD PAGE DRIVER (/dashboard)
+  //  2. MERCHANT DASHBOARD DRIVER (/dashboard, dashboard.html)
   // ============================================================
   if (isDashboardPage) {
     const tabBtns = document.querySelectorAll('.dash-tab-btn');
@@ -198,13 +196,12 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     });
 
-    // Auto-load demo/first shop metrics
     loadDashboardMetrics();
     const btnRefreshQueue = document.getElementById('btnRefreshQueue');
     if (btnRefreshQueue) {
       btnRefreshQueue.addEventListener('click', () => {
         loadDashboardMetrics();
-        showToast('info', 'Refreshed', 'Queue data updated.');
+        showToast('info', 'Refreshed', 'Queue metrics updated.');
       });
     }
   }
@@ -222,12 +219,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (printed) printed.textContent = String(data.stats?.printedPagesCount || 0);
       }
     } catch {
-      // transient fetch error
+      // ignore
     }
   }
 
   // ============================================================
-  //  3. CUSTOMER MOBILE PRINTING PAGE DRIVER (index.html / ?)
+  //  3. CUSTOMER MOBILE PRINTING DRIVER (index.html / ?printer=)
   // ============================================================
   if (!isRegisterPage && !isDashboardPage) {
     const urlParams = new URLSearchParams(window.location.search);
@@ -250,7 +247,6 @@ document.addEventListener('DOMContentLoaded', () => {
       startAgentHealthCheck(currentPrinterId);
     }
 
-    // Dropzone elements
     const dropZone = document.getElementById('dropZone');
     const fileInput = document.getElementById('fileInput');
     const fileInfoBox = document.getElementById('fileInfoBox');
@@ -258,6 +254,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const infoFileMeta = document.getElementById('infoFileMeta');
     const btnRemoveFile = document.getElementById('btnRemoveFile');
     const configSection = document.getElementById('configSection');
+
+    const documentPreviewBox = document.getElementById('documentPreviewBox');
+    const previewImg = document.getElementById('previewImg');
+    const previewFallback = document.getElementById('previewFallback');
+    const previewFallbackText = document.getElementById('previewFallbackText');
 
     if (dropZone && fileInput) {
       dropZone.addEventListener('click', () => fileInput.click());
@@ -285,24 +286,103 @@ document.addEventListener('DOMContentLoaded', () => {
         selectedFile = null;
         fileBase64 = null;
         if (fileInfoBox) fileInfoBox.hidden = true;
+        if (documentPreviewBox) documentPreviewBox.hidden = true;
         if (configSection) configSection.hidden = true;
         if (dropZone) dropZone.hidden = false;
       });
     }
 
-    function handleCustomerFile(file) {
+    async function handleCustomerFile(file) {
       selectedFile = file;
       if (infoFileName) infoFileName.textContent = file.name;
-      if (infoFileMeta) infoFileMeta.textContent = `${(file.size / (1024 * 1024)).toFixed(2)} MB • Ready for print`;
+      if (infoFileMeta) infoFileMeta.textContent = `${(file.size / (1024 * 1024)).toFixed(2)} MB • Detecting pages...`;
+
       if (fileInfoBox) fileInfoBox.hidden = false;
+      if (documentPreviewBox) documentPreviewBox.hidden = false;
       if (configSection) configSection.hidden = false;
       if (dropZone) dropZone.hidden = true;
+
+      const arrayBuffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      
+      // Auto-detect page count for PDFs
+      if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+        detectedTotalPages = detectPdfPages(bytes);
+        if (previewImg) previewImg.hidden = true;
+        if (previewFallback) previewFallback.hidden = false;
+        if (previewFallbackText) previewFallbackText.textContent = `📄 PDF Document (${detectedTotalPages} ${detectedTotalPages === 1 ? 'Page' : 'Pages'})`;
+      } else if (file.type.startsWith('image/')) {
+        detectedTotalPages = 1;
+        const dataUrl = URL.createObjectURL(file);
+        if (previewImg) {
+          previewImg.src = dataUrl;
+          previewImg.hidden = false;
+        }
+        if (previewFallback) previewFallback.hidden = true;
+      } else {
+        detectedTotalPages = 1;
+        if (previewImg) previewImg.hidden = true;
+        if (previewFallback) previewFallback.hidden = false;
+        if (previewFallbackText) previewFallbackText.textContent = `📄 ${file.name}`;
+      }
+
+      if (infoFileMeta) {
+        infoFileMeta.textContent = `${detectedTotalPages} ${detectedTotalPages === 1 ? 'page' : 'pages'} • ${(file.size / (1024 * 1024)).toFixed(2)} MB`;
+      }
+
+      const allPagesCountBadge = document.getElementById('allPagesCountBadge');
+      if (allPagesCountBadge) allPagesCountBadge.textContent = String(detectedTotalPages);
+
+      pageCount = detectedTotalPages;
 
       const reader = new FileReader();
       reader.onload = () => {
         fileBase64 = reader.result.split(',')[1];
       };
       reader.readAsDataURL(file);
+
+      updateCustomerPrice();
+    }
+
+    // Page selection range handlers
+    const pillPagesAll = document.getElementById('pillPagesAll');
+    const pillPagesCustom = document.getElementById('pillPagesCustom');
+    const customPageRangeBox = document.getElementById('customPageRangeBox');
+    const inputCustomPageRange = document.getElementById('inputCustomPageRange');
+
+    if (pillPagesAll && pillPagesCustom) {
+      pillPagesAll.addEventListener('click', () => {
+        pageRangeMode = 'all';
+        pillPagesAll.classList.add('active');
+        pillPagesCustom.classList.remove('active');
+        if (customPageRangeBox) customPageRangeBox.hidden = true;
+        pageCount = detectedTotalPages;
+        updateCustomerPrice();
+      });
+
+      pillPagesCustom.addEventListener('click', () => {
+        pageRangeMode = 'custom';
+        pillPagesCustom.classList.add('active');
+        pillPagesAll.classList.remove('active');
+        if (customPageRangeBox) customPageRangeBox.hidden = false;
+        recalculateCustomPageCount();
+      });
+    }
+
+    if (inputCustomPageRange) {
+      inputCustomPageRange.addEventListener('input', () => {
+        recalculateCustomPageCount();
+      });
+    }
+
+    function recalculateCustomPageCount() {
+      if (!inputCustomPageRange) return;
+      const rangeStr = inputCustomPageRange.value.trim();
+      if (!rangeStr) {
+        pageCount = detectedTotalPages;
+      } else {
+        pageCount = parseCustomPageRange(rangeStr, detectedTotalPages);
+      }
       updateCustomerPrice();
     }
 
@@ -366,7 +446,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (totalCostDisplay) totalCostDisplay.textContent = `₹${total.toFixed(2)}`;
       if (costBreakdownText) {
-        costBreakdownText.textContent = `${pageCount} page × ₹${rate.toFixed(2)} (${isColor ? 'Color' : 'B&W'} ${isDuplex ? 'Duplex' : 'Single'})`;
+        costBreakdownText.textContent = `${pageCount} ${pageCount === 1 ? 'page' : 'pages'} × ₹${rate.toFixed(2)} (${isColor ? 'Color' : 'B&W'} ${isDuplex ? 'Duplex' : 'Single'})`;
       }
     }
 
@@ -397,6 +477,7 @@ document.addEventListener('DOMContentLoaded', () => {
             printerId: currentPrinterId,
             fileName: selectedFile.name,
             fileBase64,
+            pageCount,
             copies,
             isColor,
             isDuplex,
@@ -411,7 +492,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
           document.getElementById('statusTokenNumber').textContent = `Token ${data.job.tokenNumber || '#001'}`;
           document.getElementById('stFileName').textContent = data.job.fileName;
-          document.getElementById('stPageCopy').textContent = `${data.job.pageCount} page, ${data.job.copies} copy`;
+          document.getElementById('stPageCopy').textContent = `${data.job.pageCount} page(s), ${data.job.copies} copy`;
           document.getElementById('stAmount').textContent = `₹${(data.job.totalPriceInCents / 100).toFixed(2)}`;
 
           showToast('success', 'Job Submitted!', `Token ${data.job.tokenNumber || '#001'} queued for printing.`);
@@ -426,9 +507,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const btnNewPrintJob = document.getElementById('btnNewPrintJob');
     if (btnNewPrintJob) {
-      btnNewPrintJob.addEventListener('click', () => {
-        window.location.reload();
-      });
+      btnNewPrintJob.addEventListener('click', () => window.location.reload());
     }
 
     const btnCopyToken = document.getElementById('btnCopyToken');
@@ -438,6 +517,51 @@ document.addEventListener('DOMContentLoaded', () => {
         navigator.clipboard.writeText(tok);
         showToast('info', 'Copied!', `${tok} copied to clipboard.`);
       });
+    }
+  }
+
+  // ============================================================
+  //  CLIENT-SIDE PDF PAGE COUNTER & RANGE PARSER HELPERS
+  // ============================================================
+  function detectPdfPages(uint8Array) {
+    try {
+      const str = new TextDecoder('latin1').decode(uint8Array);
+      let countMatches = str.match(/\/Count\s+(\d+)/g);
+      if (countMatches && countMatches.length > 0) {
+        const maxVal = Math.max(...countMatches.map(m => parseInt(m.split(/\s+/)[1], 10)));
+        if (!isNaN(maxVal) && maxVal > 0) return maxVal;
+      }
+      let pageMatches = str.match(/\/Type\s*\/Page\b/g);
+      if (pageMatches && pageMatches.length > 0) return pageMatches.length;
+      return 1;
+    } catch {
+      return 1;
+    }
+  }
+
+  function parseCustomPageRange(rangeStr, totalPages) {
+    try {
+      const parts = rangeStr.split(',');
+      const selected = new Set();
+      for (const part of parts) {
+        const clean = part.trim();
+        if (clean.includes('-')) {
+          const [startStr, endStr] = clean.split('-');
+          const start = parseInt(startStr, 10);
+          const end = parseInt(endStr, 10);
+          if (!isNaN(start) && !isNaN(end) && start <= end) {
+            for (let i = start; i <= end; i++) {
+              if (i >= 1 && i <= totalPages) selected.add(i);
+            }
+          }
+        } else {
+          const num = parseInt(clean, 10);
+          if (!isNaN(num) && num >= 1 && num <= totalPages) selected.add(num);
+        }
+      }
+      return selected.size > 0 ? selected.size : totalPages;
+    } catch {
+      return totalPages;
     }
   }
 

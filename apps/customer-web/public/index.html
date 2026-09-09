@@ -138,10 +138,26 @@
               <span class="file-icon">📄</span>
               <div>
                 <div class="file-name" id="infoFileName">document.pdf</div>
-                <div class="file-meta" id="infoFileMeta">1 page • PDF Document</div>
+                <div class="file-meta" id="infoFileMeta">Auto-detecting pages...</div>
               </div>
             </div>
             <button id="btnRemoveFile" class="btn-icon" title="Remove File">✕</button>
+          </div>
+
+          <!-- Document Visual Preview Box -->
+          <div id="documentPreviewBox" class="document-preview-box" hidden>
+            <div class="preview-header">
+              <span class="preview-title">🔍 Visual Document Preview</span>
+              <span id="previewPageBadge" class="badge badge-neutral">Page 1</span>
+            </div>
+            <div class="preview-viewport">
+              <img id="previewImg" src="" alt="Document Preview" hidden>
+              <canvas id="previewCanvas" hidden></canvas>
+              <div id="previewFallback" class="preview-fallback">
+                <div class="fallback-icon">📄</div>
+                <div id="previewFallbackText">PDF Document Loaded</div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -150,6 +166,25 @@
           <div class="card-header">
             <h2 class="card-title">2. Print Configuration</h2>
             <span class="badge badge-queued">Live Pricing</span>
+          </div>
+
+          <!-- Page Selection Range Pills -->
+          <div class="form-group">
+            <label class="form-label">Page Selection Range</label>
+            <div class="option-pill-group">
+              <label class="option-pill active" id="pillPagesAll">
+                <input type="radio" name="pageRangeMode" value="all" checked hidden>
+                <span>📖 All Pages (<span id="allPagesCountBadge">1</span>)</span>
+              </label>
+              <label class="option-pill" id="pillPagesCustom">
+                <input type="radio" name="pageRangeMode" value="custom" hidden>
+                <span>✏️ Custom Range</span>
+              </label>
+            </div>
+            <div id="customPageRangeBox" style="margin-top: 8px;" hidden>
+              <input type="text" id="inputCustomPageRange" class="form-input" placeholder="e.g. 1-3, 5, 8-10 (Leave blank for all)" value="">
+              <div class="form-help" id="customRangeHelp">Enter page numbers and ranges separated by commas. E.g. 1-5, 8</div>
+            </div>
           </div>
 
           <!-- Color Selector Pills -->
