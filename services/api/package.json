@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "main": "dist/server.js",
   "scripts": {
-    "build": "prisma generate && tsc",
+    "build": "npm --prefix ../../packages/shared-types run build 2>/dev/null || true; prisma generate && tsc",
     "start": "node dist/server.js",
     "dev": "tsc -w",
     "test": "node --test dist/tests/api.test.js"
@@ -13,22 +13,21 @@
     "@aws-sdk/s3-request-presigner": "^3.500.0",
     "@printok/shared-types": "file:../../packages/shared-types",
     "@prisma/client": "^5.10.0",
-    "cors": "^2.8.5",
-    "express": "^4.19.2",
-    "express-rate-limit": "^8.7.0",
-    "pdf-parse": "^2.4.5",
-    "qrcode": "^1.5.4",
-    "razorpay": "^2.9.8",
-    "ws": "^8.21.3"
-  },
-  "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^20.0.0",
     "@types/pdf-parse": "^1.1.5",
     "@types/qrcode": "^1.5.6",
     "@types/ws": "^8.18.1",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^8.7.0",
+    "pdf-parse": "^2.4.5",
     "prisma": "^5.10.0",
-    "typescript": "^5.0.0"
-  }
+    "qrcode": "^1.5.4",
+    "razorpay": "^2.9.8",
+    "typescript": "^5.0.0",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {}
 }
