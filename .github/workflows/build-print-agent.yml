@@ -1,0 +1,51 @@
+name: Build and Release Windows Print Agent
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'agent/windows-print-agent/**'
+      - '.github/workflows/build-print-agent.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore agent/windows-print-agent/WindowsPrintAgent.csproj
+
+      - name: Publish Windows Print Agent executable
+        run: |
+          dotnet publish agent/windows-print-agent/WindowsPrintAgent.csproj -c Release -r win-x64 --self-contained false -o bin/publish
+
+      - name: Zip Agent Binary
+        shell: powershell
+        run: |
+          Compress-Archive -Path bin/publish/* -DestinationPath PrintAgent-win-x64.zip
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: PrintOk Windows Agent (Latest Release)
+          draft: false
+          prerelease: false
+          files: |
+            PrintAgent-win-x64.zip
+            bin/publish/WindowsPrintAgent.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

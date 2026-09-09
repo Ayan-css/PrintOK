@@ -187,17 +187,21 @@ To deploy the background print service to shop Windows computers:
    ```bash
    dotnet publish agent/windows-print-agent/PrintAgent.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
    ```
-2. Executable location:
+2. Executable location (Manual compilation):
    `agent/windows-print-agent/bin/Release/net8.0/win-x64/publish/PrintAgent.exe`
 
-3. **Install Background Service on Shop PC**:
+3. **Automated CI/CD Compilation & Dashboard Download**:
+   - The GitHub Actions workflow (`.github/workflows/build-print-agent.yml`) automatically compiles `PrintAgent.exe` on Windows runner on every push.
+   - Shop owners can click **⬇️ Download PrintAgent.exe** directly on the merchant dashboard (or endpoint `/api/agent-installer`), which fetches the latest binary automatically.
+
+4. **Install Background Service on Shop PC**:
    Open Windows Command Prompt as Administrator:
    ```cmd
    sc.exe create "PrintOkAgent" binPath= "C:\Program Files\PrintOk\PrintAgent.exe" start= auto
    sc.exe start "PrintOkAgent"
    ```
 
-4. **Agent Configuration (`appsettings.json` on Shop PC)**:
+5. **Agent Configuration (`appsettings.json` on Shop PC)**:
    ```json
    {
      "PrintOkApiUrl": "https://api.yourdomain.com",
@@ -207,6 +211,7 @@ To deploy the background print service to shop Windows computers:
      "HeartbeatIntervalSeconds": 30
    }
    ```
+   *(Shop owners can also click **⚙️ Auto-Config (.json)** on their dashboard to download pre-filled settings).*
 
 ---
 

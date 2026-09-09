@@ -261,6 +261,13 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.ok(statsData.stats);
   });
 
+  await t.test('10. Agent Installer Endpoint redirects to release binary', async () => {
+    const res = await fetch(`${baseUrl}/api/agent-installer`, { redirect: 'manual' });
+    assert.strictEqual(res.status, 302);
+    const location = res.headers.get('location');
+    assert.ok(location && location.includes('github.com'));
+  });
+
   server.close();
 });
 

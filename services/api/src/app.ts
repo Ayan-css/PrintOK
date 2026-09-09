@@ -190,6 +190,24 @@ export function createApp(
   });
 
   /**
+   * Download Windows Print Agent Executable / Release Package
+   */
+  app.get('/api/agent-installer', async (_req: Request, res: Response) => {
+    try {
+      const customUrl = process.env.AGENT_INSTALLER_URL;
+      if (customUrl) {
+        return res.redirect(customUrl);
+      }
+
+      const githubRepo = process.env.PRINT_AGENT_REPO || 'Ayan-css/PrintOK';
+      const releaseUrl = `https://github.com/${githubRepo}/releases/download/latest/WindowsPrintAgent.exe`;
+      return res.redirect(releaseUrl);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
    * Customer Create Print Job Endpoint (Multi-Format Document Engine)
    */
   app.post('/api/print-jobs', async (req: Request, res: Response) => {
