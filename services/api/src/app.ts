@@ -1,8 +1,11 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import { IStorageProvider, MemoryStorage } from './storage';
 import { generateQrCodeDataUrl } from './qr';
 import { AgentWebSocketServer } from './ws';
+import { processDocument } from './documentProcessor';
+import { RazorpayService } from './razorpayService';
 import {
   RegisterShopDto,
   RegisterShopResponse,
@@ -20,9 +23,22 @@ export function createApp(
   wsServer?: AgentWebSocketServer
 ) {
   const app = express();
+  const razorpayService = new RazorpayService();
 
   app.use(cors());
   app.use(express.json({ limit: '50mb' }));
+
+  // Security: Public API Rate Limiter (Max 60 requests per minute per IP)
+  const apiLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 60,
+    message: { error: 'Too many requests from this IP, please try again after a minute.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
+  app.use('/api/print-jobs', apiLimiter);
+  app.use('/api/shops/register', apiLimiter);
 
   // Health Check Endpoint
   app.get('/health', (req: Request, res: Response) => {
@@ -34,17 +50,17 @@ export function createApp(
    */
   app.post('/api/shops/register', async (req: Request, res: Response) => {
     try {
-      const { shopName, ownerEmail, printerName } = req.body as RegisterShopDto;
+      const { shopName, ownerEmail, printerName, upiId, bankAccountNumber, bankIfsc } = req.body as RegisterShopDto;
 
       if (!shopName || !ownerEmail || !printerName) {
         return res.status(400).json({ error: 'shopName, ownerEmail, and printerName are required.' });
       }
 
-      const shop = await storage.createShop(shopName, ownerEmail);
+      const shop = await storage.createShop(shopName, ownerEmail, upiId, bankAccountNumber, bankIfsc);
       
       const baseUrl = process.env.PUBLIC_WEB_URL || 'http://localhost:3000';
       const qrTargetUrl = `${baseUrl}/p/${shop.id}`;
-      const qrCodeDataUrl = generateQrCodeDataUrl(qrTargetUrl);
+      const qrCodeDataUrl = await generateQrCodeDataUrl(qrTargetUrl);
 
       const printer = await storage.createPrinter(shop.id, printerName, qrTargetUrl, qrCodeDataUrl);
 
@@ -73,11 +89,11 @@ export function createApp(
   });
 
   /**
-   * Customer Create Print Job Endpoint
+   * Customer Create Print Job Endpoint (Multi-Format Document Engine)
    */
   app.post('/api/print-jobs', async (req: Request, res: Response) => {
     try {
-      const { printerId, fileName, fileBase64, pageCount, copies, isColor } = req.body as CreatePrintJobDto;
+      const { printerId, fileName, fileBase64, copies, isColor } = req.body as CreatePrintJobDto;
       const autoApprove = req.query.autoApprove !== 'false';
 
       if (!printerId || !fileName || !fileBase64) {
@@ -89,11 +105,22 @@ export function createApp(
         return res.status(404).json({ error: 'Target printer not found.' });
       }
 
+      // Multi-format document inspection & server-side page count verification
+      const fileBuffer = Buffer.from(fileBase64, 'base64');
+      const docResult = await processDocument(fileName, fileBuffer);
+
+      if (!docResult.isSupported) {
+        return res.status(400).json({ error: docResult.errorMessage });
+      }
+
+      // Tamper-proof page count override
+      const verifiedPageCount = docResult.pageCount;
+
       const job = await storage.createPrintJob(
         printerId,
         fileName,
         fileBase64,
-        pageCount || 1,
+        verifiedPageCount,
         copies || 1,
         !!isColor,
         autoApprove
@@ -112,7 +139,29 @@ export function createApp(
   });
 
   /**
-   * Payment Webhook Endpoint (Simulating Razorpay/UPI gateway)
+   * Create Razorpay Payment Order Endpoint
+   */
+  app.post('/api/payments/create-order', async (req: Request, res: Response) => {
+    try {
+      const { jobId } = req.body;
+      if (!jobId) {
+        return res.status(400).json({ error: 'jobId is required.' });
+      }
+
+      const job = await storage.getPrintJob(jobId);
+      if (!job) {
+        return res.status(404).json({ error: 'Print job not found.' });
+      }
+
+      const orderResult = await razorpayService.createOrder(jobId, job.totalPriceInCents);
+      return res.json(orderResult);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Payment Webhook Endpoint (HMAC SHA256 Signature Verification)
    */
   app.post('/api/payments/webhook', async (req: Request, res: Response) => {
     try {
@@ -120,6 +169,12 @@ export function createApp(
 
       if (!paymentId || !jobId || !signature) {
         return res.status(400).json({ error: 'paymentId, jobId, and signature are required.' });
+      }
+
+      // HMAC Signature Verification
+      const isValidSignature = razorpayService.verifyWebhookSignature(req.body, signature);
+      if (!isValidSignature) {
+        return res.status(400).json({ error: 'Invalid HMAC payment webhook signature.' });
       }
 
       const job = await storage.getPrintJob(jobId);

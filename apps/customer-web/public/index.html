@@ -81,10 +81,85 @@
         </div>
 
         <p class="landing-body">
-          Ask the shop for their QR code, scan it on your phone, and your document goes straight to the printer — no USB, no laptop, no waiting.
+          Hardware-free printing platform for stationery shops. Scan QR, upload PDF from phone, pay & collect printouts.
         </p>
 
-        <ol class="landing-steps" aria-label="How PrintOk works">
+        <!-- ==============================================
+             INTERACTIVE DEMO / SHOPKEEPER SANDBOX
+        ================================================== -->
+        <section class="card card--accent" style="margin-top: 12px; text-align: left;">
+          <div class="card-header">
+            <h2 class="card-title">Shopkeeper Portal &amp; Interactive Demo</h2>
+            <span class="badge badge-queued">Live Sandbox</span>
+          </div>
+
+          <!-- Step 1: Register Form -->
+          <div id="shopRegisterForm">
+            <p class="meta-text" style="margin-bottom: 12px; color: var(--color-text-secondary);">
+              Register a demo shop to generate a live QR code, receive API keys, and test customer uploads in real-time.
+            </p>
+            <div class="form-group" style="margin-bottom: 10px;">
+              <label class="form-label" for="regShopName">Shop Name</label>
+              <input type="text" id="regShopName" class="form-input" value="Ayan's Speed Print" placeholder="e.g. Speed Print Hub">
+            </div>
+            <div class="form-group" style="margin-bottom: 10px;">
+              <label class="form-label" for="regPrinterName">Printer Name / Model</label>
+              <input type="text" id="regPrinterName" class="form-input" value="HP LaserJet Pro M404dn" placeholder="e.g. HP LaserJet">
+            </div>
+            <div class="form-group" style="margin-bottom: 14px;">
+              <label class="form-label" for="regShopUpi">Payout UPI ID (For Earnings)</label>
+              <input type="text" id="regShopUpi" class="form-input" value="speedyprint@upi" placeholder="e.g. shopowner@upi">
+            </div>
+            <button class="btn btn-primary btn-full" id="btnRegisterShop" type="button">
+              ✨ Register Shop &amp; Generate QR Code
+            </button>
+          </div>
+
+          <!-- Step 2: Registered Shop View (hidden until created) -->
+          <div id="shopDashboard" hidden>
+            <div style="background: var(--color-surface); border: var(--border); border-radius: var(--radius-md); padding: 16px; margin-bottom: 12px; text-align: center;">
+              <div class="label-text" id="dashShopTitle" style="font-size: 16px; margin-bottom: 4px;">Speedy Print Shop</div>
+              <div class="meta-text" id="dashPrinterTitle" style="margin-bottom: 4px;">HP LaserJet Pro M404dn</div>
+              <div class="meta-text" style="margin-bottom: 12px; color: var(--color-success); font-weight: 600;">Payout UPI: <span id="dashUpiDisplay">speedyprint@upi</span></div>
+
+              <!-- Generated QR Code Image -->
+              <div style="background: #fff; border: 2px solid var(--color-black); border-radius: 8px; padding: 12px; display: inline-block; box-shadow: var(--shadow-sm);">
+                <img id="dashQrImg" src="" alt="Shop QR Code" style="width: 160px; height: 160px; display: block; margin: 0 auto;">
+              </div>
+              <div class="meta-text" style="margin-top: 8px; font-size: 11px;">Customer Scan Target: <span id="dashQrTargetUrl" style="font-family: monospace; font-weight: 600;"></span></div>
+
+              <div style="display: flex; gap: 8px; margin-top: 12px;">
+                <button class="btn btn-secondary btn-full btn-sm" id="btnOpenCustomerView" type="button">
+                  📱 Open Customer Upload View
+                </button>
+              </div>
+            </div>
+
+            <!-- Agent Pairing Box -->
+            <div style="background: var(--color-paper); border: var(--border); border-radius: var(--radius-md); padding: 12px; margin-bottom: 12px;">
+              <div class="label-text" style="font-size: 12px; margin-bottom: 4px;">🖨️ Windows Agent Integration</div>
+              <div class="meta-text" style="font-size: 11px; margin-bottom: 8px;">API Key: <code id="dashApiKey" style="background:#fff; padding:2px 6px; border-radius:4px; font-weight:bold;"></code></div>
+              <button class="btn btn-outline btn-full btn-sm" id="btnToggleSimulatedAgent" type="button">
+                ▶️ Start Simulated Windows Agent (Auto-Print Jobs)
+              </button>
+              <div id="agentStatusText" class="meta-text" style="margin-top: 6px; font-size: 11px; color: var(--color-primary); font-weight: 600;">Agent status: Offline</div>
+            </div>
+
+            <!-- Live Queue Monitor -->
+            <div>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <div class="card-title">Live Shop Print Queue</div>
+                <span id="queueCountBadge" class="badge badge-neutral">0 Jobs</span>
+              </div>
+              <div id="liveQueueList" style="display: flex; flex-direction: column; gap: 8px; max-height: 180px; overflow-y: auto;">
+                <div class="meta-text" style="text-align: center; padding: 12px;">No print jobs in queue yet. Open Customer View and submit a document!</div>
+              </div>
+            </div>
+          </div>
+
+        </section>
+
+        <ol class="landing-steps" aria-label="How PrintOk works" style="margin-top: 16px;">
           <li class="landing-step">
             <span class="landing-step-num" aria-hidden="true">1</span>
             <span class="landing-step-label">Scan the shop QR code</span>
@@ -95,7 +170,7 @@
           </li>
           <li class="landing-step">
             <span class="landing-step-num" aria-hidden="true">3</span>
-            <span class="landing-step-label">Pay & collect your printout</span>
+            <span class="landing-step-label">Pay &amp; collect your printout</span>
           </li>
         </ol>
       </main>
@@ -111,7 +186,7 @@
             <h2 class="card-title" id="uploadHeading">Upload Document</h2>
             <span class="print-tag" aria-hidden="true">
               <span class="reg-mark"></span>
-              PDF
+              PDF / Images / Docs
             </span>
           </div>
 
@@ -121,13 +196,13 @@
             id="dropZone"
             role="button"
             tabindex="0"
-            aria-label="Click or drag a PDF file here to upload"
+            aria-label="Click or drag a file here to upload"
             aria-describedby="dropHint"
           >
             <input
               type="file"
               id="fileInput"
-              accept=".pdf,application/pdf"
+              accept=".pdf,.jpg,.jpeg,.png,.webp,.docx,.doc,.xlsx,.csv,.pptx,application/pdf"
               aria-hidden="true"
               tabindex="-1"
               hidden
@@ -142,8 +217,8 @@
                 </svg>
               </div>
               <div>
-                <div class="drop-title">Drop your PDF here</div>
-                <div class="drop-hint" id="dropHint">or tap to browse — Max 25 MB</div>
+                <div class="drop-title">Drop your file here</div>
+                <div class="drop-hint" id="dropHint">PDF, Images (JPG/PNG), Word, Excel, CSV — Max 25 MB</div>
               </div>
             </div>
           </div>

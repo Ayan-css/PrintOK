@@ -41,6 +41,8 @@ downloads/
 
 # Graphify Knowledge Graph Artifacts
 graphify-out/
+.claude/
+
 
 # OS & Editor Files
 .DS_Store

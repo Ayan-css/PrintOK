@@ -200,9 +200,12 @@ document.addEventListener('DOMContentLoaded', () => {
     clearFileError();
 
     // Validate type
-    const isPdf = file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf';
-    if (!isPdf) {
-      showFileError('Only PDF documents are accepted. Please choose a .pdf file.');
+    const allowedExts = ['.pdf', '.jpg', '.jpeg', '.png', '.webp', '.docx', '.doc', '.xlsx', '.csv', '.pptx'];
+    const fileExt = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+    const isSupported = allowedExts.includes(fileExt);
+
+    if (!isSupported) {
+      showFileError('Unsupported file type. Please upload a PDF, Image (JPG/PNG), Word (.docx), Excel (.xlsx), or CSV file.');
       dropZone.classList.add('has-error');
       return;
     }
@@ -210,7 +213,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Validate size (25 MB)
     const maxBytes = 25 * 1024 * 1024;
     if (file.size > maxBytes) {
-      showFileError(`This file is ${formatSize(file.size)} — the limit is 25 MB. Please compress or split the PDF.`);
+      showFileError(`This file is ${formatSize(file.size)} — the limit is 25 MB. Please compress or split the document.`);
       dropZone.classList.add('has-error');
       return;
     }
@@ -439,4 +442,192 @@ document.addEventListener('DOMContentLoaded', () => {
     printAnotherBtn.classList.add('hidden');
   });
 
+  // ============================================================
+  //  INTERACTIVE DEMO / SHOPKEEPER SANDBOX LOGIC
+  // ============================================================
+  const btnRegisterShop        = document.getElementById('btnRegisterShop');
+  const regShopName            = document.getElementById('regShopName');
+  const regPrinterName         = document.getElementById('regPrinterName');
+  const regShopUpi             = document.getElementById('regShopUpi');
+  const dashUpiDisplay         = document.getElementById('dashUpiDisplay');
+  const shopRegisterForm       = document.getElementById('shopRegisterForm');
+  const shopDashboard          = document.getElementById('shopDashboard');
+  const dashShopTitle          = document.getElementById('dashShopTitle');
+  const dashPrinterTitle       = document.getElementById('dashPrinterTitle');
+  const dashQrImg              = document.getElementById('dashQrImg');
+  const dashQrTargetUrl        = document.getElementById('dashQrTargetUrl');
+  const dashApiKey             = document.getElementById('dashApiKey');
+  const btnOpenCustomerView    = document.getElementById('btnOpenCustomerView');
+  const btnToggleSimulatedAgent = document.getElementById('btnToggleSimulatedAgent');
+  const agentStatusText        = document.getElementById('agentStatusText');
+  const liveQueueList          = document.getElementById('liveQueueList');
+  const queueCountBadge        = document.getElementById('queueCountBadge');
+
+  let activeShopData           = null;
+  let activePrinterData        = null;
+  let isSimulatedAgentRunning  = false;
+  let agentLoopTimer           = null;
+
+  if (btnRegisterShop) {
+    btnRegisterShop.addEventListener('click', async () => {
+      const shopName = regShopName.value.trim() || 'Speedy Print Shop';
+      const printerName = regPrinterName.value.trim() || 'HP LaserJet Pro M404dn';
+      const upiId = regShopUpi ? (regShopUpi.value.trim() || 'speedyprint@upi') : 'speedyprint@upi';
+
+      btnRegisterShop.disabled = true;
+      btnRegisterShop.textContent = 'Creating Shop...';
+
+      try {
+        const res = await fetch(`${API_BASE}/api/shops/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            shopName,
+            ownerEmail: 'owner@printshop.com',
+            printerName,
+            upiId,
+          }),
+        });
+
+        const data = await res.json();
+        if (res.ok && data.shop && data.printer) {
+          activeShopData = data.shop;
+          activePrinterData = data.printer;
+
+          shopRegisterForm.hidden = true;
+          shopDashboard.hidden = false;
+
+          dashShopTitle.textContent = data.shop.name;
+          dashPrinterTitle.textContent = data.printer.printerName;
+          if (dashUpiDisplay) dashUpiDisplay.textContent = data.shop.upiId || upiId;
+          dashQrImg.src = data.printer.qrCodeDataUrl;
+          dashApiKey.textContent = data.printer.apiKey;
+          dashQrTargetUrl.textContent = `${window.location.origin}/?printer=${data.printer.id}`;
+
+          showToast('success', 'Shop Registered!', `Printer ID: ${data.printer.id}`);
+
+          // Set up Customer View button
+          btnOpenCustomerView.onclick = () => {
+            window.location.href = `/?printer=${data.printer.id}`;
+          };
+
+          // Auto-start simulated agent for seamless demo experience
+          startSimulatedAgent();
+        } else {
+          showToast('danger', 'Registration Failed', data.error || 'Could not register shop.');
+          btnRegisterShop.disabled = false;
+          btnRegisterShop.textContent = '✨ Register Shop & Generate QR Code';
+        }
+      } catch (err) {
+        showToast('danger', 'Network Error', 'Could not reach server.');
+        btnRegisterShop.disabled = false;
+        btnRegisterShop.textContent = '✨ Register Shop & Generate QR Code';
+      }
+    });
+  }
+
+  if (btnToggleSimulatedAgent) {
+    btnToggleSimulatedAgent.addEventListener('click', () => {
+      if (isSimulatedAgentRunning) {
+        stopSimulatedAgent();
+      } else {
+        startSimulatedAgent();
+      }
+    });
+  }
+
+  function startSimulatedAgent() {
+    if (isSimulatedAgentRunning || !activePrinterData) return;
+    isSimulatedAgentRunning = true;
+    btnToggleSimulatedAgent.textContent = '⏸️ Pause Simulated Windows Agent';
+    btnToggleSimulatedAgent.className = 'btn btn-danger btn-full btn-sm';
+    agentStatusText.textContent = 'Agent status: 🟢 ONLINE & POLLING (Every 2s)';
+    agentStatusText.style.color = 'var(--color-success)';
+
+    showToast('info', 'Windows Agent Online', 'Polling server for print jobs...');
+    pollAndProcessJobs();
+    agentLoopTimer = setInterval(pollAndProcessJobs, 2000);
+  }
+
+  function stopSimulatedAgent() {
+    isSimulatedAgentRunning = false;
+    if (agentLoopTimer) clearInterval(agentLoopTimer);
+    btnToggleSimulatedAgent.textContent = '▶️ Start Simulated Windows Agent';
+    btnToggleSimulatedAgent.className = 'btn btn-outline btn-full btn-sm';
+    agentStatusText.textContent = 'Agent status: 🔴 OFFLINE';
+    agentStatusText.style.color = 'var(--color-danger)';
+    showToast('warning', 'Agent Stopped', 'Windows Print Agent turned off.');
+  }
+
+  async function pollAndProcessJobs() {
+    if (!activePrinterData) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/agent/jobs/pending`, {
+        headers: { 'x-agent-api-key': activePrinterData.apiKey },
+      });
+
+      if (!res.ok) return;
+      const data = await res.json();
+      const jobs = data.jobs || [];
+
+      updateShopQueueUI(jobs);
+
+      for (const job of jobs) {
+        showToast('info', '🖨️ Agent Picked Up Job', `Downloading & Spooling ${job.fileName}...`);
+
+        // Update to Printing
+        await fetch(`${API_BASE}/api/agent/jobs/${job.id}/status`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-agent-api-key': activePrinterData.apiKey,
+          },
+          body: JSON.stringify({ printState: 'Printing' }),
+        });
+
+        // Simulate Hardware Spooling delay
+        await new Promise(r => setTimeout(r, 1200));
+
+        // Update to Completed
+        await fetch(`${API_BASE}/api/agent/jobs/${job.id}/status`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-agent-api-key': activePrinterData.apiKey,
+          },
+          body: JSON.stringify({ printState: 'Completed' }),
+        });
+
+        showToast('success', '🎉 Printed Successfully!', `${job.fileName} delivered to tray.`);
+      }
+    } catch {
+      // ignore transient errors
+    }
+  }
+
+  function updateShopQueueUI(jobs) {
+    if (!liveQueueList) return;
+    queueCountBadge.textContent = `${jobs.length} Active Job(s)`;
+
+    if (jobs.length === 0) {
+      liveQueueList.innerHTML = `<div class="meta-text" style="text-align: center; padding: 12px; background: var(--color-surface); border: 1px dashed var(--color-border-muted); border-radius: 6px;">No pending jobs in queue. Tap 'Open Customer View' above to submit a PDF!</div>`;
+      return;
+    }
+
+    liveQueueList.innerHTML = jobs.map(j => `
+      <div style="background: var(--color-surface); border: var(--border); border-radius: 6px; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center;">
+        <div>
+          <div style="font-family: var(--font-display); font-size: 12px; font-weight: 700;">📄 ${escapeHtml(j.fileName)}</div>
+          <div class="meta-text" style="font-size: 10px;">${j.pageCount} pg • ${j.copies} copy • ${j.isColor ? 'Color' : 'B&W'} • ₹${(j.totalPriceInCents/100).toFixed(2)}</div>
+        </div>
+        <span class="badge badge-printing">${j.printState}</span>
+      </div>
+    `).join('');
+  }
+
+  function escapeHtml(str) {
+    return str.replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m]));
+  }
+
 });
+

@@ -38,6 +38,10 @@ export interface Shop {
   id: string;
   name: string;
   ownerEmail: string;
+  upiId?: string;
+  bankAccountNumber?: string;
+  bankIfsc?: string;
+  payoutStatus?: string;
   createdAt: string;
 }
 
@@ -82,6 +86,9 @@ export interface RegisterShopDto {
   shopName: string;
   ownerEmail: string;
   printerName: string;
+  upiId?: string;
+  bankAccountNumber?: string;
+  bankIfsc?: string;
 }
 
 /**

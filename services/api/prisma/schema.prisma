@@ -8,11 +8,15 @@ generator client {
 }
 
 model Shop {
-  id         String    @id
-  name       String
-  ownerEmail String
-  createdAt  DateTime  @default(now())
-  printers   Printer[]
+  id                String    @id
+  name              String
+  ownerEmail        String
+  upiId             String?
+  bankAccountNumber String?
+  bankIfsc          String?
+  payoutStatus      String    @default("active")
+  createdAt         DateTime  @default(now())
+  printers          Printer[]
 }
 
 model Printer {

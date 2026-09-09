@@ -4,7 +4,7 @@ import { S3StorageService } from './s3Storage';
 
 export interface IStorageProvider {
   calculateChecksum(content: string | Buffer): string;
-  createShop(name: string, ownerEmail: string): Promise<Shop>;
+  createShop(name: string, ownerEmail: string, upiId?: string, bankAccountNumber?: string, bankIfsc?: string): Promise<Shop>;
   getShop(id: string): Promise<Shop | undefined>;
   createPrinter(shopId: string, printerName: string, qrTargetUrl: string, qrCodeDataUrl: string): Promise<Printer>;
   getPrinter(id: string): Promise<Printer | undefined>;
@@ -34,12 +34,22 @@ export class MemoryStorage implements IStorageProvider {
     return crypto.createHash('sha256').update(content).digest('hex');
   }
 
-  public async createShop(name: string, ownerEmail: string): Promise<Shop> {
+  public async createShop(
+    name: string,
+    ownerEmail: string,
+    upiId?: string,
+    bankAccountNumber?: string,
+    bankIfsc?: string
+  ): Promise<Shop> {
     const id = `shop_${crypto.randomBytes(6).toString('hex')}`;
     const shop: Shop = {
       id,
       name,
       ownerEmail,
+      upiId,
+      bankAccountNumber,
+      bankIfsc,
+      payoutStatus: upiId || bankAccountNumber ? 'active' : 'pending',
       createdAt: new Date().toISOString(),
     };
     this.shops.set(id, shop);
@@ -95,7 +105,9 @@ export class MemoryStorage implements IStorageProvider {
     autoApprovePayment = true
   ): Promise<PrintJob> {
     const id = `job_${crypto.randomBytes(6).toString('hex')}`;
-    const fileChecksum = this.calculateChecksum(fileBase64);
+    // Checksum raw bytes (not base64 string) to match C# agent SHA256.HashData(fileBytes)
+    const fileBuffer = Buffer.from(fileBase64, 'base64');
+    const fileChecksum = this.calculateChecksum(fileBuffer);
     
     // Store in S3 / Temp Storage
     const storageResult = await this.s3Service.storeDocument(id, fileName, fileBase64);

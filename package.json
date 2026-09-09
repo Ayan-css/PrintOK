@@ -21,5 +21,8 @@
     "windows-print-agent"
   ],
   "author": "PrintOk Team",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
 }

@@ -1,0 +1,61 @@
+## PrintOk — Local Development Services
+## Usage:  docker compose up -d
+## Stop:   docker compose down
+## Reset:  docker compose down -v  (deletes all data)
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: printok-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: printok_user
+      POSTGRES_PASSWORD: printok_pass
+      POSTGRES_DB: printok_db
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U printok_user -d printok_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: printok-minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # MinIO Console (Web UI)
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - miniodata:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Auto-creates the temp documents bucket on first run
+  minio-init:
+    image: minio/mc:latest
+    container_name: printok-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 minioadmin minioadmin &&
+        mc mb --ignore-existing local/printok-temp-documents &&
+        echo 'Bucket ready.'
+      "
+    restart: "no"
+
+volumes:
+  pgdata:
+  miniodata:

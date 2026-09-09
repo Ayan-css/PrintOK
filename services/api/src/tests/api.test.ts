@@ -34,14 +34,14 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.ok(data.shop.id);
     assert.strictEqual(data.shop.name, 'Metro Copy Center');
     assert.ok(data.printer.id);
-    assert.ok(data.printer.qrCodeDataUrl.startsWith('data:image/svg+xml;base64,'));
+    assert.ok(data.printer.qrCodeDataUrl.startsWith('data:image/png;base64,') || data.printer.qrCodeDataUrl.startsWith('data:image/svg+xml;base64,'));
     assert.ok(data.printer.apiKey.startsWith('prn_key_'));
 
     createdPrinterId = data.printer.id;
     agentApiKey = data.printer.apiKey;
   });
 
-  await t.test('2. Customer Creates Print Job linked to Printer QR', async () => {
+  await t.test('2. Customer Creates Print Job linked to Printer QR (Server Tamper-Proof Verification)', async () => {
     const samplePdfBase64 = Buffer.from('%PDF-1.4 sample pdf content').toString('base64');
     
     const res = await fetch(`${baseUrl}/api/print-jobs`, {
@@ -51,7 +51,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
         printerId: createdPrinterId,
         fileName: 'resume.pdf',
         fileBase64: samplePdfBase64,
-        pageCount: 3,
+        pageCount: 3, // Client tried submitting 3, server overrides with verified 1
         copies: 1,
         isColor: false,
       }),
@@ -61,7 +61,8 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const data = (await res.json()) as any;
     assert.ok(data.job.id);
     assert.strictEqual(data.job.printState, PrintState.Queued);
-    assert.strictEqual(data.job.totalPriceInCents, 600); // 3 pages * 200 cents
+    assert.strictEqual(data.job.pageCount, 1); // Tamper-proof server override
+    assert.strictEqual(data.job.totalPriceInCents, 200); // 1 page * 200 cents
 
     createdJobId = data.job.id;
   });
@@ -138,6 +139,43 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const webhookData = (await webhookRes.json()) as any;
     assert.strictEqual(webhookData.success, true);
     assert.strictEqual(webhookData.job.printState, PrintState.Queued);
+  });
+
+  await t.test('6. Multi-Format Upload (Image & Word Document)', async () => {
+    const pngBase64 = Buffer.from('fake_png_data').toString('base64');
+    
+    // Image upload (PNG) -> should verify as 1 page
+    const imgRes = await fetch(`${baseUrl}/api/print-jobs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: createdPrinterId,
+        fileName: 'aadhaar_card.png',
+        fileBase64: pngBase64,
+        copies: 2,
+        isColor: true,
+      }),
+    });
+
+    assert.strictEqual(imgRes.status, 201);
+    const imgData = (await imgRes.json()) as any;
+    assert.strictEqual(imgData.job.pageCount, 1);
+    assert.strictEqual(imgData.job.totalPriceInCents, 2000); // 1 page * 2 copies * 1000 cents (Color)
+
+    // Unsupported format upload (.exe) -> should fail
+    const badRes = await fetch(`${baseUrl}/api/print-jobs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: createdPrinterId,
+        fileName: 'virus.exe',
+        fileBase64: pngBase64,
+        copies: 1,
+        isColor: false,
+      }),
+    });
+
+    assert.strictEqual(badRes.status, 400);
   });
 
   server.close();
