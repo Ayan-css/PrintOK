@@ -51,6 +51,13 @@
         </div>
       </header>
 
+      <!-- GLOBAL TOP NAVIGATION BAR -->
+      <nav class="global-nav-bar" aria-label="Global Navigation">
+        <a href="/?printer=prn_test" class="nav-pill">📱 Customer View</a>
+        <a href="/dashboard.html" class="nav-pill active">⚡ Merchant Dashboard</a>
+        <a href="/register.html" class="nav-pill">🏬 Register Shop</a>
+      </nav>
+
       <!-- Main Dashboard Grid -->
       <main class="main-content">
 
@@ -259,27 +266,88 @@
             </div>
           </div>
 
-          <!-- TAB 4: FINANCIAL ANALYTICS -->
+          <!-- TAB 4: FINANCIAL ANALYTICS & INSTANT WITHDRAWAL -->
           <div id="tabStats" class="dash-tab-pane" hidden style="padding: 20px;">
             <div class="card-header" style="padding: 0 0 12px 0;">
               <div>
-                <h3 class="card-title">Earnings &amp; Payout Summary</h3>
-                <p class="meta-text">Real-time overview of customer print payments and payout history.</p>
+                <h3 class="card-title">Earnings, Payouts &amp; Withdrawals</h3>
+                <p class="meta-text">Real-time overview of customer print payments, fee deductions, and instant UPI withdrawals.</p>
               </div>
             </div>
 
-            <div class="grid-3">
-              <div class="stat-box">
-                <div class="stat-box-label">Gross Revenue Today</div>
-                <div class="stat-box-value" id="statGrossRevenue">₹0.00</div>
+            <div class="grid-3" style="margin-bottom: 16px;">
+              <div class="stat-card">
+                <div class="stat-label">Gross Collected Today</div>
+                <div class="stat-value" id="statGrossRevenue">₹0.00</div>
               </div>
-              <div class="stat-box">
-                <div class="stat-box-label">Paid via UPI / Online</div>
-                <div class="stat-box-value" id="statUpiRevenue">₹0.00</div>
+              <div class="stat-card">
+                <div class="stat-label">Gateway &amp; Platform Fees</div>
+                <div class="stat-value" id="statTotalDeductions" style="color: var(--color-danger);">₹0.00</div>
+                <div class="meta-text" style="font-size: 10px;">2% Razorpay (+18% GST) + Commission</div>
               </div>
-              <div class="stat-box">
-                <div class="stat-box-label">Counter Cash Approved</div>
-                <div class="stat-box-value" id="statCashRevenue">₹0.00</div>
+              <div class="stat-card">
+                <div class="stat-label">Net Available Payout</div>
+                <div class="stat-value" id="statNetAvailable" style="color: var(--color-success);">₹0.00</div>
+              </div>
+            </div>
+
+            <!-- Instant Payout Withdrawal Box -->
+            <div class="card card--accent" style="margin-bottom: 20px;">
+              <div class="card-header">
+                <h4 class="card-title">⚡ Instant Bank / UPI Payout Withdrawal</h4>
+                <span class="badge badge-success">Direct Payout</span>
+              </div>
+
+              <div class="key-value-list">
+                <div class="key-value-row">
+                  <span>Payout Target UPI ID:</span>
+                  <strong id="dashPayoutUpi">metroprint@upi</strong>
+                </div>
+                <div class="key-value-row">
+                  <span>Fee Deductions:</span>
+                  <span>2.36% Razorpay Gateway + Tier Platform Fee</span>
+                </div>
+                <div class="key-value-row">
+                  <span>Net Transferable Balance:</span>
+                  <strong id="dashWithdrawBalance" style="color: var(--color-success); font-size: 16px;">₹0.00</strong>
+                </div>
+              </div>
+
+              <div style="margin-top: 14px; display: flex; gap: 10px;">
+                <button type="button" id="btnRequestWithdrawal" class="btn btn-primary btn-full">
+                  ⚡ Request Immediate Withdrawal to UPI / Bank
+                </button>
+              </div>
+            </div>
+
+            <!-- Sustainable Plan Upgrade Selector -->
+            <div class="card">
+              <div class="card-header">
+                <h4 class="card-title">📦 PrintOk Shop Subscription Tier</h4>
+                <span class="badge badge-primary">Current: Commission-Only (₹0/mo)</span>
+              </div>
+
+              <div class="grid-2" style="margin-top: 10px;">
+                <div class="pricing-mini-card" style="border: 2px solid var(--color-primary);">
+                  <div class="pricing-type">🆓 Commission-Only</div>
+                  <div class="pricing-rate">₹0 <span>/ month</span></div>
+                  <div class="pricing-meta">5.0% Platform Fee • 1 Printer</div>
+                </div>
+                <div class="pricing-mini-card">
+                  <div class="pricing-type">🚀 Starter Plan</div>
+                  <div class="pricing-rate">₹149 <span>/ month</span></div>
+                  <div class="pricing-meta">2.0% Platform Fee • 2 Printers</div>
+                </div>
+                <div class="pricing-mini-card">
+                  <div class="pricing-type">⚡ Growth Plan</div>
+                  <div class="pricing-rate">₹299 <span>/ month</span></div>
+                  <div class="pricing-meta">1.0% Platform Fee • 5 Printers</div>
+                </div>
+                <div class="pricing-mini-card">
+                  <div class="pricing-type">👑 Scale / Pro Plan</div>
+                  <div class="pricing-rate">₹599 <span>/ month</span></div>
+                  <div class="pricing-meta">0.0% Platform Fee • 10 Printers</div>
+                </div>
               </div>
             </div>
           </div>

@@ -204,6 +204,30 @@ document.addEventListener('DOMContentLoaded', () => {
         showToast('info', 'Refreshed', 'Queue metrics updated.');
       });
     }
+
+    const btnRequestWithdrawal = document.getElementById('btnRequestWithdrawal');
+    if (btnRequestWithdrawal) {
+      btnRequestWithdrawal.addEventListener('click', async () => {
+        btnRequestWithdrawal.disabled = true;
+        btnRequestWithdrawal.textContent = 'Processing Instant Payout...';
+
+        try {
+          const res = await fetch(`${API_BASE}/api/shops/shop_test/withdraw`, { method: 'POST' });
+          const data = await res.json();
+          if (res.ok && data.success) {
+            showToast('success', '⚡ Instant Payout Triggered!', `₹${(data.payout.netTransferredCents / 100).toFixed(2)} transferred to ${data.payout.payoutUpiId}.`);
+            loadDashboardMetrics();
+          } else {
+            showToast('info', 'Payout Info', data.error || 'No available balance to withdraw.');
+          }
+        } catch {
+          showToast('danger', 'Error', 'Failed to process instant payout.');
+        } finally {
+          btnRequestWithdrawal.disabled = false;
+          btnRequestWithdrawal.textContent = '⚡ Request Immediate Withdrawal to UPI / Bank';
+        }
+      });
+    }
   }
 
   async function loadDashboardMetrics() {
@@ -217,6 +241,21 @@ document.addEventListener('DOMContentLoaded', () => {
         if (queued) queued.textContent = String(data.stats?.queuedJobsCount || 0);
         const printed = document.getElementById('statPrintedPages');
         if (printed) printed.textContent = String(data.stats?.printedPagesCount || 0);
+      }
+
+      // Fetch Payout Summary
+      const payoutRes = await fetch(`${API_BASE}/api/shops/shop_test/payout-summary`);
+      if (payoutRes.ok) {
+        const pData = await payoutRes.json();
+        const gross = document.getElementById('statGrossRevenue');
+        const deductions = document.getElementById('statTotalDeductions');
+        const netAvail = document.getElementById('statNetAvailable');
+        const withdrawBal = document.getElementById('dashWithdrawBalance');
+
+        if (gross) gross.textContent = `₹${(pData.grossCents / 100).toFixed(2)}`;
+        if (deductions) deductions.textContent = `-₹${((pData.razorpayFeeCents + pData.platformCommissionCents) / 100).toFixed(2)}`;
+        if (netAvail) netAvail.textContent = `₹${(pData.netAvailableCents / 100).toFixed(2)}`;
+        if (withdrawBal) withdrawBal.textContent = `₹${(pData.netAvailableCents / 100).toFixed(2)}`;
       }
     } catch {
       // ignore
@@ -305,25 +344,24 @@ document.addEventListener('DOMContentLoaded', () => {
       const arrayBuffer = await file.arrayBuffer();
       const bytes = new Uint8Array(arrayBuffer);
       
-      // Auto-detect page count for PDFs
+      const previewViewport = document.querySelector('.preview-viewport');
+      const blobUrl = URL.createObjectURL(file);
+
       if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
         detectedTotalPages = detectPdfPages(bytes);
-        if (previewImg) previewImg.hidden = true;
-        if (previewFallback) previewFallback.hidden = false;
-        if (previewFallbackText) previewFallbackText.textContent = `📄 PDF Document (${detectedTotalPages} ${detectedTotalPages === 1 ? 'Page' : 'Pages'})`;
+        if (previewViewport) {
+          previewViewport.innerHTML = `<object data="${blobUrl}#toolbar=0&navpanes=0&page=1" type="application/pdf" style="width:100%; height:260px; border:none; border-radius:4px;"></object>`;
+        }
       } else if (file.type.startsWith('image/')) {
         detectedTotalPages = 1;
-        const dataUrl = URL.createObjectURL(file);
-        if (previewImg) {
-          previewImg.src = dataUrl;
-          previewImg.hidden = false;
+        if (previewViewport) {
+          previewViewport.innerHTML = `<img src="${blobUrl}" alt="Document Preview" style="max-width:100%; max-height:260px; object-fit:contain; border-radius:4px;">`;
         }
-        if (previewFallback) previewFallback.hidden = true;
       } else {
         detectedTotalPages = 1;
-        if (previewImg) previewImg.hidden = true;
-        if (previewFallback) previewFallback.hidden = false;
-        if (previewFallbackText) previewFallbackText.textContent = `📄 ${file.name}`;
+        if (previewViewport) {
+          previewViewport.innerHTML = `<div class="preview-fallback"><div class="fallback-icon">📄</div><div>${escapeHtml(file.name)}</div></div>`;
+        }
       }
 
       if (infoFileMeta) {

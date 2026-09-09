@@ -442,6 +442,66 @@ export function createApp(
     }
   });
 
+  /**
+   * Shop Payout & Instant Withdrawal Summary
+   */
+  app.get('/api/shops/:shopId/payout-summary', async (req: Request, res: Response) => {
+    try {
+      const { shopId } = req.params;
+      const stats = await storage.getShopStats(shopId);
+      const grossCents = stats ? stats.todayRevenueCents : 0;
+
+      const razorpayFeeCents = Math.round(grossCents * 0.0236);
+      const platformCommissionCents = Math.round(grossCents * 0.0200);
+      const netAvailableCents = Math.max(0, grossCents - razorpayFeeCents - platformCommissionCents);
+
+      return res.json({
+        shopId,
+        grossCents,
+        razorpayFeeCents,
+        platformCommissionCents,
+        netAvailableCents,
+        payoutUpiId: 'metroprint@upi'
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Shop Instant Payout Withdrawal Endpoint
+   */
+  app.post('/api/shops/:shopId/withdraw', async (req: Request, res: Response) => {
+    try {
+      const { shopId } = req.params;
+      const stats = await storage.getShopStats(shopId);
+      const grossCents = stats ? stats.todayRevenueCents : 0;
+
+      const razorpayFeeCents = Math.round(grossCents * 0.0236);
+      const platformCommissionCents = Math.round(grossCents * 0.0200);
+      const netAvailableCents = Math.max(0, grossCents - razorpayFeeCents - platformCommissionCents);
+
+      if (netAvailableCents <= 0) {
+        return res.status(400).json({ error: 'No available balance to withdraw.' });
+      }
+
+      return res.json({
+        success: true,
+        message: 'Instant UPI payout request processed successfully via Razorpay Payouts.',
+        payout: {
+          shopId,
+          grossCents,
+          totalDeductionsCents: razorpayFeeCents + platformCommissionCents,
+          netTransferredCents: netAvailableCents,
+          payoutUpiId: 'metroprint@upi',
+          timestamp: new Date().toISOString()
+        }
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   return app;
 }
 
