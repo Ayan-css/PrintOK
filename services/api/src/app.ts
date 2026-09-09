@@ -151,6 +151,28 @@ export function createApp(
       const { printerId } = req.params;
       const telemetry = await storage.getPrinterTelemetry(printerId);
       return res.json(telemetry);
+  /**
+   * Download Pre-Configured appsettings.json for Windows Print Agent
+   */
+  app.get('/api/printers/:printerId/agent-config', async (req: Request, res: Response) => {
+    try {
+      const { printerId } = req.params;
+      const printer = await storage.getPrinter(printerId);
+      if (!printer) {
+        return res.status(404).json({ error: 'Printer not found.' });
+      }
+
+      const config = {
+        PrintOkApiUrl: process.env.API_BASE_URL || 'https://prinok-api.onrender.com',
+        ShopId: printer.shopId,
+        PrinterId: printer.id,
+        AgentApiKey: printer.apiKey,
+        HeartbeatIntervalSeconds: 30
+      };
+
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', `attachment; filename="appsettings.json"`);
+      return res.send(JSON.stringify(config, null, 2));
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }

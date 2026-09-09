@@ -251,16 +251,21 @@
                   <div>Agent API Key: <code id="dashApiKey" style="background:#fff; padding:2px 6px; border-radius:4px; font-weight:bold; user-select: all;"></code></div>
                 </div>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px;">
-                  <a class="btn btn-primary btn-sm" id="btnDownloadAgentSource" href="https://github.com/Ayan-css/PrintOK/tree/main/agent/windows-print-agent" target="_blank" style="text-decoration: none; text-align: center; font-size: 11px;">
-                    ⬇️ Agent Source (.NET 8)
+                  <a class="btn btn-primary btn-sm" id="btnDownloadAgentExe" href="https://github.com/Ayan-css/PrintOK/raw/main/agent/windows-print-agent/PrintAgent.csproj" target="_blank" style="text-decoration: none; text-align: center; font-size: 11px;">
+                    ⬇️ Download PrintAgent.exe
                   </a>
-                  <button class="btn btn-secondary btn-sm" id="btnCopyAgentConfig" type="button" style="font-size: 11px;">
+                  <a class="btn btn-secondary btn-sm" id="btnDownloadAgentConfigFile" href="#" target="_blank" style="text-decoration: none; text-align: center; font-size: 11px;">
+                    ⚙️ Auto-Config (.json)
+                  </a>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px;">
+                  <button class="btn btn-outline btn-sm" id="btnCopyAgentConfig" type="button" style="font-size: 11px;">
                     📋 Copy Settings JSON
                   </button>
-                </div>
-                <button class="btn btn-outline btn-full btn-sm" id="btnToggleSimulatedAgent" type="button">
-                  ▶️ Start Simulated Windows Agent
-                </button>
+                  <button class="btn btn-outline btn-sm" id="btnToggleSimulatedAgent" type="button" style="font-size: 11px;">
+                    ▶️ Test In Browser
+                  </button>
+
                 <div id="agentStatusText" class="meta-text" style="margin-top: 6px; font-size: 11px; color: var(--color-primary); font-weight: 600;">Agent status: Offline</div>
               </div>
             </div>

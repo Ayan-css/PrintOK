@@ -547,6 +547,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const dashPrinterId          = document.getElementById('dashPrinterId');
   const dashApiKey             = document.getElementById('dashApiKey');
   const btnCopyAgentConfig     = document.getElementById('btnCopyAgentConfig');
+  const btnDownloadAgentConfigFile = document.getElementById('btnDownloadAgentConfigFile');
   const btnOpenCustomerView    = document.getElementById('btnOpenCustomerView');
   const btnDownloadQr          = document.getElementById('btnDownloadQr');
   const btnSavePricing         = document.getElementById('btnSavePricing');
@@ -631,6 +632,9 @@ document.addEventListener('DOMContentLoaded', () => {
           if (dashPrinterId) dashPrinterId.textContent = data.printer.id;
           dashApiKey.textContent = data.printer.apiKey;
           dashQrTargetUrl.textContent = `${window.location.origin}/?printer=${data.printer.id}`;
+          if (btnDownloadAgentConfigFile) {
+            btnDownloadAgentConfigFile.href = `${API_BASE}/api/printers/${data.printer.id}/agent-config`;
+          }
 
           if (btnCopyAgentConfig) {
             btnCopyAgentConfig.onclick = () => {
