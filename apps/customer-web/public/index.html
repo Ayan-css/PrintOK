@@ -243,13 +243,20 @@
               </div>
 
               <!-- Windows Agent Pairing Box -->
-              <div style="background: var(--color-paper); border: var(--border); border-radius: var(--radius-md); padding: 10px; margin-top: 10px;">
-                <div class="label-text" style="font-size: 12px; margin-bottom: 2px;">🖨️ Agent Connectivity</div>
-                <div class="meta-text" style="font-size: 11px; margin-bottom: 6px;">API Key: <code id="dashApiKey" style="background:#fff; padding:2px 6px; border-radius:4px; font-weight:bold;"></code></div>
+              <div style="background: var(--color-paper); border: var(--border); border-radius: var(--radius-md); padding: 12px; margin-top: 10px;">
+                <div class="label-text" style="font-size: 13px; margin-bottom: 6px;">🖨️ Windows Agent Configuration</div>
+                <div style="display: flex; flex-direction: column; gap: 4px; font-size: 11px; margin-bottom: 8px;">
+                  <div>Shop ID: <code id="dashShopId" style="background:#fff; padding:2px 6px; border-radius:4px; font-weight:bold; user-select: all;"></code></div>
+                  <div>Printer ID: <code id="dashPrinterId" style="background:#fff; padding:2px 6px; border-radius:4px; font-weight:bold; user-select: all;"></code></div>
+                  <div>Agent API Key: <code id="dashApiKey" style="background:#fff; padding:2px 6px; border-radius:4px; font-weight:bold; user-select: all;"></code></div>
+                </div>
+                <button class="btn btn-secondary btn-full btn-sm" id="btnCopyAgentConfig" type="button" style="margin-bottom: 6px;">
+                  📋 Copy All Agent Settings JSON
+                </button>
                 <button class="btn btn-outline btn-full btn-sm" id="btnToggleSimulatedAgent" type="button">
                   ▶️ Start Simulated Windows Agent
                 </button>
-                <div id="agentStatusText" class="meta-text" style="margin-top: 4px; font-size: 11px; color: var(--color-primary); font-weight: 600;">Agent status: Offline</div>
+                <div id="agentStatusText" class="meta-text" style="margin-top: 6px; font-size: 11px; color: var(--color-primary); font-weight: 600;">Agent status: Offline</div>
               </div>
             </div>
 

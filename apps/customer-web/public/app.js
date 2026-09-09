@@ -543,7 +543,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const dashPrinterTitle       = document.getElementById('dashPrinterTitle');
   const dashQrImg              = document.getElementById('dashQrImg');
   const dashQrTargetUrl        = document.getElementById('dashQrTargetUrl');
+  const dashShopId             = document.getElementById('dashShopId');
+  const dashPrinterId          = document.getElementById('dashPrinterId');
   const dashApiKey             = document.getElementById('dashApiKey');
+  const btnCopyAgentConfig     = document.getElementById('btnCopyAgentConfig');
   const btnOpenCustomerView    = document.getElementById('btnOpenCustomerView');
   const btnDownloadQr          = document.getElementById('btnDownloadQr');
   const btnSavePricing         = document.getElementById('btnSavePricing');
@@ -624,8 +627,28 @@ document.addEventListener('DOMContentLoaded', () => {
           dashPrinterTitle.textContent = data.printer.printerName;
           if (dashUpiDisplay) dashUpiDisplay.textContent = data.shop.upiId || upiId;
           dashQrImg.src = data.printer.qrCodeDataUrl;
+          if (dashShopId) dashShopId.textContent = data.shop.id;
+          if (dashPrinterId) dashPrinterId.textContent = data.printer.id;
           dashApiKey.textContent = data.printer.apiKey;
           dashQrTargetUrl.textContent = `${window.location.origin}/?printer=${data.printer.id}`;
+
+          if (btnCopyAgentConfig) {
+            btnCopyAgentConfig.onclick = () => {
+              const configJson = JSON.stringify({
+                PrintOkApiUrl: API_BASE,
+                ShopId: data.shop.id,
+                PrinterId: data.printer.id,
+                AgentApiKey: data.printer.apiKey,
+                HeartbeatIntervalSeconds: 30
+              }, null, 2);
+
+              navigator.clipboard.writeText(configJson).then(() => {
+                showToast('success', 'Config Copied!', 'appsettings.json configuration copied to clipboard.');
+              }).catch(() => {
+                showToast('info', 'Agent Settings', `ShopId: ${data.shop.id}\nPrinterId: ${data.printer.id}\nApiKey: ${data.printer.apiKey}`);
+              });
+            };
+          }
 
           showToast('success', 'Shop Registered!', `Printer ID: ${data.printer.id}`);
 
