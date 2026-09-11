@@ -487,7 +487,7 @@ export function createApp(
     }
 
     try {
-      const { shopIds, mode, reason } = req.body || {};
+      const { shopIds, mode, reason, force, confirm } = req.body || {};
       const ids: string[] = Array.isArray(shopIds) ? shopIds : shopIds ? [shopIds] : [];
 
       if (ids.length === 0) {
@@ -500,6 +500,23 @@ export function createApp(
         return res.status(400).json({ error: "mode must be 'delete', 'archive' or 'restore'." });
       }
 
+      // Overriding the paid-job guard destroys payment records along with the
+      // shop, so it takes the highest role and a typed confirmation rather than
+      // a boolean that could be set by accident.
+      const forceDelete = mode === 'delete' && force === true;
+      if (forceDelete) {
+        if (admin.role !== 'owner') {
+          return res.status(403).json({
+            error: 'Only an owner can delete shops that have taken payment.',
+          });
+        }
+        if (confirm !== 'DELETE PAID SHOPS') {
+          return res.status(400).json({
+            error: "Forced deletion requires confirm: 'DELETE PAID SHOPS'.",
+          });
+        }
+      }
+
       const results = [];
       for (const shopId of ids) {
         // Capture what is about to be destroyed, so the audit entry still
@@ -508,7 +525,7 @@ export function createApp(
 
         let result;
         if (mode === 'delete') {
-          result = await storage.hardDeleteShop(shopId);
+          result = await storage.hardDeleteShop(shopId, forceDelete);
         } else if (mode === 'archive') {
           result = await storage.archiveShop(shopId, admin.email, reason);
         } else {
@@ -519,11 +536,16 @@ export function createApp(
           await storage.recordAdminAudit({
             actorId: admin.sub,
             actorEmail: admin.email,
-            action: `SHOP_${result.action.toUpperCase()}`,
+            // A forced deletion is recorded distinctly so it stands out from
+            // ordinary cleanup in the audit trail.
+            action: forceDelete && safety.paidJobCount > 0
+              ? 'SHOP_FORCE_DELETED'
+              : `SHOP_${result.action.toUpperCase()}`,
             targetType: 'shop',
             targetId: shopId,
             detail: {
               reason,
+              forced: forceDelete,
               paidJobCount: safety.paidJobCount,
               totalJobCount: safety.totalJobCount,
               printerCount: safety.printerCount,

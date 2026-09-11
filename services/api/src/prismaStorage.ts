@@ -879,12 +879,14 @@ export class PrismaStorage implements IStorageProvider {
     };
   }
 
-  public async hardDeleteShop(shopId: string): Promise<ShopRemovalResult> {
+  public async hardDeleteShop(shopId: string, force = false): Promise<ShopRemovalResult> {
     const safety = await this.getShopRemovalSafety(shopId);
     if (!safety.exists) {
       return { shopId, ok: false, action: 'refused', reason: 'Shop not found.' };
     }
-    if (!safety.canHardDelete) {
+    // The guard exists to protect payment records. Overriding it is a
+    // deliberate act, separately confirmed and separately audited.
+    if (!safety.canHardDelete && !force) {
       return { shopId, ok: false, action: 'refused', reason: safety.reason };
     }
 

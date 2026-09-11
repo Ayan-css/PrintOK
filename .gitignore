@@ -70,3 +70,6 @@ test-results/
 plan.md
 bugs.md
 newFeatures.md
+
+# Local database exports (may contain customer data)
+backups/

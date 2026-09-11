@@ -251,8 +251,12 @@ export interface IStorageProvider {
   listAdminShopSummaries(limit?: number, includeArchived?: boolean): Promise<AdminShopSummary[]>;
   /** Checks whether a shop can be hard deleted, without changing anything. */
   getShopRemovalSafety(shopId: string): Promise<ShopRemovalSafety>;
-  /** Permanently removes a shop and everything cascading from it. */
-  hardDeleteShop(shopId: string): Promise<ShopRemovalResult>;
+  /**
+   * Permanently removes a shop and everything cascading from it.
+   * `force` overrides the paid-job guard and destroys payment records with it,
+   * so callers must gate it behind an explicit operator confirmation.
+   */
+  hardDeleteShop(shopId: string, force?: boolean): Promise<ShopRemovalResult>;
   archiveShop(shopId: string, actor: string, reason?: string): Promise<ShopRemovalResult>;
   restoreShop(shopId: string): Promise<ShopRemovalResult>;
   recordAdminAudit(entry: Omit<AdminAuditEntry, 'id' | 'createdAt'>): Promise<void>;
@@ -754,10 +758,12 @@ export class MemoryStorage implements IStorageProvider {
     };
   }
 
-  public async hardDeleteShop(shopId: string): Promise<ShopRemovalResult> {
+  public async hardDeleteShop(shopId: string, force = false): Promise<ShopRemovalResult> {
     const safety = await this.getShopRemovalSafety(shopId);
     if (!safety.exists) return { shopId, ok: false, action: 'refused', reason: 'Shop not found.' };
-    if (!safety.canHardDelete) return { shopId, ok: false, action: 'refused', reason: safety.reason };
+    if (!safety.canHardDelete && !force) {
+      return { shopId, ok: false, action: 'refused', reason: safety.reason };
+    }
 
     const printerIds = [...this.printers.values()]
       .filter((p) => p.shopId === shopId)

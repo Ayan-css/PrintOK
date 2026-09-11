@@ -30,9 +30,10 @@
       <a class="landing-logo" href="/">🖨️ PrintOk</a>
       <nav class="landing-nav-links" aria-label="Main">
         <a href="#how">How it works</a>
+        <a href="#compare">Why PrintOk</a>
         <a href="#shops">For shops</a>
         <a href="#pricing">Pricing</a>
-        <a href="#faq">FAQ</a>
+        <a href="#contact">Contact</a>
       </nav>
       <div class="landing-nav-actions">
         <a href="/dashboard" class="btn btn-outline btn-sm">Shop Login</a>
@@ -44,7 +45,14 @@
     <section class="landing-hero">
       <div class="landing-hero-copy">
         <span class="eyebrow">For stationery &amp; xerox shops</span>
-        <h1>Turn the printer you already own into an instant print station.</h1>
+        <h1>
+          Turn the printer you already own into
+          <!-- The rotating word is the one dynamic element; everything around it
+               stays still so the headline remains readable. -->
+          <span class="rotator" aria-live="off">
+            <span class="rotator-track" id="heroRotator">an instant print station</span>
+          </span>
+        </h1>
         <p class="lede">
           Put a QR code on your counter. Customers scan it, upload their file, pay on their
           own phone, and collect the printout. No new hardware. No one queuing to explain
@@ -54,16 +62,23 @@
           <a href="/register" class="btn btn-primary btn-lg">List Your Shop — Free</a>
           <a href="#how" class="btn btn-outline btn-lg">See how it works</a>
         </div>
-        <p class="meta-text">Works with any Windows PC and the printer you already have.</p>
+
+        <!-- Counters animate on first view, then hold. -->
+        <dl class="hero-stats">
+          <div><dt>Setup time</dt><dd><span data-count-to="5">0</span> min</dd></div>
+          <div><dt>New hardware</dt><dd>₹<span data-count-to="0">0</span></dd></div>
+          <div><dt>Files handled</dt><dd><span data-count-to="7">0</span> types</dd></div>
+        </dl>
       </div>
 
-      <!-- Illustrative flow, not a screenshot -->
+      <!-- Illustrative flow, not a screenshot. Steps light up in sequence. -->
       <div class="landing-hero-visual" aria-hidden="true">
-        <div class="flow-card">
-          <div class="flow-step"><span class="flow-num">1</span> Customer scans your QR</div>
-          <div class="flow-step"><span class="flow-num">2</span> Uploads a PDF or photo</div>
-          <div class="flow-step"><span class="flow-num">3</span> Pays on their phone</div>
-          <div class="flow-step flow-step--done"><span class="flow-num">✓</span> Your printer prints it</div>
+        <div class="flow-card" id="heroFlow">
+          <div class="flow-phone-notch"></div>
+          <div class="flow-step" data-flow-step="0"><span class="flow-num">1</span> Customer scans your QR</div>
+          <div class="flow-step" data-flow-step="1"><span class="flow-num">2</span> Uploads a PDF or photo</div>
+          <div class="flow-step" data-flow-step="2"><span class="flow-num">3</span> Pays on their phone</div>
+          <div class="flow-step flow-step--done" data-flow-step="3"><span class="flow-num">✓</span> Your printer prints it</div>
           <div class="flow-token">Token&nbsp;#014</div>
         </div>
       </div>
@@ -93,6 +108,128 @@
           <p>Paid jobs print automatically. You only step in when something actually needs
              you — paper out, or a job that needs a decision.</p>
         </article>
+      </div>
+    </section>
+
+    <!-- WHAT THE SOFTWARE ACTUALLY DOES -->
+    <section class="landing-section" id="software">
+      <h2>What runs where</h2>
+      <p class="section-lede">
+        Three pieces, and only one of them sits in your shop.
+      </p>
+
+      <div class="arch-diagram">
+        <div class="arch-node">
+          <div class="arch-icon">📱</div>
+          <h3>Customer's phone</h3>
+          <p>Scans your QR, picks copies, colour and pages, sees the price before paying.</p>
+          <ul class="arch-points">
+            <li>No app to install</li>
+            <li>Pays by UPI or card</li>
+            <li>Gets a token number</li>
+          </ul>
+        </div>
+
+        <div class="arch-link" aria-hidden="true">
+          <span class="arch-arrow">→</span>
+          <span class="arch-label">upload &amp; pay</span>
+        </div>
+
+        <div class="arch-node arch-node--core">
+          <div class="arch-icon">☁️</div>
+          <h3>PrintOk cloud</h3>
+          <p>Checks the page count, prices the job from your rates, takes the payment and
+             holds the queue.</p>
+          <ul class="arch-points">
+            <li>Verifies pages server-side</li>
+            <li>Keeps payment and printing separate</li>
+            <li>Deletes the file when done</li>
+          </ul>
+        </div>
+
+        <div class="arch-link" aria-hidden="true">
+          <span class="arch-arrow">→</span>
+          <span class="arch-label">job pushed</span>
+        </div>
+
+        <div class="arch-node">
+          <div class="arch-icon">🖨️</div>
+          <h3>Your shop PC</h3>
+          <p>A small program collects paid jobs and sends them to your existing printer.</p>
+          <ul class="arch-points">
+            <li>Pairs once with a code</li>
+            <li>Reconnects after a restart</li>
+            <li>Removes files after printing</li>
+          </ul>
+        </div>
+      </div>
+
+      <p class="meta-text arch-footnote">
+        You never install a server, open a port, or buy a device. The only thing in your shop
+        is the agent, and it talks outward only.
+      </p>
+    </section>
+
+    <!-- COMPARISON -->
+    <section class="landing-section landing-section--alt" id="compare">
+      <h2>Why not just carry on as before?</h2>
+      <p class="section-lede">
+        How a print job goes today, versus with PrintOk on the counter.
+      </p>
+
+      <div class="table-scroll">
+        <table class="compare-table">
+          <caption class="sr-only">Comparison of printing without and with PrintOk</caption>
+          <thead>
+            <tr>
+              <th scope="col">At the counter</th>
+              <th scope="col">Today</th>
+              <th scope="col" class="compare-ours">With PrintOk</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Getting the file</th>
+              <td>WhatsApp, email or a pen drive, then find it on your PC</td>
+              <td class="compare-ours">Arrives in your queue, already priced</td>
+            </tr>
+            <tr>
+              <th scope="row">Explaining the job</th>
+              <td>Customer describes copies, colour and pages out loud</td>
+              <td class="compare-ours">They choose it themselves before paying</td>
+            </tr>
+            <tr>
+              <th scope="row">Counting pages</th>
+              <td>You open the file and count</td>
+              <td class="compare-ours">Counted automatically, and verified</td>
+            </tr>
+            <tr>
+              <th scope="row">Taking money</th>
+              <td>Cash or a UPI screenshot you have to trust</td>
+              <td class="compare-ours">Paid before printing, or approved by you</td>
+            </tr>
+            <tr>
+              <th scope="row">Busy periods</th>
+              <td>A queue of people waiting to be served one by one</td>
+              <td class="compare-ours">Jobs stack up in order; you just collect them</td>
+            </tr>
+            <tr>
+              <th scope="row">Customer files</th>
+              <td>Sit in Downloads until someone clears them</td>
+              <td class="compare-ours">Deleted automatically once the job is done</td>
+            </tr>
+            <tr>
+              <th scope="row">Something goes wrong</th>
+              <td>You find out when the customer complains</td>
+              <td class="compare-ours">Flagged on your dashboard with what to do</td>
+            </tr>
+            <tr>
+              <th scope="row">Upfront cost</th>
+              <td>New kiosk hardware, if you go that route</td>
+              <td class="compare-ours">Nothing — your printer, your PC</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </section>
 
@@ -180,6 +317,72 @@
           <summary>Can I use more than one printer?</summary>
           <p>Yes. Each printer gets its own QR code and its own queue.</p>
         </details>
+      </div>
+    </section>
+
+    <!-- CONTACT -->
+    <section class="landing-section" id="contact">
+      <h2>Talk to us</h2>
+      <p class="section-lede">
+        Questions about connecting your printer, pricing, or whether your model is supported.
+      </p>
+
+      <div class="contact-layout">
+        <form class="contact-form card card--elevated" id="contactForm" novalidate>
+          <div class="grid-2">
+            <div class="form-group">
+              <label class="form-label" for="contactName">Your name</label>
+              <input type="text" id="contactName" class="form-input" required autocomplete="name">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="contactShop">Shop name</label>
+              <input type="text" id="contactShop" class="form-input" autocomplete="organization">
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label class="form-label" for="contactEmail">Email</label>
+              <input type="email" id="contactEmail" class="form-input" required autocomplete="email">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="contactPhone">Phone</label>
+              <input type="tel" id="contactPhone" class="form-input" autocomplete="tel">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="contactMessage">What do you need?</label>
+            <textarea id="contactMessage" class="form-input" rows="4" required
+                      placeholder="e.g. I have a Canon printer and want to connect it."></textarea>
+          </div>
+
+          <div id="contactStatus" class="alert" hidden role="status"></div>
+
+          <button type="submit" class="btn btn-primary btn-block" id="btnContactSubmit">
+            Send Message
+          </button>
+        </form>
+
+        <aside class="contact-aside">
+          <div class="contact-card">
+            <h3>📧 Email</h3>
+            <p><a href="mailto:hello@printok.in">hello@printok.in</a></p>
+            <p class="meta-text">We reply within one working day.</p>
+          </div>
+          <div class="contact-card">
+            <h3>🏬 Already listed?</h3>
+            <p>Your dashboard has live job status, your rate card and agent setup.</p>
+            <p><a href="/dashboard" class="btn btn-outline btn-sm">Open dashboard</a></p>
+          </div>
+          <div class="contact-card">
+            <h3>🖨️ Printer support</h3>
+            <p class="meta-text">
+              PrintOk works with any printer your Windows PC can already print to. If you can
+              right-click a file and print it, it will work.
+            </p>
+          </div>
+        </aside>
       </div>
     </section>
 
