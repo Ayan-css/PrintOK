@@ -1,4 +1,6 @@
 import { execFileSync } from 'child_process';
+import path from 'path';
+import fs from 'fs';
 import { PrismaClient } from '@prisma/client';
 
 /**
@@ -20,8 +22,22 @@ import { PrismaClient } from '@prisma/client';
 
 const BASELINE_MIGRATION = '20260911000000_baseline';
 
+/**
+ * The API package root, resolved from this file rather than from the working
+ * directory. The host decides where the process is started from, and the Prisma
+ * CLI resolves `prisma/schema.prisma` relative to the CWD — so a process started
+ * at the repository root would not find the schema and the boot would fail.
+ *
+ * dist/migrate.js -> package root is one level up.
+ */
+const PACKAGE_ROOT = path.resolve(__dirname, '..');
+const SCHEMA_PATH = path.join(PACKAGE_ROOT, 'prisma', 'schema.prisma');
+
 function runPrisma(args: string[]): void {
-  execFileSync('npx', ['prisma', ...args], { stdio: 'inherit' });
+  execFileSync('npx', ['prisma', ...args, '--schema', SCHEMA_PATH], {
+    stdio: 'inherit',
+    cwd: PACKAGE_ROOT,
+  });
 }
 
 export async function runMigrations(): Promise<void> {
@@ -33,6 +49,12 @@ export async function runMigrations(): Promise<void> {
   if (process.env.PRINTOK_SKIP_MIGRATIONS === 'true') {
     console.log('[migrate] PRINTOK_SKIP_MIGRATIONS=true; skipping migrations.');
     return;
+  }
+
+  if (!fs.existsSync(SCHEMA_PATH)) {
+    throw new Error(
+      `Prisma schema not found at ${SCHEMA_PATH}. The compiled output is not laid out as expected.`
+    );
   }
 
   const prisma = new PrismaClient();
