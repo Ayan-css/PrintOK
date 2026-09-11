@@ -19,8 +19,12 @@
       "destination": "/dashboard.html"
     },
     {
+      "source": "/print",
+      "destination": "/print.html"
+    },
+    {
       "source": "/p/:printerId",
-      "destination": "/index.html"
+      "destination": "/print.html"
     }
   ]
 }

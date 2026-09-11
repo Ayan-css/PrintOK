@@ -3,349 +3,208 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="PrintOk — Scan a shop QR code, upload your document from your phone, pay and print instantly. Hardware-free printing for everyone.">
-  <meta name="theme-color" content="#0d0d0d">
-  <meta property="og:title" content="PrintOk — Instant Mobile Printing">
-  <meta property="og:description" content="Scan, upload, pay. Your document at the shop printer in seconds.">
-  <title>PrintOk — Instant Mobile Printing</title>
+  <title>PrintOk — Turn your shop into an instant print station</title>
+  <meta name="description"
+        content="PrintOk connects your existing printer to a QR code. Customers scan, upload, pay and collect. No new hardware, no counter queues.">
 
-  <!-- Google Fonts -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!--
+    Existing QR posters encode /?printer=<id>. The customer app now lives at
+    /print, so forward those scans before anything renders. Runs in <head> so a
+    customer never sees the marketing page flash.
+  -->
+  <script>
+    (function () {
+      var params = new URLSearchParams(location.search);
+      var printer = params.get('printer');
+      if (printer) location.replace('/print' + location.search + location.hash);
+    })();
+  </script>
 
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/styles.css">
 </head>
-<body class="bg-paper">
-  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+<body>
+  <div class="landing">
 
-  <div class="app-wrapper">
-    <div class="page-container">
+    <!-- NAV -->
+    <header class="landing-nav">
+      <a class="landing-logo" href="/">🖨️ PrintOk</a>
+      <nav class="landing-nav-links" aria-label="Main">
+        <a href="#how">How it works</a>
+        <a href="#shops">For shops</a>
+        <a href="#pricing">Pricing</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <div class="landing-nav-actions">
+        <a href="/dashboard" class="btn btn-outline btn-sm">Shop Login</a>
+        <a href="/register" class="btn btn-primary btn-sm">List Your Shop</a>
+      </div>
+    </header>
 
-      <!-- APP HEADER -->
-      <header class="app-header">
-        <a href="/" class="brand" style="text-decoration: none; color: inherit;">
-          <div class="brand-mark">
-            <svg viewBox="0 0 18 18" fill="none">
-              <rect x="2" y="2" width="14" height="11" rx="1" stroke="white" stroke-width="2"/>
-              <rect x="5" y="13" width="8" height="4" rx="0.5" stroke="white" stroke-width="1.5"/>
-              <rect x="5" y="6" width="5" height="2" rx="0.5" fill="white"/>
-            </svg>
-          </div>
-          <div class="brand-text">
-            <div class="brand-name">PrintOk</div>
-            <div class="brand-tagline">Hardware-Free Printing</div>
-          </div>
-        </a>
-
-        <!-- Shop Connection Status Badge -->
-        <div class="shop-status-badge" id="shopStatusBadge">
-          <div class="status-pulse-dot online" id="shopStatusDot"></div>
-          <span class="shop-status-text" id="shopNameDisplay">
-            Loading Shop...
-          </span>
+    <!-- HERO -->
+    <section class="landing-hero">
+      <div class="landing-hero-copy">
+        <span class="eyebrow">For stationery &amp; xerox shops</span>
+        <h1>Turn the printer you already own into an instant print station.</h1>
+        <p class="lede">
+          Put a QR code on your counter. Customers scan it, upload their file, pay on their
+          own phone, and collect the printout. No new hardware. No one queuing to explain
+          what they need.
+        </p>
+        <div class="landing-cta-row">
+          <a href="/register" class="btn btn-primary btn-lg">List Your Shop — Free</a>
+          <a href="#how" class="btn btn-outline btn-lg">See how it works</a>
         </div>
-      </header>
-
-
-      <!-- Offline Printer Warning Banner -->
-      <div id="agentOfflineWarning" class="agent-offline-banner" hidden>
-        ⚠️ <strong>Printer Offline</strong>: Shop's printer agent is currently disconnected. Jobs will be queued until agent reconnects.
+        <p class="meta-text">Works with any Windows PC and the printer you already have.</p>
       </div>
 
-      <!-- ==============================================
-           SCREEN 1: LANDING HERO (When no ?printer= parameter)
-      ================================================== -->
-      <main id="screenLanding" class="main-content" hidden>
-        <div class="landing-hero">
-          <div class="landing-badge">✨ Hardware-Free Stationery Printing</div>
-          <h1 class="landing-title">Scan. Upload.<br><em>Print.</em></h1>
-          <p class="landing-desc">
-            No WhatsApp sending, no USB pen drives. Scan the shop QR code, select your print configuration, pay via UPI, and your document prints automatically at the counter!
-          </p>
-
-          <div class="grid-2" style="margin-top: 16px;">
-            <a href="/register" class="btn btn-primary btn-full" style="text-decoration: none; text-align: center;">
-              🏬 Register Your Shop (Free)
-            </a>
-            <a href="/dashboard" class="btn btn-outline btn-full" style="text-decoration: none; text-align: center;">
-              ⚡ Merchant Control Dashboard
-            </a>
-          </div>
+      <!-- Illustrative flow, not a screenshot -->
+      <div class="landing-hero-visual" aria-hidden="true">
+        <div class="flow-card">
+          <div class="flow-step"><span class="flow-num">1</span> Customer scans your QR</div>
+          <div class="flow-step"><span class="flow-num">2</span> Uploads a PDF or photo</div>
+          <div class="flow-step"><span class="flow-num">3</span> Pays on their phone</div>
+          <div class="flow-step flow-step--done"><span class="flow-num">✓</span> Your printer prints it</div>
+          <div class="flow-token">Token&nbsp;#014</div>
         </div>
+      </div>
+    </section>
 
-        <!-- Standard Rates Matrix Box -->
-        <div class="card card--elevated" style="margin-top: 20px;">
-          <div class="card-header">
-            <h3 class="card-title">Standard Printing Rates</h3>
-            <span class="badge badge-success">Transparent Pricing</span>
-          </div>
+    <!-- HOW IT WORKS -->
+    <section class="landing-section" id="how">
+      <h2>How it works</h2>
+      <p class="section-lede">Three things to set up once, then it runs itself.</p>
 
-          <div class="grid-2">
-            <div class="pricing-mini-card">
-              <div class="pricing-type">B&amp;W Single-Sided</div>
-              <div class="pricing-rate">₹2.00 <span>/ page</span></div>
-              <div class="pricing-meta">Standard 80 GSM Sheet</div>
-            </div>
-            <div class="pricing-mini-card">
-              <div class="pricing-type">B&amp;W Back-to-Back</div>
-              <div class="pricing-rate">₹1.50 <span>/ page</span></div>
-              <div class="pricing-meta">Duplex (₹3.00 / sheet)</div>
-            </div>
-            <div class="pricing-mini-card">
-              <div class="pricing-type">Color Single-Sided</div>
-              <div class="pricing-rate">₹10.00 <span>/ page</span></div>
-              <div class="pricing-meta">Vibrant Laser Color</div>
-            </div>
-            <div class="pricing-mini-card">
-              <div class="pricing-type">Color Back-to-Back</div>
-              <div class="pricing-rate">₹8.00 <span>/ page</span></div>
-              <div class="pricing-meta">Color Duplex (₹16.00 / sheet)</div>
-            </div>
-          </div>
+      <div class="grid-3">
+        <article class="feature-card">
+          <div class="feature-icon">🏬</div>
+          <h3>1. List your shop</h3>
+          <p>Register in a couple of minutes. You get a QR poster for your counter and a
+             dashboard to watch the queue.</p>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon">💻</div>
+          <h3>2. Connect your PC</h3>
+          <p>Download the print agent, enter a pairing code from your dashboard, and your
+             existing printer is online. It reconnects on its own after a restart.</p>
+        </article>
+        <article class="feature-card">
+          <div class="feature-icon">🖨️</div>
+          <h3>3. Jobs just arrive</h3>
+          <p>Paid jobs print automatically. You only step in when something actually needs
+             you — paper out, or a job that needs a decision.</p>
+        </article>
+      </div>
+    </section>
 
-          <!-- Demo Printer Launcher Button -->
-          <div style="margin-top: 16px; text-align: center;">
-            <a id="btnDemoPrinter" href="/?printer=prn_test" class="btn btn-secondary btn-full" style="text-decoration: none;">
-              📱 Try Customer Printing Demo Mode
-            </a>
-          </div>
-        </div>
-      </main>
+    <!-- FOR SHOPS -->
+    <section class="landing-section landing-section--alt" id="shops">
+      <h2>Built around how a shop actually runs</h2>
 
-      <!-- ==============================================
-           SCREEN 2: CUSTOMER PRINTING FLOW (When ?printer= is set)
-      ================================================== -->
-      <main id="screenCustomer" class="main-content" hidden>
-        
-        <!-- File Upload Card -->
-        <div class="card card--elevated">
-          <div class="card-header">
-            <h2 class="card-title">1. Upload Document</h2>
-            <span class="badge badge-primary">PDF / Word / Image</span>
-          </div>
+      <div class="grid-2">
+        <article class="benefit">
+          <h3>💸 You set your own rates</h3>
+          <p>Per page, black &amp; white or colour, single or double sided, A4 or A3. Change
+             them whenever you like — jobs already quoted keep their original price.</p>
+        </article>
+        <article class="benefit">
+          <h3>⚡ No counter explaining</h3>
+          <p>The customer picks copies, colour and page range themselves. You see a token
+             number and a finished printout.</p>
+        </article>
+        <article class="benefit">
+          <h3>🔒 Documents don't linger</h3>
+          <p>Files are deleted once the job is done. Nothing sits on your PC, and there's a
+             record of every deletion.</p>
+        </article>
+        <article class="benefit">
+          <h3>🧾 Money you can reconcile</h3>
+          <p>Payment and printing are tracked separately, so a payment that didn't print is
+             visible rather than silently lost.</p>
+        </article>
+        <article class="benefit">
+          <h3>🛟 Failures surface</h3>
+          <p>If a PC dies mid-job, the job comes back to the queue — unless it might already
+             have printed, in which case you're asked instead of paper being wasted.</p>
+        </article>
+        <article class="benefit">
+          <h3>🔑 Every PC is revocable</h3>
+          <p>Each connected PC gets its own key. Remove one without disturbing the others.</p>
+        </article>
+      </div>
+    </section>
 
-          <div id="dropZone" class="file-drop-zone" role="button" tabindex="0"
-               aria-label="Choose a document to print. Supports PDF, Word, Excel, CSV and images up to 25 megabytes.">
-            <input type="file" id="fileInput" class="sr-only"
-                   accept=".pdf,.doc,.docx,.xlsx,.csv,.pptx,.png,.jpg,.jpeg,.webp">
-            <div class="drop-zone-icon" aria-hidden="true">📄</div>
-            <div class="drop-zone-text">Tap or Drop Document Here</div>
-            <div class="drop-zone-sub">PDF, Word, Excel, CSV &amp; Images (Max 25MB)</div>
-          </div>
+    <!-- PRICING -->
+    <section class="landing-section" id="pricing">
+      <h2>Pricing</h2>
+      <p class="section-lede" id="pricingLede">Start free. Pay only when you're earning.</p>
 
-          <!-- Uploaded File Details Pill -->
-          <div id="fileInfoBox" class="file-info-pill" hidden>
-            <div class="file-info-left">
-              <span class="file-icon">📄</span>
-              <div>
-                <div class="file-name" id="infoFileName">document.pdf</div>
-                <div class="file-meta" id="infoFileMeta">Auto-detecting pages...</div>
-              </div>
-            </div>
-            <button id="btnRemoveFile" type="button" class="btn-icon" title="Remove File" aria-label="Remove selected file">✕</button>
-          </div>
+      <div class="grid-3" id="pricingGrid">
+        <!-- Rendered from the PRICING config in landing.js -->
+      </div>
 
-          <!-- Document Visual Preview Box -->
-          <div id="documentPreviewBox" class="document-preview-box" hidden>
-            <div class="preview-header">
-              <span class="preview-title">🔍 Visual Document Preview</span>
-              <span id="previewPageBadge" class="badge badge-neutral">Page 1</span>
-            </div>
-            <div class="preview-viewport">
-              <img id="previewImg" src="" alt="Document Preview" hidden>
-              <canvas id="previewCanvas" hidden></canvas>
-              <div id="previewFallback" class="preview-fallback">
-                <div class="fallback-icon">📄</div>
-                <div id="previewFallbackText">PDF Document Loaded</div>
-              </div>
-            </div>
-          </div>
-        </div>
+      <p class="meta-text pricing-footnote" id="pricingFootnote"></p>
+    </section>
 
-        <!-- Print Configuration Card -->
-        <div id="configSection" class="card card--elevated" style="margin-top: 14px;" hidden>
-          <div class="card-header">
-            <h2 class="card-title">2. Print Configuration</h2>
-            <span class="badge badge-queued">Live Pricing</span>
-          </div>
+    <!-- FAQ -->
+    <section class="landing-section landing-section--alt" id="faq">
+      <h2>Questions</h2>
 
-          <!-- Page Selection Range Pills -->
-          <div class="form-group" role="group" aria-labelledby="lblPageRange">
-            <span class="form-label" id="lblPageRange">Page Selection Range</span>
-            <div class="option-pill-group">
-              <label class="option-pill active" id="pillPagesAll">
-                <input type="radio" name="pageRangeMode" value="all" class="sr-only" checked>
-                <span>📖 All Pages (<span id="allPagesCountBadge">1</span>)</span>
-              </label>
-              <label class="option-pill" id="pillPagesCustom">
-                <input type="radio" name="pageRangeMode" value="custom" class="sr-only">
-                <span>✏️ Custom Range</span>
-              </label>
-            </div>
-            <div id="customPageRangeBox" style="margin-top: 8px;" hidden>
-              <label class="sr-only" for="inputCustomPageRange">Custom page range</label>
-              <input type="text" id="inputCustomPageRange" class="form-input" inputmode="numeric"
-                     aria-describedby="customRangeHelp"
-                     placeholder="e.g. 1-3, 5, 8-10 (Leave blank for all)" value="">
-              <div class="form-help" id="customRangeHelp">Enter page numbers and ranges separated by commas. E.g. 1-5, 8</div>
-            </div>
-          </div>
+      <div class="faq-list">
+        <details class="faq-item">
+          <summary>Do I need to buy a new printer?</summary>
+          <p>No. PrintOk works with the printer you already have, through a small program on
+             any Windows PC connected to it.</p>
+        </details>
+        <details class="faq-item">
+          <summary>What happens if my PC or internet goes down?</summary>
+          <p>Jobs wait in the queue. When the PC comes back it reconnects and picks them up.
+             A job that was mid-print when the PC died is held for you to confirm rather than
+             reprinted automatically.</p>
+        </details>
+        <details class="faq-item">
+          <summary>What file types can customers send?</summary>
+          <p>PDF, Word, Excel, CSV, PowerPoint and images. Page count is verified on our side,
+             so the price reflects what actually prints.</p>
+        </details>
+        <details class="faq-item">
+          <summary>How do customers pay?</summary>
+          <p>On their own phone, before printing. You can also approve a job manually if
+             someone pays cash at the counter.</p>
+        </details>
+        <details class="faq-item">
+          <summary>What happens to customer documents?</summary>
+          <p>They're removed once the job reaches a final state, both from our storage and
+             from your PC.</p>
+        </details>
+        <details class="faq-item">
+          <summary>Can I use more than one printer?</summary>
+          <p>Yes. Each printer gets its own QR code and its own queue.</p>
+        </details>
+      </div>
+    </section>
 
-          <!-- Color Selector Pills -->
-          <div class="form-group" role="group" aria-labelledby="lblColorMode">
-            <span class="form-label" id="lblColorMode">Color Mode</span>
-            <div class="option-pill-group">
-              <label class="option-pill active" id="pillBw">
-                <input type="radio" name="colorMode" value="bw" class="sr-only" checked>
-                <span>📄 Black &amp; White</span>
-              </label>
-              <label class="option-pill" id="pillColor">
-                <input type="radio" name="colorMode" value="color" class="sr-only">
-                <span>🎨 Full Color</span>
-              </label>
-            </div>
-          </div>
+    <!-- CLOSING CTA -->
+    <section class="landing-closing">
+      <h2>Put your printer to work</h2>
+      <p>Listing your shop is free and takes a couple of minutes.</p>
+      <a href="/register" class="btn btn-primary btn-lg">List Your Shop</a>
+    </section>
 
-          <!-- Duplex Paper Mode Pills -->
-          <div class="form-group" role="group" aria-labelledby="lblDuplexMode">
-            <span class="form-label" id="lblDuplexMode">Print Sides (Duplex)</span>
-            <div class="option-pill-group">
-              <label class="option-pill active" id="pillSingle">
-                <input type="radio" name="duplexMode" value="single" class="sr-only" checked>
-                <span>📄 Single-Sided</span>
-              </label>
-              <label class="option-pill" id="pillDuplex">
-                <input type="radio" name="duplexMode" value="duplex" class="sr-only">
-                <span>🔄 Back-to-Back (Duplex)</span>
-              </label>
-            </div>
-          </div>
+    <footer class="landing-footer">
+      <div>
+        <strong>🖨️ PrintOk</strong>
+        <p class="meta-text">Hardware-free printing for neighbourhood shops.</p>
+      </div>
+      <nav class="landing-footer-links" aria-label="Footer">
+        <a href="/register">List your shop</a>
+        <a href="/dashboard">Shop login</a>
+        <a href="#how">How it works</a>
+        <a href="#pricing">Pricing</a>
+      </nav>
+    </footer>
 
-          <!-- Paper Size & Copies Grid -->
-          <div class="grid-2">
-            <div class="form-group">
-              <label class="form-label" for="selectPaperSize">Paper Size</label>
-              <select id="selectPaperSize" class="form-select">
-                <option value="A4" selected>A4 Standard</option>
-                <option value="A3">A3 Poster</option>
-                <option value="Letter">Letter</option>
-              </select>
-            </div>
-
-            <div class="form-group">
-              <span class="form-label" id="lblCopies">Copies</span>
-              <div class="stepper-box">
-                <button type="button" id="btnDecCopies" class="stepper-btn" aria-label="Decrease copies">-</button>
-                <span id="copiesVal" class="stepper-val" role="status" aria-live="polite" aria-labelledby="lblCopies">1</span>
-                <button type="button" id="btnIncCopies" class="stepper-btn" aria-label="Increase copies">+</button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Cost Calculation Summary Box -->
-          <div class="cost-summary-box">
-            <div>
-              <div class="cost-label">Total Cost</div>
-              <div class="cost-breakdown" id="costBreakdownText">1 page × ₹2.00 (B&amp;W Single)</div>
-            </div>
-            <div class="cost-value" id="totalCostDisplay">₹2.00</div>
-          </div>
-
-          <!-- Checkout Actions -->
-          <div class="grid-2" style="margin-top: 14px;">
-            <button id="btnPayRazorpay" class="btn btn-primary btn-full">
-              💳 Pay via Razorpay / UPI
-            </button>
-            <button id="btnPayCash" class="btn btn-secondary btn-full">
-              ⚡ Pay Cash at Counter
-            </button>
-          </div>
-        </div>
-
-      </main>
-
-      <!-- ==============================================
-           SCREEN 3: ORDER STATUS & TOKEN TRACKER
-      ================================================== -->
-      <main id="screenStatus" class="main-content" hidden>
-        
-        <!-- Live Token Banner -->
-        <div class="token-card">
-          <div class="token-header">YOUR PRINT TOKEN</div>
-          <div class="token-number" id="statusTokenNumber">#001</div>
-          <div class="token-sub">Show Token Number at Shop Counter</div>
-          
-          <button id="btnCopyToken" type="button" class="btn btn-outline btn-sm" style="margin-top: 10px; border-color: #fff; color: #fff;">
-            📋 Copy Token Number
-          </button>
-        </div>
-
-        <!-- Live Status Tracker Card -->
-        <div class="card card--elevated" style="margin-top: 14px;">
-          <div class="card-header">
-            <h3 class="card-title">Order Status</h3>
-            <span id="statusBadgeState" class="badge badge-queued" role="status" aria-live="polite">Queued</span>
-          </div>
-
-          <!-- Progress Stepper Track -->
-          <div class="progress-track">
-            <div class="progress-step completed" id="pStep1">
-              <div class="p-icon">✓</div>
-              <div class="p-text">Job Created</div>
-            </div>
-            <div class="progress-step active" id="pStep2">
-              <div class="p-icon">💳</div>
-              <div class="p-text">Payment Verified</div>
-            </div>
-            <div class="progress-step" id="pStep3">
-              <div class="p-icon">⬇️</div>
-              <div class="p-text">Sent to Printer</div>
-            </div>
-            <div class="progress-step" id="pStep4">
-              <div class="p-icon">🖨️</div>
-              <div class="p-text">Print Complete</div>
-            </div>
-          </div>
-
-          <!-- Job Metadata Summary -->
-          <div class="key-value-list" style="margin-top: 14px;">
-            <div class="key-value-row">
-              <span>Document:</span>
-              <strong id="stFileName">resume.pdf</strong>
-            </div>
-            <div class="key-value-row">
-              <span>Pages &amp; Copies:</span>
-              <strong id="stPageCopy">1 page, 1 copy</strong>
-            </div>
-            <div class="key-value-row">
-              <span>Amount Paid:</span>
-              <strong id="stAmount">₹2.00</strong>
-            </div>
-          </div>
-
-          <div style="margin-top: 16px;">
-            <button id="btnNewPrintJob" class="btn btn-primary btn-full">
-              📄 Print Another Document
-            </button>
-          </div>
-        </div>
-
-      </main>
-
-      <!-- FOOTER -->
-      <footer class="app-footer">
-        <div>PrintOk Hardware-Free Stationery Printing</div>
-        <div style="margin-top: 4px;">
-          <a href="/register" style="color: var(--color-primary); font-weight: 600;">Shop Owner Registration</a> • 
-          <a href="/dashboard" style="color: var(--color-primary); font-weight: 600;">Merchant Dashboard</a>
-        </div>
-      </footer>
-
-    </div>
   </div>
 
-  <script src="/app.js"></script>
+  <script src="/landing.js"></script>
 </body>
 </html>

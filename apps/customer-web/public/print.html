@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="PrintOk — Scan a shop QR code, upload your document from your phone, pay and print instantly. Hardware-free printing for everyone.">
+  <meta name="theme-color" content="#0d0d0d">
+  <meta property="og:title" content="PrintOk — Instant Mobile Printing">
+  <meta property="og:description" content="Scan, upload, pay. Your document at the shop printer in seconds.">
+  <title>PrintOk — Instant Mobile Printing</title>
+  <meta name="robots" content="noindex">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="bg-paper">
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+  <div class="app-wrapper">
+    <div class="page-container">
+
+      <!-- APP HEADER -->
+      <header class="app-header">
+        <a href="/" class="brand" style="text-decoration: none; color: inherit;">
+          <div class="brand-mark">
+            <svg viewBox="0 0 18 18" fill="none">
+              <rect x="2" y="2" width="14" height="11" rx="1" stroke="white" stroke-width="2"/>
+              <rect x="5" y="13" width="8" height="4" rx="0.5" stroke="white" stroke-width="1.5"/>
+              <rect x="5" y="6" width="5" height="2" rx="0.5" fill="white"/>
+            </svg>
+          </div>
+          <div class="brand-text">
+            <div class="brand-name">PrintOk</div>
+            <div class="brand-tagline">Hardware-Free Printing</div>
+          </div>
+        </a>
+
+        <!-- Shop Connection Status Badge -->
+        <div class="shop-status-badge" id="shopStatusBadge">
+          <div class="status-pulse-dot online" id="shopStatusDot"></div>
+          <span class="shop-status-text" id="shopNameDisplay">
+            Loading Shop...
+          </span>
+        </div>
+      </header>
+
+
+      <!-- Offline Printer Warning Banner -->
+      <div id="agentOfflineWarning" class="agent-offline-banner" hidden>
+        ⚠️ <strong>Printer Offline</strong>: Shop's printer agent is currently disconnected. Jobs will be queued until agent reconnects.
+      </div>
+
+      <!-- ==============================================
+           SCREEN 1: LANDING HERO (When no ?printer= parameter)
+      ================================================== -->
+      <main id="screenLanding" class="main-content" hidden>
+        <div class="landing-hero">
+          <div class="landing-badge">✨ Hardware-Free Stationery Printing</div>
+          <h1 class="landing-title">Scan. Upload.<br><em>Print.</em></h1>
+          <p class="landing-desc">
+            No WhatsApp sending, no USB pen drives. Scan the shop QR code, select your print configuration, pay via UPI, and your document prints automatically at the counter!
+          </p>
+
+          <div class="grid-2" style="margin-top: 16px;">
+            <a href="/register" class="btn btn-primary btn-full" style="text-decoration: none; text-align: center;">
+              🏬 Register Your Shop (Free)
+            </a>
+            <a href="/dashboard" class="btn btn-outline btn-full" style="text-decoration: none; text-align: center;">
+              ⚡ Merchant Control Dashboard
+            </a>
+          </div>
+        </div>
+
+        <!-- Standard Rates Matrix Box -->
+        <div class="card card--elevated" style="margin-top: 20px;">
+          <div class="card-header">
+            <h3 class="card-title">Standard Printing Rates</h3>
+            <span class="badge badge-success">Transparent Pricing</span>
+          </div>
+
+          <div class="grid-2">
+            <div class="pricing-mini-card">
+              <div class="pricing-type">B&amp;W Single-Sided</div>
+              <div class="pricing-rate">₹2.00 <span>/ page</span></div>
+              <div class="pricing-meta">Standard 80 GSM Sheet</div>
+            </div>
+            <div class="pricing-mini-card">
+              <div class="pricing-type">B&amp;W Back-to-Back</div>
+              <div class="pricing-rate">₹1.50 <span>/ page</span></div>
+              <div class="pricing-meta">Duplex (₹3.00 / sheet)</div>
+            </div>
+            <div class="pricing-mini-card">
+              <div class="pricing-type">Color Single-Sided</div>
+              <div class="pricing-rate">₹10.00 <span>/ page</span></div>
+              <div class="pricing-meta">Vibrant Laser Color</div>
+            </div>
+            <div class="pricing-mini-card">
+              <div class="pricing-type">Color Back-to-Back</div>
+              <div class="pricing-rate">₹8.00 <span>/ page</span></div>
+              <div class="pricing-meta">Color Duplex (₹16.00 / sheet)</div>
+            </div>
+          </div>
+
+          <!-- Demo Printer Launcher Button -->
+          <div style="margin-top: 16px; text-align: center;">
+            <a id="btnDemoPrinter" href="/?printer=prn_test" class="btn btn-secondary btn-full" style="text-decoration: none;">
+              📱 Try Customer Printing Demo Mode
+            </a>
+          </div>
+        </div>
+      </main>
+
+      <!-- ==============================================
+           SCREEN 2: CUSTOMER PRINTING FLOW (When ?printer= is set)
+      ================================================== -->
+      <main id="screenCustomer" class="main-content" hidden>
+        
+        <!-- File Upload Card -->
+        <div class="card card--elevated">
+          <div class="card-header">
+            <h2 class="card-title">1. Upload Document</h2>
+            <span class="badge badge-primary">PDF / Word / Image</span>
+          </div>
+
+          <div id="dropZone" class="file-drop-zone" role="button" tabindex="0"
+               aria-label="Choose a document to print. Supports PDF, Word, Excel, CSV and images up to 25 megabytes.">
+            <input type="file" id="fileInput" class="sr-only"
+                   accept=".pdf,.doc,.docx,.xlsx,.csv,.pptx,.png,.jpg,.jpeg,.webp">
+            <div class="drop-zone-icon" aria-hidden="true">📄</div>
+            <div class="drop-zone-text">Tap or Drop Document Here</div>
+            <div class="drop-zone-sub">PDF, Word, Excel, CSV &amp; Images (Max 25MB)</div>
+          </div>
+
+          <!-- Uploaded File Details Pill -->
+          <div id="fileInfoBox" class="file-info-pill" hidden>
+            <div class="file-info-left">
+              <span class="file-icon">📄</span>
+              <div>
+                <div class="file-name" id="infoFileName">document.pdf</div>
+                <div class="file-meta" id="infoFileMeta">Auto-detecting pages...</div>
+              </div>
+            </div>
+            <button id="btnRemoveFile" type="button" class="btn-icon" title="Remove File" aria-label="Remove selected file">✕</button>
+          </div>
+
+          <!-- Document Visual Preview Box -->
+          <div id="documentPreviewBox" class="document-preview-box" hidden>
+            <div class="preview-header">
+              <span class="preview-title">🔍 Visual Document Preview</span>
+              <span id="previewPageBadge" class="badge badge-neutral">Page 1</span>
+            </div>
+            <div class="preview-viewport">
+              <img id="previewImg" src="" alt="Document Preview" hidden>
+              <canvas id="previewCanvas" hidden></canvas>
+              <div id="previewFallback" class="preview-fallback">
+                <div class="fallback-icon">📄</div>
+                <div id="previewFallbackText">PDF Document Loaded</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Print Configuration Card -->
+        <div id="configSection" class="card card--elevated" style="margin-top: 14px;" hidden>
+          <div class="card-header">
+            <h2 class="card-title">2. Print Configuration</h2>
+            <span class="badge badge-queued">Live Pricing</span>
+          </div>
+
+          <!-- Page Selection Range Pills -->
+          <div class="form-group" role="group" aria-labelledby="lblPageRange">
+            <span class="form-label" id="lblPageRange">Page Selection Range</span>
+            <div class="option-pill-group">
+              <label class="option-pill active" id="pillPagesAll">
+                <input type="radio" name="pageRangeMode" value="all" class="sr-only" checked>
+                <span>📖 All Pages (<span id="allPagesCountBadge">1</span>)</span>
+              </label>
+              <label class="option-pill" id="pillPagesCustom">
+                <input type="radio" name="pageRangeMode" value="custom" class="sr-only">
+                <span>✏️ Custom Range</span>
+              </label>
+            </div>
+            <div id="customPageRangeBox" style="margin-top: 8px;" hidden>
+              <label class="sr-only" for="inputCustomPageRange">Custom page range</label>
+              <input type="text" id="inputCustomPageRange" class="form-input" inputmode="numeric"
+                     aria-describedby="customRangeHelp"
+                     placeholder="e.g. 1-3, 5, 8-10 (Leave blank for all)" value="">
+              <div class="form-help" id="customRangeHelp">Enter page numbers and ranges separated by commas. E.g. 1-5, 8</div>
+            </div>
+          </div>
+
+          <!-- Color Selector Pills -->
+          <div class="form-group" role="group" aria-labelledby="lblColorMode">
+            <span class="form-label" id="lblColorMode">Color Mode</span>
+            <div class="option-pill-group">
+              <label class="option-pill active" id="pillBw">
+                <input type="radio" name="colorMode" value="bw" class="sr-only" checked>
+                <span>📄 Black &amp; White</span>
+              </label>
+              <label class="option-pill" id="pillColor">
+                <input type="radio" name="colorMode" value="color" class="sr-only">
+                <span>🎨 Full Color</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Duplex Paper Mode Pills -->
+          <div class="form-group" role="group" aria-labelledby="lblDuplexMode">
+            <span class="form-label" id="lblDuplexMode">Print Sides (Duplex)</span>
+            <div class="option-pill-group">
+              <label class="option-pill active" id="pillSingle">
+                <input type="radio" name="duplexMode" value="single" class="sr-only" checked>
+                <span>📄 Single-Sided</span>
+              </label>
+              <label class="option-pill" id="pillDuplex">
+                <input type="radio" name="duplexMode" value="duplex" class="sr-only">
+                <span>🔄 Back-to-Back (Duplex)</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Paper Size & Copies Grid -->
+          <div class="grid-2">
+            <div class="form-group">
+              <label class="form-label" for="selectPaperSize">Paper Size</label>
+              <select id="selectPaperSize" class="form-select">
+                <option value="A4" selected>A4 Standard</option>
+                <option value="A3">A3 Poster</option>
+                <option value="Letter">Letter</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <span class="form-label" id="lblCopies">Copies</span>
+              <div class="stepper-box">
+                <button type="button" id="btnDecCopies" class="stepper-btn" aria-label="Decrease copies">-</button>
+                <span id="copiesVal" class="stepper-val" role="status" aria-live="polite" aria-labelledby="lblCopies">1</span>
+                <button type="button" id="btnIncCopies" class="stepper-btn" aria-label="Increase copies">+</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Cost Calculation Summary Box -->
+          <div class="cost-summary-box">
+            <div>
+              <div class="cost-label">Total Cost</div>
+              <div class="cost-breakdown" id="costBreakdownText">1 page × ₹2.00 (B&amp;W Single)</div>
+            </div>
+            <div class="cost-value" id="totalCostDisplay">₹2.00</div>
+          </div>
+
+          <!-- Checkout Actions -->
+          <div class="grid-2" style="margin-top: 14px;">
+            <button id="btnPayRazorpay" class="btn btn-primary btn-full">
+              💳 Pay via Razorpay / UPI
+            </button>
+            <button id="btnPayCash" class="btn btn-secondary btn-full">
+              ⚡ Pay Cash at Counter
+            </button>
+          </div>
+        </div>
+
+      </main>
+
+      <!-- ==============================================
+           SCREEN 3: ORDER STATUS & TOKEN TRACKER
+      ================================================== -->
+      <main id="screenStatus" class="main-content" hidden>
+        
+        <!-- Live Token Banner -->
+        <div class="token-card">
+          <div class="token-header">YOUR PRINT TOKEN</div>
+          <div class="token-number" id="statusTokenNumber">#001</div>
+          <div class="token-sub">Show Token Number at Shop Counter</div>
+          
+          <button id="btnCopyToken" type="button" class="btn btn-outline btn-sm" style="margin-top: 10px; border-color: #fff; color: #fff;">
+            📋 Copy Token Number
+          </button>
+        </div>
+
+        <!-- Live Status Tracker Card -->
+        <div class="card card--elevated" style="margin-top: 14px;">
+          <div class="card-header">
+            <h3 class="card-title">Order Status</h3>
+            <span id="statusBadgeState" class="badge badge-queued" role="status" aria-live="polite">Queued</span>
+          </div>
+
+          <!-- Progress Stepper Track -->
+          <div class="progress-track">
+            <div class="progress-step completed" id="pStep1">
+              <div class="p-icon">✓</div>
+              <div class="p-text">Job Created</div>
+            </div>
+            <div class="progress-step active" id="pStep2">
+              <div class="p-icon">💳</div>
+              <div class="p-text">Payment Verified</div>
+            </div>
+            <div class="progress-step" id="pStep3">
+              <div class="p-icon">⬇️</div>
+              <div class="p-text">Sent to Printer</div>
+            </div>
+            <div class="progress-step" id="pStep4">
+              <div class="p-icon">🖨️</div>
+              <div class="p-text">Print Complete</div>
+            </div>
+          </div>
+
+          <!-- Job Metadata Summary -->
+          <div class="key-value-list" style="margin-top: 14px;">
+            <div class="key-value-row">
+              <span>Document:</span>
+              <strong id="stFileName">resume.pdf</strong>
+            </div>
+            <div class="key-value-row">
+              <span>Pages &amp; Copies:</span>
+              <strong id="stPageCopy">1 page, 1 copy</strong>
+            </div>
+            <div class="key-value-row">
+              <span>Amount Paid:</span>
+              <strong id="stAmount">₹2.00</strong>
+            </div>
+          </div>
+
+          <div style="margin-top: 16px;">
+            <button id="btnNewPrintJob" class="btn btn-primary btn-full">
+              📄 Print Another Document
+            </button>
+          </div>
+        </div>
+
+      </main>
+
+      <!-- FOOTER -->
+      <footer class="app-footer">
+        <div>PrintOk Hardware-Free Stationery Printing</div>
+        <div style="margin-top: 4px;">
+          <a href="/register" style="color: var(--color-primary); font-weight: 600;">Shop Owner Registration</a> • 
+          <a href="/dashboard" style="color: var(--color-primary); font-weight: 600;">Merchant Dashboard</a>
+        </div>
+      </footer>
+
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
