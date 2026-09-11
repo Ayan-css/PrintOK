@@ -10,7 +10,7 @@ import {
   AgentDeviceRecord, AgentSecurityEventRecord, PairingCodeRecord, ReclaimResult,
   AdminUserRecord, ShopPlan, AdminShopSummary, AdminOverview,
   ShopRemovalSafety, ShopRemovalResult, AdminAuditEntry,
-  ContactEnquiryRecord, CreateContactEnquiryInput,
+  ContactEnquiryRecord, CreateContactEnquiryInput, MerchantUserRecord,
 } from './storage';
 import { S3StorageService } from './s3Storage';
 import { calculateJobPriceBreakdown, DEFAULT_PRICING_CONFIG } from './pricing';
@@ -100,6 +100,14 @@ export class PrismaStorage implements IStorageProvider {
   public async getPrinterByApiKey(apiKey: string): Promise<Printer | undefined> {
     const printer = await this.prisma.printer.findUnique({ where: { apiKey } });
     return printer ? this.mapPrinter(printer) : undefined;
+  }
+
+  public async listPrintersForShop(shopId: string): Promise<Printer[]> {
+    const printers = await this.prisma.printer.findMany({
+      where: { shopId },
+      orderBy: { createdAt: 'asc' },
+    });
+    return printers.map((p) => this.mapPrinter(p));
   }
 
   public async regeneratePrinterQr(
@@ -948,6 +956,66 @@ export class PrismaStorage implements IStorageProvider {
         detail: (entry.detail || {}) as Prisma.InputJsonValue,
       },
     });
+  }
+
+  public async createMerchantUser(input: {
+    shopId: string; email: string; passwordHash: string;
+    name?: string; phone?: string; role?: string;
+  }): Promise<MerchantUserRecord> {
+    const user = await this.prisma.merchantUser.create({
+      data: {
+        id: `mch_${crypto.randomBytes(8).toString('hex')}`,
+        shopId: input.shopId,
+        email: input.email.trim().toLowerCase(),
+        passwordHash: input.passwordHash,
+        name: input.name,
+        phone: input.phone,
+        role: input.role || 'owner',
+      },
+    });
+    return this.mapMerchant(user);
+  }
+
+  public async getMerchantByEmail(
+    email: string
+  ): Promise<(MerchantUserRecord & { passwordHash: string }) | undefined> {
+    const user = await this.prisma.merchantUser.findUnique({
+      where: { email: email.trim().toLowerCase() },
+    });
+    if (!user) return undefined;
+    return { ...this.mapMerchant(user), passwordHash: user.passwordHash };
+  }
+
+  public async getMerchantUser(id: string): Promise<MerchantUserRecord | undefined> {
+    const user = await this.prisma.merchantUser.findUnique({ where: { id } });
+    return user ? this.mapMerchant(user) : undefined;
+  }
+
+  public async countMerchantsForShop(shopId: string): Promise<number> {
+    return this.prisma.merchantUser.count({ where: { shopId } });
+  }
+
+  public async recordMerchantLogin(id: string): Promise<void> {
+    await this.prisma.merchantUser.updateMany({
+      where: { id }, data: { lastLoginAt: new Date() },
+    });
+  }
+
+  private mapMerchant(m: {
+    id: string; shopId: string; email: string; name: string | null; phone: string | null;
+    role: string; status: string; lastLoginAt: Date | null; createdAt: Date;
+  }): MerchantUserRecord {
+    return {
+      id: m.id,
+      shopId: m.shopId,
+      email: m.email,
+      name: m.name ?? undefined,
+      phone: m.phone ?? undefined,
+      role: m.role,
+      status: m.status,
+      lastLoginAt: m.lastLoginAt?.toISOString(),
+      createdAt: m.createdAt.toISOString(),
+    };
   }
 
   public async updateShopRazorpayAccount(shopId: string, update: {

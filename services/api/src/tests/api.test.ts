@@ -32,6 +32,8 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
   let createdShopId = '';
   let agentApiKey = '';
   let createdJobId = '';
+  let merchantToken = '';
+  let merchantAuth: Record<string, string> = {};
 
   await t.test('1. Shop Registration Endpoint generates QR code & Printer API Key', async () => {
     const res = await fetch(`${baseUrl}/api/shops/register`, {
@@ -55,6 +57,38 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     createdPrinterId = data.printer.id;
     createdShopId = data.shop.id;
     agentApiKey = data.printer.apiKey;
+  });
+
+  await t.test('1b. The shop owner claims an account and gets a session', async () => {
+    const res = await fetch(`${baseUrl}/api/merchant/claim`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopId: createdShopId,
+        ownerEmail: 'owner@metrocopy.com',
+        password: 'ShopOwner99xy',
+        name: 'Metro Owner',
+      }),
+    });
+    assert.strictEqual(res.status, 201);
+
+    const body = (await res.json()) as any;
+    assert.strictEqual(body.user.shopId, createdShopId);
+    assert.strictEqual(body.user.role, 'owner');
+    assert.ok(!('passwordHash' in body.user), 'the hash must never leave the server');
+
+    merchantToken = body.token;
+    merchantAuth = { Authorization: `Bearer ${merchantToken}`, 'Content-Type': 'application/json' };
+
+    // A shop can only be claimed once.
+    const again = await fetch(`${baseUrl}/api/merchant/claim`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopId: createdShopId, ownerEmail: 'owner@metrocopy.com', password: 'Attacker99xy',
+      }),
+    });
+    assert.strictEqual(again.status, 409);
   });
 
   await t.test('2. Customer Creates Print Job linked to Printer QR (Server Tamper-Proof Verification)', async () => {
@@ -266,31 +300,62 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
   });
 
   await t.test('9. Shop Pricing Matrix CRUD & Shop Stats', async () => {
-    // Get default shop pricing
-    const pricingRes = await fetch(`${baseUrl}/api/shops/shop_test/pricing`);
+    const pricingRes = await fetch(`${baseUrl}/api/shops/${createdShopId}/pricing`, { headers: merchantAuth });
     assert.strictEqual(pricingRes.status, 200);
     const pricingData = (await pricingRes.json()) as any;
     assert.strictEqual(pricingData.pricing.bwSinglePerPageCents, 200);
 
-    // Update shop pricing
-    const updateRes = await fetch(`${baseUrl}/api/shops/shop_test/pricing`, {
+    const updateRes = await fetch(`${baseUrl}/api/shops/${createdShopId}/pricing`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        bwSinglePerPageCents: 300,
-        colorSinglePerPageCents: 1200,
-      }),
+      headers: merchantAuth,
+      body: JSON.stringify({ bwSinglePerPageCents: 300, colorSinglePerPageCents: 1200 }),
     });
     assert.strictEqual(updateRes.status, 200);
     const updatedData = (await updateRes.json()) as any;
     assert.strictEqual(updatedData.pricing.bwSinglePerPageCents, 300);
     assert.strictEqual(updatedData.pricing.colorSinglePerPageCents, 1200);
 
-    // Fetch shop stats
-    const statsRes = await fetch(`${baseUrl}/api/shops/shop_test/stats`);
+    const statsRes = await fetch(`${baseUrl}/api/shops/${createdShopId}/stats`, { headers: merchantAuth });
     assert.strictEqual(statsRes.status, 200);
-    const statsData = (await statsRes.json()) as any;
-    assert.ok(statsData.stats);
+    assert.ok(((await statsRes.json()) as any).stats);
+  });
+
+  await t.test('9b. Shop data is not readable without the right account', async () => {
+    // These endpoints were entirely unauthenticated before merchant accounts:
+    // anyone who knew a shop id could read its revenue and payout details,
+    // change its prices, or trigger a withdrawal.
+    const openPaths = [
+      `/api/shops/${createdShopId}/pricing`,
+      `/api/shops/${createdShopId}/stats`,
+      `/api/shops/${createdShopId}/jobs`,
+      `/api/shops/${createdShopId}/payout-summary`,
+    ];
+
+    for (const path of openPaths) {
+      const res = await fetch(`${baseUrl}${path}`);
+      assert.strictEqual(res.status, 401, `${path} must require a session`);
+    }
+
+    const withdraw = await fetch(`${baseUrl}/api/shops/${createdShopId}/withdraw`, { method: 'POST' });
+    assert.strictEqual(withdraw.status, 401, 'withdrawal must require a session');
+
+    // A second shop, with its own owner.
+    const other = await fetch(`${baseUrl}/api/merchant/signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopName: 'Rival Prints', ownerEmail: 'rival@example.com',
+        printerName: 'HP', password: 'RivalOwner99xy',
+      }),
+    });
+    assert.strictEqual(other.status, 201);
+    const rival = (await other.json()) as any;
+
+    // A valid session for one shop must not reach another shop's data.
+    const crossShop = await fetch(`${baseUrl}/api/shops/${createdShopId}/payout-summary`, {
+      headers: { Authorization: `Bearer ${rival.token}` },
+    });
+    assert.strictEqual(crossShop.status, 403, 'one shop must not read another');
   });
 
   await t.test('10. Agent Installer Endpoint redirects to release binary', async () => {
@@ -457,6 +522,16 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
       body: JSON.stringify({ email: 'OPS@printok.test', password: 'CorrectHorse99x' }),
     });
     assert.strictEqual(login.status, 200);
+
+    // Admin and merchant sessions share a signing secret, so the audience claim
+    // is the only thing stopping one from authenticating the other.
+    const asMerchant = await fetch(`${baseUrl}/api/shops/${createdShopId}/stats`, { headers: auth });
+    assert.strictEqual(asMerchant.status, 401, 'an admin token is not a merchant token');
+
+    const asAdmin = await fetch(`${baseUrl}/api/admin/overview`, {
+      headers: { Authorization: `Bearer ${merchantToken}` },
+    });
+    assert.strictEqual(asAdmin.status, 401, 'a merchant token is not an admin token');
 
     const badLogin = await fetch(`${baseUrl}/api/admin/login`, {
       method: 'POST',
@@ -652,7 +727,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.match(delBody.results[0].reason, /paid job/i);
 
     // The shop must still be there.
-    const stillThere = await fetch(`${baseUrl}/api/shops/${createdShopId}/pricing`);
+    const stillThere = await fetch(`${baseUrl}/api/shops/${createdShopId}/pricing`, { headers: merchantAuth });
     assert.strictEqual(stillThere.status, 200, 'a refused delete must not remove anything');
 
     // Archiving is allowed, and hides it from the default listing.

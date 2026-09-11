@@ -156,6 +156,210 @@ export function createApp(
   });
 
   /**
+   * Resolves the signed-in merchant and confirms they may act on :shopId.
+   *
+   * Every shop endpoint was previously unauthenticated, so anyone who knew a
+   * shop id could read its revenue and payout details, change its prices or
+   * trigger a withdrawal. This is the gate that closes that.
+   *
+   * Responds and returns null on failure, so callers can `if (!m) return;`.
+   */
+  async function authenticateMerchant(
+    req: Request,
+    res: Response,
+    options: { shopId?: string; requireOwner?: boolean } = {}
+  ): Promise<AdminTokenPayload | null> {
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+
+    if (!token) {
+      res.status(401).json({ error: 'Sign in to your shop dashboard.' });
+      return null;
+    }
+
+    const payload = verifyAdminToken(token, 'merchant');
+    if (!payload) {
+      res.status(401).json({ error: 'Session expired or invalid. Sign in again.' });
+      return null;
+    }
+
+    const user = await storage.getMerchantUser(payload.sub);
+    if (!user || user.status !== 'active') {
+      res.status(401).json({ error: 'This account is no longer active.' });
+      return null;
+    }
+
+    // A valid token for one shop must never act on another.
+    const target = options.shopId ?? req.params.shopId;
+    if (target && user.shopId !== target) {
+      res.status(403).json({ error: 'This account does not have access to that shop.' });
+      return null;
+    }
+
+    if (options.requireOwner && user.role !== 'owner') {
+      res.status(403).json({ error: 'Only the shop owner can do that.' });
+      return null;
+    }
+
+    return { ...payload, shopId: user.shopId };
+  }
+
+  /**
+   * Merchant signup: creates the shop, its first printer and the owner account
+   * in one step, so a shop is never left without anyone able to sign in to it.
+   */
+  app.post('/api/merchant/signup', async (req: Request, res: Response) => {
+    try {
+      const { shopName, ownerEmail, printerName, password, name, phone,
+              upiId, bankAccountNumber, bankIfsc } = req.body || {};
+
+      if (!shopName || !ownerEmail || !printerName || !password) {
+        return res.status(400).json({
+          error: 'shopName, ownerEmail, printerName and password are required.',
+        });
+      }
+
+      const weak = validatePasswordStrength(String(password));
+      if (weak) return res.status(400).json({ error: weak });
+
+      const existing = await storage.getMerchantByEmail(String(ownerEmail));
+      if (existing) {
+        return res.status(409).json({ error: 'An account already exists for that email. Sign in instead.' });
+      }
+
+      const configuredWebUrl = process.env.PUBLIC_WEB_URL;
+      if (!configuredWebUrl && process.env.NODE_ENV === 'production') {
+        return res.status(500).json({
+          error: 'PUBLIC_WEB_URL is not configured. Refusing to register a shop whose QR code could never be scanned.',
+        });
+      }
+      const baseUrl = (configuredWebUrl || 'http://localhost:3000').replace(/\/$/, '');
+
+      const shop = await storage.createShop(shopName, ownerEmail, upiId, bankAccountNumber, bankIfsc);
+      const printer = await storage.createPrinter(shop.id, printerName, baseUrl, undefined, generateQrCodeDataUrl);
+
+      const merchant = await storage.createMerchantUser({
+        shopId: shop.id,
+        email: String(ownerEmail),
+        passwordHash: hashPassword(String(password)),
+        name,
+        phone,
+        role: 'owner',
+      });
+
+      return res.status(201).json({
+        shop,
+        printer,
+        user: merchant,
+        token: issueAdminToken(
+          { id: merchant.id, email: merchant.email, role: merchant.role, shopId: shop.id },
+          undefined,
+          'merchant'
+        ),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/merchant/login', async (req: Request, res: Response) => {
+    try {
+      const { email, password } = req.body || {};
+      if (!email || !password) {
+        return res.status(400).json({ error: 'email and password are required.' });
+      }
+
+      const user = await storage.getMerchantByEmail(String(email));
+      // One message whichever part failed, so this cannot enumerate accounts.
+      const ok = user && user.status === 'active' && verifyPassword(String(password), user.passwordHash);
+      if (!ok) {
+        return res.status(401).json({ error: 'Incorrect email or password.' });
+      }
+
+      await storage.recordMerchantLogin(user!.id);
+      const { passwordHash, ...safe } = user!;
+
+      return res.json({
+        user: safe,
+        shop: await storage.getShop(safe.shopId),
+        token: issueAdminToken(
+          { id: safe.id, email: safe.email, role: safe.role, shopId: safe.shopId },
+          undefined,
+          'merchant'
+        ),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/merchant/me', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res, { shopId: undefined });
+    if (!merchant) return;
+
+    const user = await storage.getMerchantUser(merchant.sub);
+    if (!user) return res.status(401).json({ error: 'Account not found.' });
+
+    const [shop, printers] = await Promise.all([
+      storage.getShop(user.shopId),
+      storage.listPrintersForShop(user.shopId),
+    ]);
+
+    return res.json({ user, shop, printers });
+  });
+
+  /**
+   * Claim an existing shop that predates merchant accounts.
+   *
+   * Open only while the shop has no account, in the same way the admin console
+   * bootstrap is. Requires the owner email already on the shop record.
+   */
+  app.post('/api/merchant/claim', async (req: Request, res: Response) => {
+    try {
+      const { shopId, ownerEmail, password, name } = req.body || {};
+      if (!shopId || !ownerEmail || !password) {
+        return res.status(400).json({ error: 'shopId, ownerEmail and password are required.' });
+      }
+
+      const shop = await storage.getShop(String(shopId));
+      // Same response whether the shop is missing or the email is wrong, so
+      // this cannot be used to discover shop ids or owner addresses.
+      const emailMatches =
+        shop && shop.ownerEmail.trim().toLowerCase() === String(ownerEmail).trim().toLowerCase();
+      if (!emailMatches) {
+        return res.status(401).json({ error: 'That shop and email do not match our records.' });
+      }
+
+      if ((await storage.countMerchantsForShop(shop!.id)) > 0) {
+        return res.status(409).json({ error: 'This shop already has an account. Sign in instead.' });
+      }
+
+      const weak = validatePasswordStrength(String(password));
+      if (weak) return res.status(400).json({ error: weak });
+
+      const merchant = await storage.createMerchantUser({
+        shopId: shop!.id,
+        email: String(ownerEmail),
+        passwordHash: hashPassword(String(password)),
+        name,
+        role: 'owner',
+      });
+
+      return res.status(201).json({
+        user: merchant,
+        shop,
+        token: issueAdminToken(
+          { id: merchant.id, email: merchant.email, role: merchant.role, shopId: shop!.id },
+          undefined,
+          'merchant'
+        ),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
    * Shop & Printer Registration Endpoint
    */
   app.post('/api/shops/register', async (req: Request, res: Response) => {
@@ -202,6 +406,9 @@ export function createApp(
    * Get Shop Pricing Config
    */
   app.get('/api/shops/:shopId/pricing', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res);
+    if (!merchant) return;
+
     try {
       const { shopId } = req.params;
       const pricing = await storage.getShopPricing(shopId);
@@ -215,6 +422,9 @@ export function createApp(
    * Update Shop Pricing Config
    */
   app.post('/api/shops/:shopId/pricing', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res, { requireOwner: true });
+    if (!merchant) return;
+
     try {
       const { shopId } = req.params;
       const updatedPricing = await storage.updateShopPricing(shopId, req.body || {});
@@ -228,6 +438,9 @@ export function createApp(
    * Get Shop Performance Stats & Analytics
    */
   app.get('/api/shops/:shopId/stats', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res);
+    if (!merchant) return;
+
     try {
       const { shopId } = req.params;
       const stats = await storage.getShopStats(shopId);
@@ -241,6 +454,9 @@ export function createApp(
    * Get Recent Jobs for Shop Owner Dashboard
    */
   app.get('/api/shops/:shopId/jobs', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res);
+    if (!merchant) return;
+
     try {
       const { shopId } = req.params;
       const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
@@ -588,6 +804,9 @@ export function createApp(
    * status is surfaced rather than assumed.
    */
   app.post('/api/shops/:shopId/razorpay-account', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res, { requireOwner: true });
+    if (!merchant) return;
+
     try {
       const { shopId } = req.params;
       const shop = await storage.getShop(shopId);
@@ -651,6 +870,9 @@ export function createApp(
 
   /** Current Route status for a shop, refreshed from Razorpay when linked. */
   app.get('/api/shops/:shopId/razorpay-account', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res);
+    if (!merchant) return;
+
     try {
       const shop = await storage.getShop(req.params.shopId);
       if (!shop) return res.status(404).json({ error: 'Shop not found.' });
@@ -877,6 +1099,9 @@ export function createApp(
    * Jobs waiting on a human decision (PRD 12).
    */
   app.get('/api/shops/:shopId/jobs/requires-action', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res);
+    if (!merchant) return;
+
     try {
       const limit = Math.min(Number(req.query.limit) || 50, 200);
       const jobs = await storage.getJobsRequiringAction(req.params.shopId, limit);
@@ -1442,6 +1667,9 @@ export function createApp(
    * Shop Payout & Instant Withdrawal Summary
    */
   app.get('/api/shops/:shopId/payout-summary', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res, { requireOwner: true });
+    if (!merchant) return;
+
     try {
       const { shopId } = req.params;
       const stats = await storage.getShopStats(shopId);
@@ -1468,6 +1696,9 @@ export function createApp(
    * Shop Instant Payout Withdrawal Endpoint
    */
   app.post('/api/shops/:shopId/withdraw', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res, { requireOwner: true });
+    if (!merchant) return;
+
     try {
       const { shopId } = req.params;
       const stats = await storage.getShopStats(shopId);

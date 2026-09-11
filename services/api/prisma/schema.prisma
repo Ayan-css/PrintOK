@@ -69,6 +69,7 @@ model Shop {
   printers          Printer[]
   jobs              PrintJob[]
   pricing           ShopPricing?
+  merchants         MerchantUser[]
 
   @@index([ownerEmail])
   @@index([archivedAt])
@@ -402,5 +403,34 @@ model ContactEnquiry {
   updatedAt DateTime @updatedAt @default(now())
 
   @@index([status, createdAt])
+  @@index([email])
+}
+
+
+/// A shop owner or staff member who signs in to the merchant dashboard.
+///
+/// Before this existed there was no merchant identity at all: the dashboard
+/// trusted a shop id held in browser storage, and every /api/shops/:shopId
+/// endpoint was unauthenticated — so anyone who knew a shop id could read that
+/// shop's revenue and payout details, change its prices, or trigger a payout.
+model MerchantUser {
+  id           String    @id
+  shopId       String
+  shop         Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  email        String    @unique
+  passwordHash String
+  name         String?
+  phone        String?
+  /// owner | staff — staff cannot change pricing or withdraw (PRD 20).
+  role         String    @default("owner")
+  /// active | disabled
+  status       String    @default("active")
+
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt @default(now())
+
+  @@index([shopId])
   @@index([email])
 }

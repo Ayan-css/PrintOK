@@ -92,7 +92,16 @@
 
             <div class="form-group">
               <label class="form-label" for="regOwnerEmail">Owner Email Address <span class="text-danger">*</span></label>
-              <input type="email" id="regOwnerEmail" class="form-input" placeholder="owner@myshop.com" required value="owner@metroprint.com">
+              <input type="email" id="regOwnerEmail" class="form-input" placeholder="owner@myshop.com"
+                     required autocomplete="username">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="regPassword">Choose a Password <span class="text-danger">*</span></label>
+              <input type="password" id="regPassword" class="form-input" required minlength="12"
+                     autocomplete="new-password" placeholder="At least 12 characters">
+              <p class="meta-text">You will use this email and password to sign in to your dashboard.
+                 Needs 12+ characters with upper case, lower case and a digit.</p>
             </div>
 
             <div class="form-group">

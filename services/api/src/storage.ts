@@ -68,6 +68,19 @@ export interface PairingCodeRecord {
   usedAt?: string;
 }
 
+/** A shop owner or staff member who signs in to the dashboard (PRD 20). */
+export interface MerchantUserRecord {
+  id: string;
+  shopId: string;
+  email: string;
+  name?: string;
+  phone?: string;
+  role: string;
+  status: string;
+  lastLoginAt?: string;
+  createdAt: string;
+}
+
 /** Platform operator account (PRD 21). */
 export interface AdminUserRecord {
   id: string;
@@ -202,6 +215,8 @@ export interface IStorageProvider {
   createPrinter(shopId: string, printerName: string, baseUrlOrTargetUrl: string, qrCodeDataUrl?: string, qrGeneratorFn?: (url: string) => Promise<string>): Promise<Printer>;
   getPrinter(id: string): Promise<Printer | undefined>;
   getPrinterByApiKey(apiKey: string): Promise<Printer | undefined>;
+  /** Printers belonging to a shop, for the dashboard after sign-in. */
+  listPrintersForShop(shopId: string): Promise<Printer[]>;
   /**
    * Rebuilds a printer's QR target and image against a new web base URL, for
    * printers registered while the public URL was misconfigured.
@@ -294,6 +309,16 @@ export interface IStorageProvider {
   /** Stores what was split to the shop and retained by PrintOk for one job. */
   recordJobSettlement(jobId: string, transferAmountCents: number, serviceFeeCents: number): Promise<void>;
 
+  // --- Merchant accounts (PRD 20) ---
+  createMerchantUser(input: {
+    shopId: string; email: string; passwordHash: string;
+    name?: string; phone?: string; role?: string;
+  }): Promise<MerchantUserRecord>;
+  getMerchantByEmail(email: string): Promise<(MerchantUserRecord & { passwordHash: string }) | undefined>;
+  getMerchantUser(id: string): Promise<MerchantUserRecord | undefined>;
+  countMerchantsForShop(shopId: string): Promise<number>;
+  recordMerchantLogin(id: string): Promise<void>;
+
   createContactEnquiry(input: CreateContactEnquiryInput): Promise<ContactEnquiryRecord>;
   listContactEnquiries(status?: string, limit?: number): Promise<ContactEnquiryRecord[]>;
   updateContactEnquiryStatus(
@@ -329,6 +354,7 @@ export class MemoryStorage implements IStorageProvider {
   private archivedShops = new Map<string, { at: string; by: string; reason?: string }>();
   private auditLog: AdminAuditEntry[] = [];
   private contactEnquiries: ContactEnquiryRecord[] = [];
+  private merchantUsers = new Map<string, MerchantUserRecord & { passwordHash: string }>();
   private s3Service = new S3StorageService();
 
   /** Appends to the job's lifecycle trail. Never overwrites earlier entries. */
@@ -422,6 +448,10 @@ export class MemoryStorage implements IStorageProvider {
       }
     }
     return undefined;
+  }
+
+  public async listPrintersForShop(shopId: string): Promise<Printer[]> {
+    return [...this.printers.values()].filter((p) => p.shopId === shopId);
   }
 
   public async regeneratePrinterQr(
@@ -857,6 +887,52 @@ export class MemoryStorage implements IStorageProvider {
     if (plan) this.shopPlans.set(shopId, { ...plan, planStatus: 'active' });
 
     return { shopId, ok: true, action: 'restored' };
+  }
+
+  public async createMerchantUser(input: {
+    shopId: string; email: string; passwordHash: string;
+    name?: string; phone?: string; role?: string;
+  }): Promise<MerchantUserRecord> {
+    const record: MerchantUserRecord & { passwordHash: string } = {
+      id: `mch_${crypto.randomBytes(8).toString('hex')}`,
+      shopId: input.shopId,
+      email: input.email.trim().toLowerCase(),
+      passwordHash: input.passwordHash,
+      name: input.name,
+      phone: input.phone,
+      role: input.role || 'owner',
+      status: 'active',
+      createdAt: new Date().toISOString(),
+    };
+    this.merchantUsers.set(record.email, record);
+    const { passwordHash, ...safe } = record;
+    return safe;
+  }
+
+  public async getMerchantByEmail(
+    email: string
+  ): Promise<(MerchantUserRecord & { passwordHash: string }) | undefined> {
+    return this.merchantUsers.get(email.trim().toLowerCase());
+  }
+
+  public async getMerchantUser(id: string): Promise<MerchantUserRecord | undefined> {
+    for (const user of this.merchantUsers.values()) {
+      if (user.id === id) {
+        const { passwordHash, ...safe } = user;
+        return safe;
+      }
+    }
+    return undefined;
+  }
+
+  public async countMerchantsForShop(shopId: string): Promise<number> {
+    return [...this.merchantUsers.values()].filter((m) => m.shopId === shopId).length;
+  }
+
+  public async recordMerchantLogin(id: string): Promise<void> {
+    for (const user of this.merchantUsers.values()) {
+      if (user.id === id) user.lastLoginAt = new Date().toISOString();
+    }
   }
 
   public async updateShopRazorpayAccount(shopId: string, update: {

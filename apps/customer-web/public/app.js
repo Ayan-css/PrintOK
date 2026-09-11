@@ -82,6 +82,46 @@ document.addEventListener('DOMContentLoaded', () => {
    * Remembers which shop/printer this browser registered, so the dashboard
    * shows real data instead of a hardcoded placeholder shop.
    */
+  /**
+   * Merchant session.
+   *
+   * Shop endpoints now require a signed-in merchant, so the dashboard carries a
+   * token rather than trusting a shop id held in browser storage. Kept in
+   * sessionStorage so it dies with the tab.
+   */
+  const MerchantSession = {
+    KEY: 'printok_merchant_token',
+    get() {
+      try { return sessionStorage.getItem(this.KEY); } catch { return null; }
+    },
+    set(token) {
+      try {
+        if (token) sessionStorage.setItem(this.KEY, token);
+        else sessionStorage.removeItem(this.KEY);
+      } catch { /* private browsing */ }
+    },
+    headers(extra = {}) {
+      const token = this.get();
+      return { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...extra };
+    },
+  };
+
+  /** Shop-scoped fetch. A 401 drops straight back to sign-in. */
+  async function shopFetch(path, options = {}) {
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers: MerchantSession.headers(options.headers || {}),
+    });
+    if (res.status === 401) {
+      MerchantSession.set(null);
+      const login = document.getElementById('merchantLoginView');
+      const dash = document.getElementById('dashboardView');
+      if (login && dash) { login.hidden = false; dash.hidden = true; }
+      throw new Error('Your session has ended. Sign in again.');
+    }
+    return res;
+  }
+
   const ShopContext = {
     read() {
       const params = new URLSearchParams(window.location.search);
@@ -282,19 +322,32 @@ document.addEventListener('DOMContentLoaded', () => {
         const ownerEmail = document.getElementById('regOwnerEmail').value.trim();
         const printerName = document.getElementById('regPrinterName').value.trim();
         const upiId = document.getElementById('regUpiId').value.trim();
+        const password = document.getElementById('regPassword').value;
+
+        if (!password || password.length < 12) {
+          showToast('warning', 'Password too short',
+            'Choose at least 12 characters, with upper case, lower case and a digit.');
+          return;
+        }
 
         btnSubmitRegister.disabled = true;
-        btnSubmitRegister.textContent = 'Processing Payment & Activating...';
+        btnSubmitRegister.textContent = 'Creating your shop account...';
 
         try {
-          const res = await fetch(`${API_BASE}/api/shops/register`, {
+          // Signup creates the shop, its printer and the owner account together,
+          // so a shop is never left with nobody able to sign in to it.
+          const res = await fetch(`${API_BASE}/api/merchant/signup`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ shopName, ownerEmail, printerName, upiId, plan: selectedPlan }),
+            body: JSON.stringify({
+              shopName, ownerEmail, printerName, upiId, password, plan: selectedPlan,
+            }),
           });
 
           const data = await res.json();
           if (res.ok && data.shop && data.printer) {
+            // Signed in immediately, so the dashboard works without a second step.
+            if (data.token) MerchantSession.set(data.token);
             formStep3.hidden = true;
             formStep4.hidden = false;
             stepNav3.classList.remove('active');
@@ -369,9 +422,8 @@ document.addEventListener('DOMContentLoaded', () => {
       if (Object.keys(config).length === 0) return;
 
       try {
-        await fetch(`${API_BASE}/api/shops/${encodeURIComponent(shopId)}/pricing`, {
+        await shopFetch(`/api/shops/${encodeURIComponent(shopId)}/pricing`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(config),
         });
       } catch {
@@ -384,6 +436,96 @@ document.addEventListener('DOMContentLoaded', () => {
   //  2. MERCHANT DASHBOARD DRIVER (/dashboard, dashboard.html)
   // ============================================================
   if (isDashboardPage) {
+    // --- Sign-in gate -------------------------------------------------------
+    const loginView = document.getElementById('merchantLoginView');
+    const dashboardView = document.getElementById('dashboardView');
+
+    function showLogin(message) {
+      if (loginView) loginView.hidden = false;
+      if (dashboardView) dashboardView.hidden = true;
+      if (message) {
+        const box = document.getElementById('merchantAuthError');
+        if (box) { box.textContent = message; box.hidden = false; }
+      }
+    }
+
+    function showDashboard() {
+      if (loginView) loginView.hidden = true;
+      if (dashboardView) dashboardView.hidden = false;
+    }
+
+    const loginForm = document.getElementById('formMerchantLogin');
+    if (loginForm) {
+      loginForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const box = document.getElementById('merchantAuthError');
+        if (box) box.hidden = true;
+
+        const button = document.getElementById('btnMerchantLogin');
+        button.disabled = true;
+
+        try {
+          const res = await fetch(`${API_BASE}/api/merchant/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: document.getElementById('merchantEmail').value.trim(),
+              password: document.getElementById('merchantPassword').value,
+            }),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(body.error || 'Sign in failed.');
+
+          MerchantSession.set(body.token);
+          ShopContext.write({ shopId: body.user.shopId, printerId: null });
+          document.getElementById('merchantPassword').value = '';
+
+          showDashboard();
+          location.reload();
+        } catch (err) {
+          if (box) { box.textContent = err.message; box.hidden = false; }
+        } finally {
+          button.disabled = false;
+        }
+      });
+    }
+
+    const claimLink = document.getElementById('linkClaimShop');
+    if (claimLink) {
+      claimLink.addEventListener('click', async (event) => {
+        event.preventDefault();
+        const shopId = window.prompt('Your shop ID (shown on your QR poster or old dashboard):');
+        if (!shopId) return;
+        const email = window.prompt('The owner email your shop was registered with:');
+        if (!email) return;
+        const password = window.prompt('Choose a password (at least 12 characters, with upper, lower and a digit):');
+        if (!password) return;
+
+        try {
+          const res = await fetch(`${API_BASE}/api/merchant/claim`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ shopId: shopId.trim(), ownerEmail: email.trim(), password }),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(body.error || 'Could not claim that shop.');
+
+          MerchantSession.set(body.token);
+          ShopContext.write({ shopId: body.user.shopId, printerId: null });
+          showToast('success', 'Shop claimed', 'You can now sign in with that email and password.');
+          location.reload();
+        } catch (err) {
+          showToast('danger', 'Claim failed', err.message);
+        }
+      });
+    }
+
+    if (!MerchantSession.get()) {
+      showLogin();
+      return;
+    }
+    showDashboard();
+
     const ctx = ShopContext.read();
     let dashShopId = ctx.shopId || null;
     let dashPrinterId = ctx.printerId || null;
@@ -492,9 +634,8 @@ document.addEventListener('DOMContentLoaded', () => {
         btnSavePricing.textContent = 'Saving...';
 
         try {
-          const res = await fetch(`${API_BASE}/api/shops/${encodeURIComponent(dashShopId)}/pricing`, {
+          const res = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/pricing`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(config),
           });
           const data = await res.json();
@@ -762,7 +903,7 @@ document.addEventListener('DOMContentLoaded', () => {
         btnRequestWithdrawal.textContent = 'Processing Instant Payout...';
 
         try {
-          const res = await fetch(`${API_BASE}/api/shops/${encodeURIComponent(dashShopId)}/withdraw`, { method: 'POST' });
+          const res = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/withdraw`, { method: 'POST' });
           const data = await res.json();
           if (res.ok && data.success) {
             showToast('success', '⚡ Instant Payout Triggered!', `${formatRupees(data.payout.netTransferredCents)} transferred to ${data.payout.payoutUpiId}.`);
@@ -805,7 +946,7 @@ document.addEventListener('DOMContentLoaded', () => {
     /** The rates form showed hardcoded defaults regardless of what the shop had saved. */
     async function loadPricingForm() {
       try {
-        const res = await fetch(`${API_BASE}/api/shops/${encodeURIComponent(dashShopId)}/pricing`);
+        const res = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/pricing`);
         if (!res.ok) return;
         const { pricing } = await res.json();
         if (!pricing) return;
@@ -831,7 +972,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!dashPrinterId) {
         // Derive the printer from the shop's most recent job when it wasn't stored.
         try {
-          const res = await fetch(`${API_BASE}/api/shops/${encodeURIComponent(dashShopId)}/jobs?limit=1`);
+          const res = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/jobs?limit=1`);
           if (res.ok) {
             const data = await res.json();
             if (data.jobs && data.jobs[0]) dashPrinterId = data.jobs[0].printerId;
@@ -891,7 +1032,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function loadMetrics() {
       try {
-        const res = await fetch(`${API_BASE}/api/shops/${encodeURIComponent(dashShopId)}/stats`);
+        const res = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/stats`);
         if (res.ok) {
           const { stats } = await res.json();
           const set = (id, val) => {
@@ -906,7 +1047,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       try {
-        const payoutRes = await fetch(`${API_BASE}/api/shops/${encodeURIComponent(dashShopId)}/payout-summary`);
+        const payoutRes = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/payout-summary`);
         if (payoutRes.ok) {
           const p = await payoutRes.json();
           const set = (id, val) => {
@@ -930,7 +1071,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const list = document.getElementById('liveQueueList');
       if (list) list.setAttribute('aria-busy', 'true');
       try {
-        const res = await fetch(`${API_BASE}/api/shops/${encodeURIComponent(dashShopId)}/jobs?limit=50`);
+        const res = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/jobs?limit=50`);
         if (res.ok) {
           const data = await res.json();
           cachedJobs = Array.isArray(data.jobs) ? data.jobs : [];
@@ -1672,7 +1813,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function fetchShopPricing(shopId) {
     try {
-      const res = await fetch(`${API_BASE}/api/shops/${encodeURIComponent(shopId)}/pricing`);
+      const res = await shopFetch(`/api/shops/${encodeURIComponent(shopId)}/pricing`);
       if (res.ok) {
         const data = await res.json();
         if (data.pricing) {

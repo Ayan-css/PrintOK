@@ -15,10 +15,20 @@ const SCRYPT_KEYLEN = 64;
 const SCRYPT_COST = 16384; // 2^14, the Node default; deliberate CPU cost.
 const TOKEN_TTL_SECONDS = 12 * 60 * 60;
 
+/**
+ * Audience separates operator sessions from merchant sessions. Without it a
+ * merchant token would verify against admin endpoints, since both are signed
+ * with the same secret.
+ */
+export type TokenAudience = 'admin' | 'merchant';
+
 export interface AdminTokenPayload {
   sub: string;
   email: string;
   role: string;
+  aud: TokenAudience;
+  /** Merchant tokens carry the shop they may act on. */
+  shopId?: string;
   iat: number;
   exp: number;
 }
@@ -92,14 +102,17 @@ function signingSecret(): string {
 }
 
 export function issueAdminToken(
-  user: { id: string; email: string; role: string },
-  nowSeconds: number = Math.floor(Date.now() / 1000)
+  user: { id: string; email: string; role: string; shopId?: string },
+  nowSeconds: number = Math.floor(Date.now() / 1000),
+  audience: TokenAudience = 'admin'
 ): string {
   const header = { alg: 'HS256', typ: 'JWT' };
   const payload: AdminTokenPayload = {
     sub: user.id,
     email: user.email,
     role: user.role,
+    aud: audience,
+    ...(user.shopId ? { shopId: user.shopId } : {}),
     iat: nowSeconds,
     exp: nowSeconds + TOKEN_TTL_SECONDS,
   };
@@ -119,7 +132,10 @@ export function issueAdminToken(
  * is not a valid, unexpired token; callers must not distinguish the reasons to
  * the client.
  */
-export function verifyAdminToken(token: string): AdminTokenPayload | undefined {
+export function verifyAdminToken(
+  token: string,
+  audience: TokenAudience = 'admin'
+): AdminTokenPayload | undefined {
   try {
     const [encodedHeader, encodedPayload, encodedSignature] = token.split('.');
     if (!encodedHeader || !encodedPayload || !encodedSignature) return undefined;
@@ -135,6 +151,10 @@ export function verifyAdminToken(token: string): AdminTokenPayload | undefined {
 
     const payload = JSON.parse(base64UrlDecode(encodedPayload).toString()) as AdminTokenPayload;
     if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return undefined;
+
+    // Tokens issued for one surface must never authenticate the other.
+    // Older tokens carry no audience; treat them as admin, which is what they were.
+    if ((payload.aud || 'admin') !== audience) return undefined;
 
     return payload;
   } catch {

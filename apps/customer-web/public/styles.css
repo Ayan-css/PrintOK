@@ -3333,3 +3333,17 @@ body::before {
 @media (max-width: 900px) {
   .enquiry-list { padding: 8px 16px 18px; }
 }
+
+/* Merchant sign-in gate on the dashboard */
+
+.merchant-auth-view {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 70vh;
+  min-height: 70dvh;
+  padding-block: 24px;
+}
+
+.merchant-auth-card { width: 100%; max-width: 420px; padding: 28px 26px; }
+.merchant-auth-card a { color: var(--color-primary); font-weight: 600; }

@@ -51,6 +51,42 @@
         </div>
       </header>
 
+      <!-- SIGN IN GATE -->
+      <section id="merchantLoginView" class="merchant-auth-view" hidden>
+        <div class="card card--elevated merchant-auth-card">
+          <div class="card-header" style="padding: 0 0 12px 0;">
+            <div>
+              <h1 class="card-title">Shop Sign In</h1>
+              <p class="meta-text" id="merchantAuthSubtitle">Sign in to manage your print queue.</p>
+            </div>
+          </div>
+
+          <form id="formMerchantLogin" autocomplete="on">
+            <div class="form-group">
+              <label class="form-label" for="merchantEmail">Email</label>
+              <input type="email" id="merchantEmail" class="form-input" required autocomplete="username">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="merchantPassword">Password</label>
+              <input type="password" id="merchantPassword" class="form-input" required autocomplete="current-password">
+            </div>
+
+            <div id="merchantAuthError" class="alert alert-danger" hidden role="alert"></div>
+
+            <button type="submit" class="btn btn-primary btn-block" id="btnMerchantLogin">Sign In</button>
+          </form>
+
+          <p class="meta-text" style="margin-top: 14px;">
+            No account yet? <a href="/register">List your shop</a>.
+          </p>
+          <p class="meta-text">
+            Registered before accounts existed?
+            <a href="#" id="linkClaimShop">Claim your shop</a>.
+          </p>
+        </div>
+      </section>
+
+      <div id="dashboardView" hidden>
       <!-- GLOBAL TOP NAVIGATION BAR -->
       <nav class="global-nav-bar" aria-label="Merchant Navigation">
         <a href="/dashboard" class="nav-pill active" aria-current="page">⚡ Merchant Dashboard</a>
@@ -386,6 +422,7 @@
         <div style="margin-top: 4px;"><a href="/" style="color: var(--color-primary); font-weight:600;">Customer Interface</a> • <a href="/register" style="color: var(--color-primary); font-weight:600;">Register New Shop</a></div>
       </footer>
 
+      </div>
     </div>
   </div>
 
