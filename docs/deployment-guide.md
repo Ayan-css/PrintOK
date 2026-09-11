@@ -185,33 +185,50 @@ To deploy the background print service to shop Windows computers:
 
 1. **Compile Executable**:
    ```bash
-   dotnet publish agent/windows-print-agent/PrintAgent.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
+   dotnet publish agent/windows-print-agent/WindowsPrintAgent.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o bin/publish
    ```
+   The publish must be **self-contained**. A framework-dependent publish produces a
+   ~150 KB apphost stub that cannot run without its sibling DLLs and an installed
+   .NET 8 runtime, which no shop PC is guaranteed to have.
+
 2. Executable location (Manual compilation):
-   `agent/windows-print-agent/bin/Release/net8.0/win-x64/publish/PrintAgent.exe`
+   `bin/publish/WindowsPrintAgent.exe` (tens of MB — if it is ~150 KB, the publish was not self-contained).
 
 3. **Automated CI/CD Compilation & Dashboard Download**:
-   - The GitHub Actions workflow (`.github/workflows/build-print-agent.yml`) automatically compiles `PrintAgent.exe` on Windows runner on every push.
-   - Shop owners can click **⬇️ Download PrintAgent.exe** directly on the merchant dashboard (or endpoint `/api/agent-installer`), which fetches the latest binary automatically.
+   - The GitHub Actions workflow (`.github/workflows/build-print-agent.yml`) compiles a
+     self-contained single-file `WindowsPrintAgent.exe` on a Windows runner and publishes it
+     to the `latest` GitHub release, together with `PrintAgent-win-x64.zip` (executable +
+     `appsettings.json` template + `README.txt` setup instructions).
+   - Shop owners click **⬇️ Download PrintAgent.exe** on the merchant dashboard
+     (endpoint `/api/agent-installer`), then **⚙️ Auto-Config (.json)** for their pre-filled
+     settings. `/api/agent-installer?format=zip` returns the full bundle instead.
 
-4. **Install Background Service on Shop PC**:
-   Open Windows Command Prompt as Administrator:
-   ```cmd
-   sc.exe create "PrintOkAgent" binPath= "C:\Program Files\PrintOk\PrintAgent.exe" start= auto
-   sc.exe start "PrintOkAgent"
-   ```
+4. **Run on Shop PC**:
+   Place `WindowsPrintAgent.exe` and `appsettings.json` in the same folder and run the
+   executable. To start it automatically on boot, press `Win+R`, type `shell:startup`,
+   and drop a shortcut to the executable into that folder.
 
-5. **Agent Configuration (`appsettings.json` on Shop PC)**:
+5. **Agent Configuration (`appsettings.json` next to the executable)**:
    ```json
    {
      "PrintOkApiUrl": "https://api.yourdomain.com",
+     "AgentApiKey": "paired_agent_key_here",
      "ShopId": "shop_123",
      "PrinterId": "printer_456",
-     "AgentApiKey": "paired_agent_key_here",
+     "PrinterName": "",
+     "PollIntervalMs": 3000,
      "HeartbeatIntervalSeconds": 30
    }
    ```
+   `PrinterName` is the exact Windows printer name; leave it empty to use the PC's default
+   printer. The agent resolves these flat keys first and falls back to a nested `PrintOk`
+   section, so configs emitted by older builds keep working. Settings can also be supplied as
+   command line arguments (`--AgentApiKey=...`) or `PRINTOK_`-prefixed environment variables,
+   both of which override the file.
+
    *(Shop owners can also click **⚙️ Auto-Config (.json)** on their dashboard to download pre-filled settings).*
+
+   Full end-user setup and troubleshooting: `agent/windows-print-agent/INSTALL.md`.
 
 ---
 
