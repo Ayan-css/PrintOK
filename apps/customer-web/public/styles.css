@@ -2644,7 +2644,7 @@ body::before {
    --------------------------------------------------------------------------- */
 
 .landing {
-  max-width: 1120px;
+  max-width: 1500px;
   margin: 0 auto;
   padding-inline: 20px;
   color: var(--color-text-primary);
