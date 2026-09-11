@@ -73,15 +73,41 @@ document.addEventListener('DOMContentLoaded', () => {
   if (isRegisterPage) {
     const btnNextStep1 = document.getElementById('btnNextStep1');
     const btnPrevStep2 = document.getElementById('btnPrevStep2');
+    const btnNextStep2 = document.getElementById('btnNextStep2');
+    const btnPrevStep3 = document.getElementById('btnPrevStep3');
     const btnSubmitRegister = document.getElementById('btnSubmitRegister');
 
     const formStep1 = document.getElementById('formStep1');
     const formStep2 = document.getElementById('formStep2');
     const formStep3 = document.getElementById('formStep3');
+    const formStep4 = document.getElementById('formStep4');
 
     const stepNav1 = document.getElementById('stepNav1');
     const stepNav2 = document.getElementById('stepNav2');
     const stepNav3 = document.getElementById('stepNav3');
+    const stepNav4 = document.getElementById('stepNav4');
+
+    let selectedPlan = 'free';
+
+    const planPills = [
+      { id: 'planPillFree', val: 'free' },
+      { id: 'planPillStarter', val: 'starter' },
+      { id: 'planPillGrowth', val: 'growth' },
+      { id: 'planPillScale', val: 'scale' }
+    ];
+
+    planPills.forEach(p => {
+      const el = document.getElementById(p.id);
+      if (el) {
+        el.addEventListener('click', () => {
+          selectedPlan = p.val;
+          planPills.forEach(other => {
+            const oEl = document.getElementById(other.id);
+            if (oEl) oEl.classList.toggle('active', other.id === p.id);
+          });
+        });
+      }
+    });
 
     if (btnNextStep1) {
       btnNextStep1.addEventListener('click', () => {
@@ -110,6 +136,30 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
+    if (btnNextStep2) {
+      btnNextStep2.addEventListener('click', () => {
+        const upiId = document.getElementById('regUpiId').value.trim();
+        if (!upiId) {
+          showToast('warning', 'UPI Required', 'Please enter your Payout UPI ID.');
+          return;
+        }
+
+        formStep2.hidden = true;
+        formStep3.hidden = false;
+        stepNav2.classList.remove('active');
+        stepNav3.classList.add('active');
+      });
+    }
+
+    if (btnPrevStep3) {
+      btnPrevStep3.addEventListener('click', () => {
+        formStep3.hidden = true;
+        formStep2.hidden = false;
+        stepNav3.classList.remove('active');
+        stepNav2.classList.add('active');
+      });
+    }
+
     if (btnSubmitRegister) {
       btnSubmitRegister.addEventListener('click', async () => {
         const shopName = document.getElementById('regShopName').value.trim();
@@ -118,21 +168,21 @@ document.addEventListener('DOMContentLoaded', () => {
         const upiId = document.getElementById('regUpiId').value.trim();
 
         btnSubmitRegister.disabled = true;
-        btnSubmitRegister.textContent = 'Registering Shop...';
+        btnSubmitRegister.textContent = 'Processing Payment & Activating...';
 
         try {
           const res = await fetch(`${API_BASE}/api/shops/register`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ shopName, ownerEmail, printerName, upiId }),
+            body: JSON.stringify({ shopName, ownerEmail, printerName, upiId, plan: selectedPlan }),
           });
 
           const data = await res.json();
           if (res.ok && data.shop && data.printer) {
-            formStep2.hidden = true;
-            formStep3.hidden = false;
-            stepNav2.classList.remove('active');
-            stepNav3.classList.add('active');
+            formStep3.hidden = true;
+            formStep4.hidden = false;
+            stepNav3.classList.remove('active');
+            stepNav4.classList.add('active');
 
             document.getElementById('resShopTitle').textContent = data.shop.name;
             document.getElementById('resPrinterTitle').textContent = data.printer.printerName;
@@ -159,16 +209,16 @@ document.addEventListener('DOMContentLoaded', () => {
               };
             }
 
-            showToast('success', 'Shop Registered!', `Printer ID: ${data.printer.id}`);
+            showToast('success', '🎉 Shop & Plan Activated!', `Printer ID: ${data.printer.id}`);
           } else {
             showToast('danger', 'Error', data.error || 'Could not register shop.');
             btnSubmitRegister.disabled = false;
-            btnSubmitRegister.textContent = '✨ Register Shop & Get QR';
+            btnSubmitRegister.textContent = '💳 Pay Upfront & Activate Shop';
           }
         } catch {
           showToast('danger', 'Network Error', 'Could not connect to API server.');
           btnSubmitRegister.disabled = false;
-          btnSubmitRegister.textContent = '✨ Register Shop & Get QR';
+          btnSubmitRegister.textContent = '💳 Pay Upfront & Activate Shop';
         }
       });
     }

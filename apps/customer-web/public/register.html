@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="PrintOk Merchant Registration — Register your stationery shop, pair your printer, and generate your shop QR code in minutes.">
+  <meta name="description" content="PrintOk Merchant Registration — Register your stationery shop, select your subscription plan, pair your printer, and generate your shop QR code.">
   <meta name="theme-color" content="#0d0d0d">
   <title>Register Shop — PrintOk Merchant Portal</title>
 
@@ -21,7 +21,7 @@
   <div class="app-wrapper">
     <div class="page-container">
       
-      <!-- Top Navigation -->
+      <!-- Top Brand Header -->
       <header class="app-header">
         <a href="/" class="brand" style="text-decoration: none; color: inherit;">
           <div class="brand-mark">
@@ -37,11 +37,11 @@
           </div>
         </a>
         <div style="display: flex; gap: 8px;">
-          <a href="/dashboard" class="btn btn-outline btn-sm" style="text-decoration: none; font-size: 11px;">🏬 Merchant Dashboard</a>
+          <a href="/dashboard.html" class="btn btn-outline btn-sm" style="text-decoration: none; font-size: 11px;">🏬 Merchant Dashboard</a>
         </div>
       </header>
 
-      <!-- GLOBAL TOP NAVIGATION BAR -->
+      <!-- Global Top Navigation Bar -->
       <nav class="global-nav-bar" aria-label="Global Navigation">
         <a href="/?printer=prn_test" class="nav-pill">📱 Customer View</a>
         <a href="/dashboard.html" class="nav-pill">⚡ Merchant Dashboard</a>
@@ -53,28 +53,33 @@
         
         <!-- Hero Header -->
         <div class="hero-banner">
-          <span class="badge badge-success">Zero Hardware Fee</span>
+          <span class="badge badge-success">4-Step Quick Onboarding</span>
           <h1 class="hero-title" style="margin-top: 6px;">Start Accepting Mobile Print Jobs at Your Shop</h1>
-          <p class="hero-sub">Generate your custom shop QR code, pair your existing Windows printer, and receive direct payments instantly.</p>
+          <p class="hero-sub">Select your shop plan, pair your printer agent, generate your QR code, and receive instant direct payments.</p>
         </div>
 
         <!-- Registration Card Container -->
         <div class="card card--elevated">
           
-          <!-- Step Progress Indicator -->
+          <!-- 4-Step Progress Indicator -->
           <div class="step-wizard" id="stepWizard">
             <div class="step-item active" id="stepNav1">
               <div class="step-number">1</div>
-              <div class="step-label">Shop Details</div>
+              <div class="step-label">Shop Info</div>
             </div>
             <div class="step-line"></div>
             <div class="step-item" id="stepNav2">
               <div class="step-number">2</div>
-              <div class="step-label">Rates &amp; Payout</div>
+              <div class="step-label">Rates &amp; UPI</div>
             </div>
             <div class="step-line"></div>
             <div class="step-item" id="stepNav3">
               <div class="step-number">3</div>
+              <div class="step-label">Select Plan</div>
+            </div>
+            <div class="step-line"></div>
+            <div class="step-item" id="stepNav4">
+              <div class="step-number">4</div>
               <div class="step-label">QR &amp; Agent</div>
             </div>
           </div>
@@ -134,17 +139,64 @@
               <button type="button" id="btnPrevStep2" class="btn btn-outline">
                 ⬅️ Back
               </button>
-              <button type="button" id="btnSubmitRegister" class="btn btn-primary">
-                ✨ Register Shop &amp; Get QR
+              <button type="button" id="btnNextStep2" class="btn btn-primary">
+                Next: Select Plan &amp; Pay Upfront ➔
               </button>
             </div>
           </form>
 
-          <!-- STEP 3 RESULT: QR Code & Agent Downloads -->
+          <!-- STEP 3 FORM: Select Plan & Upfront Payment -->
           <div id="formStep3" class="wizard-pane" hidden>
+            <div class="card-header" style="padding: 0 0 12px 0;">
+              <h3 class="card-title">Choose Your Shop Subscription Plan</h3>
+              <p class="meta-text">Select your plan and pay upfront to activate your shop QR code.</p>
+            </div>
+
+            <div class="grid-2">
+              <label class="option-pill active" id="planPillFree" style="text-align: left; padding: 12px;">
+                <input type="radio" name="regPlanSelect" value="free" checked hidden>
+                <div style="font-weight: 800; font-size: 14px;">🆓 Commission-Only</div>
+                <div style="font-size: 16px; font-weight: 800; color: var(--color-primary);">₹0 <span>/ month</span></div>
+                <div class="meta-text" style="font-size: 10px; margin-top: 4px;">5% Commission • 1 Printer • 25 orders/day</div>
+              </label>
+
+              <label class="option-pill" id="planPillStarter" style="text-align: left; padding: 12px;">
+                <input type="radio" name="regPlanSelect" value="starter" hidden>
+                <div style="font-weight: 800; font-size: 14px;">🚀 Starter Plan</div>
+                <div style="font-size: 16px; font-weight: 800; color: var(--color-primary);">₹149 <span>/ month</span></div>
+                <div class="meta-text" style="font-size: 10px; margin-top: 4px;">2% Commission • 2 Printers • 50 orders/day</div>
+              </label>
+
+              <label class="option-pill" id="planPillGrowth" style="text-align: left; padding: 12px;">
+                <input type="radio" name="regPlanSelect" value="growth" hidden>
+                <div style="font-weight: 800; font-size: 14px;">⚡ Growth Plan</div>
+                <div style="font-size: 16px; font-weight: 800; color: var(--color-primary);">₹299 <span>/ month</span></div>
+                <div class="meta-text" style="font-size: 10px; margin-top: 4px;">1% Commission • 5 Printers • 300 orders/day</div>
+              </label>
+
+              <label class="option-pill" id="planPillScale" style="text-align: left; padding: 12px;">
+                <input type="radio" name="regPlanSelect" value="scale" hidden>
+                <div style="font-weight: 800; font-size: 14px;">👑 Scale Plan</div>
+                <div style="font-size: 16px; font-weight: 800; color: var(--color-primary);">₹599 <span>/ month</span></div>
+                <div class="meta-text" style="font-size: 10px; margin-top: 4px;">0% Commission • 10 Printers • Unlimited</div>
+              </label>
+            </div>
+
+            <div class="grid-2" style="margin-top: 14px;">
+              <button type="button" id="btnPrevStep3" class="btn btn-outline">
+                ⬅️ Back
+              </button>
+              <button type="button" id="btnSubmitRegister" class="btn btn-primary">
+                💳 Pay Upfront &amp; Activate Shop
+              </button>
+            </div>
+          </div>
+
+          <!-- STEP 4 RESULT: QR Code & Agent Downloads -->
+          <div id="formStep4" class="wizard-pane" hidden>
             <div class="registration-success-banner">
               <div class="success-icon">🎉</div>
-              <h3>Shop Registered Successfully!</h3>
+              <h3>Shop &amp; Plan Activated Successfully!</h3>
               <p>Your shop is live on PrintOk. Place your QR poster on your shop counter and download the Windows Agent.</p>
             </div>
 
@@ -163,7 +215,7 @@
                 <button type="button" id="btnDownloadPosterPng" class="btn btn-secondary btn-sm">
                   📥 Download QR Poster (PNG)
                 </button>
-                <a id="btnGoToDashboard" href="/dashboard" class="btn btn-primary btn-sm" style="text-decoration: none; text-align: center;">
+                <a id="btnGoToDashboard" href="/dashboard.html" class="btn btn-primary btn-sm" style="text-decoration: none; text-align: center;">
                   ⚡ Open Control Dashboard
                 </a>
               </div>
@@ -210,7 +262,10 @@
       <!-- Footer -->
       <footer class="app-footer">
         <div>PrintOk Hardware-Free Printing System</div>
-        <div style="margin-top: 4px;"><a href="/" style="color: var(--color-primary); font-weight:600;">Customer Interface</a> • <a href="/dashboard" style="color: var(--color-primary); font-weight:600;">Merchant Dashboard</a></div>
+        <div style="margin-top: 4px;">
+          <a href="/?printer=prn_test" style="color: var(--color-primary); font-weight:600;">Customer Interface</a> • 
+          <a href="/dashboard.html" style="color: var(--color-primary); font-weight:600;">Merchant Dashboard</a>
+        </div>
       </footer>
 
     </div>
