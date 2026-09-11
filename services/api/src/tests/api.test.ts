@@ -1,9 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert';
+import crypto from 'crypto';
+
+// Webhook signatures are verified for real now, so the suite signs its own
+// payloads rather than relying on a bypass string.
+const TEST_WEBHOOK_SECRET = 'printok_test_webhook_secret';
+process.env.RAZORPAY_WEBHOOK_SECRET = TEST_WEBHOOK_SECRET;
+
+/** Signs the exact bytes that will be sent, as Razorpay does. */
+function signWebhook(rawBody: string): string {
+  return crypto.createHmac('sha256', TEST_WEBHOOK_SECRET).update(rawBody).digest('hex');
+}
 import http from 'http';
 import { createApp } from '../app';
 import { MemoryStorage } from '../storage';
-import { PrintState } from '@printok/shared-types';
+import { PrintState, PaymentState } from '@printok/shared-types';
 
 test('PrintOk API Endpoints Integration Test', async (t) => {
   const storage = new MemoryStorage();
@@ -139,15 +150,16 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(createData.job.printState, PrintState.AwaitingPayment);
 
     // Call Payment Webhook
+    const webhookRaw = JSON.stringify({
+      paymentId: 'pay_9988776655',
+      jobId: pendingJobId,
+      amountInCents: 2000,
+    });
+
     const webhookRes = await fetch(`${baseUrl}/api/payments/webhook`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        paymentId: 'pay_9988776655',
-        jobId: pendingJobId,
-        amountInCents: 2000,
-        signature: 'valid_mock_signature',
-      }),
+      headers: { 'Content-Type': 'application/json', 'x-razorpay-signature': signWebhook(webhookRaw) },
+      body: webhookRaw,
     });
 
     assert.strictEqual(webhookRes.status, 200);
@@ -489,6 +501,111 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
       body: JSON.stringify({ planTier: 'enterprise' }),
     });
     assert.strictEqual(unknownTier.status, 400);
+  });
+
+  await t.test('16. Cash jobs wait for the shop, and are not auto-approved', async () => {
+    const pdf = Buffer.from('%PDF-1.4 cash flow test').toString('base64');
+
+    // This is what the "Pay Cash at Counter" button now sends.
+    const createRes = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: createdPrinterId, fileName: 'cash.pdf', fileBase64: pdf,
+        pageCount: 1, copies: 1, isColor: false,
+      }),
+    });
+    const { job } = (await createRes.json()) as any;
+
+    // Previously the cash button sent autoApprove=true, so the document printed
+    // before any money changed hands and the shop never saw it to approve.
+    assert.strictEqual(job.paymentState, PaymentState.Pending);
+    assert.strictEqual(job.printState, PrintState.AwaitingPayment,
+      'a cash job must wait for the shop to confirm payment');
+
+    // The shop sees it and approves it.
+    const approve = await fetch(`${baseUrl}/api/print-jobs/${job.id}/manual-override`, { method: 'POST' });
+    assert.strictEqual(approve.status, 200);
+    const approved = (await approve.json()) as any;
+    assert.strictEqual(approved.job.paymentState, PaymentState.Paid);
+    assert.strictEqual(approved.job.printState, PrintState.Queued);
+  });
+
+  await t.test('17. Payment webhooks cannot be forged', async () => {
+    const pdf = Buffer.from('%PDF-1.4 forgery test').toString('base64');
+    const createRes = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: createdPrinterId, fileName: 'forge.pdf', fileBase64: pdf,
+        pageCount: 1, copies: 1, isColor: false,
+      }),
+    });
+    const { job } = (await createRes.json()) as any;
+
+    // The old code returned true for this exact string, so anyone who knew it
+    // could mark any job paid and print for free.
+    const forgeRaw = JSON.stringify({ paymentId: 'pay_x', jobId: job.id });
+
+    const mock = await fetch(`${baseUrl}/api/payments/webhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-razorpay-signature': 'valid_mock_signature' },
+      body: forgeRaw,
+    });
+    assert.strictEqual(mock.status, 400, "'valid_mock_signature' must no longer be accepted");
+
+    const wrong = await fetch(`${baseUrl}/api/payments/webhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-razorpay-signature': 'deadbeef' },
+      body: forgeRaw,
+    });
+    assert.strictEqual(wrong.status, 400);
+
+    // The job must still be unpaid after both attempts.
+    const check = await fetch(`${baseUrl}/api/print-jobs/${job.id}`);
+    const checked = (await check.json()) as any;
+    assert.strictEqual(checked.job.paymentState, PaymentState.Pending,
+      'a rejected webhook must not mark the job paid');
+
+    // A correctly signed webhook is accepted.
+    const goodRaw = JSON.stringify({ paymentId: 'pay_real', jobId: job.id, amountInCents: 200 });
+    const ok = await fetch(`${baseUrl}/api/payments/webhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-razorpay-signature': signWebhook(goodRaw) },
+      body: goodRaw,
+    });
+    assert.strictEqual(ok.status, 200);
+  });
+
+  await t.test('18. Checkout confirmation requires a valid Razorpay signature', async () => {
+    const pdf = Buffer.from('%PDF-1.4 verify test').toString('base64');
+    const createRes = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: createdPrinterId, fileName: 'verify.pdf', fileBase64: pdf,
+        pageCount: 1, copies: 1, isColor: false,
+      }),
+    });
+    const { job } = (await createRes.json()) as any;
+
+    // A customer claiming success without a valid signature must not get a print.
+    const forged = await fetch(`${baseUrl}/api/payments/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jobId: job.id,
+        razorpayOrderId: 'order_fake',
+        razorpayPaymentId: 'pay_fake',
+        razorpaySignature: 'not_a_real_signature',
+      }),
+    });
+    assert.strictEqual(forged.status, 400);
+
+    const check = await fetch(`${baseUrl}/api/print-jobs/${job.id}`);
+    const checked = (await check.json()) as any;
+    assert.strictEqual(checked.job.paymentState, PaymentState.Pending);
+    assert.strictEqual(checked.job.printState, PrintState.AwaitingPayment);
   });
 
   await t.test('13. An unknown device token is rejected', async () => {

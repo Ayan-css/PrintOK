@@ -107,7 +107,12 @@ export function createApp(
   const razorpayService = new RazorpayService();
 
   app.use(cors());
-  app.use(express.json({ limit: '50mb' }));
+  app.use(express.json({
+    limit: '50mb',
+    // Webhook signatures are computed over the exact bytes received; a
+    // re-serialised object produces different bytes and never verifies.
+    verify: (req, _res, buf) => { (req as any).rawBody = buf.toString('utf8'); },
+  }));
 
   // Security: Public API Rate Limiter (Max 60 requests per minute per IP)
   const apiLimiter = rateLimit({
@@ -806,8 +811,65 @@ export function createApp(
         return res.status(404).json({ error: 'Print job not found.' });
       }
 
+      // A job that is already paid must not be charged twice.
+      if (job.paymentState === PaymentState.Paid) {
+        return res.status(409).json({ error: 'This job has already been paid for.' });
+      }
+
       const orderResult = await razorpayService.createOrder(jobId, job.totalPriceInCents);
       return res.json(orderResult);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Confirms a payment that Razorpay Checkout reported as successful.
+   *
+   * The browser cannot be trusted to say "I paid", so the signature Razorpay
+   * returns is verified against our key secret before the job is queued. The
+   * webhook remains the authoritative backstop if the browser never reaches
+   * this endpoint.
+   */
+  app.post('/api/payments/verify', async (req: Request, res: Response) => {
+    try {
+      const { jobId, razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body || {};
+
+      if (!jobId || !razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
+        return res.status(400).json({
+          error: 'jobId, razorpayOrderId, razorpayPaymentId and razorpaySignature are required.',
+        });
+      }
+
+      const job = await storage.getPrintJob(jobId);
+      if (!job) {
+        return res.status(404).json({ error: 'Print job not found.' });
+      }
+
+      // Replayed confirmation for an already-paid job is a success, not an error.
+      if (job.paymentState === PaymentState.Paid) {
+        return res.json({ success: true, message: 'Payment already confirmed.', job });
+      }
+
+      const valid = razorpayService.verifyCheckoutSignature(
+        String(razorpayOrderId), String(razorpayPaymentId), String(razorpaySignature)
+      );
+      if (!valid) {
+        return res.status(400).json({ error: 'Payment signature could not be verified.' });
+      }
+
+      const result = await storage.confirmPaymentAndQueueJob(jobId, {
+        actor: 'customer',
+        detail: { paymentRef: String(razorpayPaymentId), provider: 'razorpay' },
+      });
+      if (!result.ok) {
+        const status = result.code === 'NOT_FOUND' ? 404 : 409;
+        return res.status(status).json({ error: result.reason });
+      }
+
+      if (wsServer) wsServer.notifyJobQueued(result.job);
+
+      return res.json({ success: true, job: result.job });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -818,15 +880,29 @@ export function createApp(
    */
   app.post('/api/payments/webhook', async (req: Request, res: Response) => {
     try {
-      const { paymentId, jobId, amountInCents, signature } = req.body as PaymentWebhookDto;
+      // Razorpay sends its signature in a header and its job reference inside
+      // the payment entity's notes. The older flat body shape is still accepted
+      // so existing callers keep working - both go through the same real
+      // signature check.
+      // Razorpay signs the raw body and sends the digest in this header. A
+      // signature carried inside the body cannot cover itself, so the header is
+      // the only accepted source.
+      const signature = req.headers['x-razorpay-signature'] as string | undefined;
+      const body = req.body || {};
 
-      if (!paymentId || !jobId || !signature) {
-        return res.status(400).json({ error: 'paymentId, jobId, and signature are required.' });
+      const jobId =
+        body?.payload?.payment?.entity?.notes?.jobId ||
+        (body as PaymentWebhookDto).jobId;
+
+      const paymentRef =
+        body?.payload?.payment?.entity?.id || (body as PaymentWebhookDto).paymentId;
+
+      if (!jobId || !signature) {
+        return res.status(400).json({ error: 'A job reference and signature are required.' });
       }
 
-      // HMAC Signature Verification
-      const isValidSignature = razorpayService.verifyWebhookSignature(req.body, signature);
-      if (!isValidSignature) {
+      const rawBody = (req as any).rawBody || JSON.stringify(body);
+      if (!razorpayService.verifyWebhookSignature(rawBody, signature)) {
         return res.status(400).json({ error: 'Invalid HMAC payment webhook signature.' });
       }
 
@@ -842,7 +918,7 @@ export function createApp(
 
       const paymentResult = await storage.confirmPaymentAndQueueJob(jobId, {
         actor: 'webhook',
-        detail: { paymentRef: (req.body?.payload?.payment?.entity?.id) || undefined },
+        detail: { paymentRef },
       });
       if (!paymentResult.ok) {
         const status = paymentResult.code === 'NOT_FOUND' ? 404 : 409;

@@ -44,8 +44,19 @@ export class RazorpayService {
           isSimulated: false,
         };
       } catch (err: any) {
+        // A simulated order in production would show the customer a checkout
+        // that can never take money, so fail loudly instead.
+        if (process.env.NODE_ENV === 'production') {
+          throw new Error(`Razorpay order creation failed: ${err.message}`);
+        }
         console.warn('[Razorpay Service] Failed to create live order, falling back to simulated:', err.message);
       }
+    }
+
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'Razorpay is not configured (RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET). Refusing to simulate a payment.'
+      );
     }
 
     // Development / Simulated Order Fallback
@@ -59,23 +70,66 @@ export class RazorpayService {
     };
   }
 
+  /** True when real Razorpay credentials are configured. */
+  public get isLive(): boolean {
+    return Boolean(this.keyId && this.keySecret);
+  }
+
+  public get publishableKeyId(): string {
+    return this.keyId;
+  }
+
   /**
-   * Verify Razorpay Webhook HMAC SHA256 Signature.
+   * Verifies a Razorpay webhook signature.
+   *
+   * This previously returned true for the literal string 'valid_mock_signature',
+   * and for ANY signature when NODE_ENV was 'development'. That let anyone mark
+   * any job as paid by posting one known string, so printing was free to anyone
+   * who knew it. There is no bypass now: verification is always real.
+   *
+   * The HMAC must be computed over the exact bytes Razorpay sent, so callers
+   * pass the raw request body. Re-serialising the parsed object would produce
+   * different bytes and never match.
    */
-  public verifyWebhookSignature(payloadBody: string | object, signature: string): boolean {
-    // In dev / test mode, allow valid mock signature
-    if (signature === 'valid_mock_signature' || process.env.NODE_ENV === 'development') {
-      return true;
-    }
+  public verifyWebhookSignature(rawBody: string, signature: string): boolean {
+    if (!signature || !this.webhookSecret) return false;
 
     try {
-      const bodyStr = typeof payloadBody === 'string' ? payloadBody : JSON.stringify(payloadBody);
-      const expectedSignature = crypto
+      const expected = crypto
         .createHmac('sha256', this.webhookSecret)
-        .update(bodyStr)
+        .update(rawBody)
         .digest('hex');
 
-      return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature));
+      const provided = Buffer.from(signature, 'utf8');
+      const expectedBuf = Buffer.from(expected, 'utf8');
+      if (provided.length !== expectedBuf.length) return false;
+      return crypto.timingSafeEqual(provided, expectedBuf);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Verifies the signature Razorpay Checkout hands back to the browser after a
+   * successful payment.
+   *
+   * Razorpay signs "<order_id>|<payment_id>" with the API key secret. Without
+   * this check a customer could call our confirm endpoint themselves and get a
+   * free print, so the client's claim of success is never trusted on its own.
+   */
+  public verifyCheckoutSignature(orderId: string, paymentId: string, signature: string): boolean {
+    if (!orderId || !paymentId || !signature || !this.keySecret) return false;
+
+    try {
+      const expected = crypto
+        .createHmac('sha256', this.keySecret)
+        .update(`${orderId}|${paymentId}`)
+        .digest('hex');
+
+      const provided = Buffer.from(signature, 'utf8');
+      const expectedBuf = Buffer.from(expected, 'utf8');
+      if (provided.length !== expectedBuf.length) return false;
+      return crypto.timingSafeEqual(provided, expectedBuf);
     } catch {
       return false;
     }

@@ -17,6 +17,8 @@
 
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/styles.css">
+  <!-- Razorpay Checkout. Without this the payment popup can never open. -->
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 </head>
 <body class="bg-paper">
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>
@@ -257,7 +259,7 @@
               💳 Pay via Razorpay / UPI
             </button>
             <button id="btnPayCash" class="btn btn-secondary btn-full">
-              ⚡ Pay Cash at Counter
+              💵 Pay Cash at Counter
             </button>
           </div>
         </div>

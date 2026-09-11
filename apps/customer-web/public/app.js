@@ -1436,16 +1436,97 @@ document.addEventListener('DOMContentLoaded', () => {
 
     setPayButtonsEnabled(false);
 
+    // Neither route may auto-approve payment. Cash waits for the shop to
+    // confirm the money is in hand; Razorpay waits for a verified payment.
+    // Previously "Pay Cash" queued the job as Paid immediately, so documents
+    // printed before anyone had paid.
     if (btnPayCash) {
-      btnPayCash.addEventListener('click', () => submitCustomerPrintJob(true));
+      btnPayCash.addEventListener('click', () => submitCustomerPrintJob('cash'));
     }
     if (btnPayRazorpay) {
-      btnPayRazorpay.addEventListener('click', () => submitCustomerPrintJob(false));
+      btnPayRazorpay.addEventListener('click', () => submitCustomerPrintJob('razorpay'));
     }
 
     let submitting = false;
 
-    async function submitCustomerPrintJob(autoApprove) {
+    /**
+     * Opens Razorpay Checkout for a job and confirms the result server-side.
+     * Resolves true only once our own API has verified the payment signature;
+     * the browser's word alone is never enough to queue a print.
+     */
+    async function payWithRazorpay(job) {
+      const orderRes = await fetch(`${API_BASE}/api/payments/create-order`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId: job.id }),
+      });
+      const order = await orderRes.json();
+      if (!orderRes.ok) throw new Error(order.error || 'Could not start the payment.');
+
+      if (typeof window.Razorpay !== 'function') {
+        throw new Error('Payment library failed to load. Check your connection and try again.');
+      }
+
+      return new Promise((resolve, reject) => {
+        const checkout = new window.Razorpay({
+          key: order.keyId,
+          amount: order.amountInCents,
+          currency: order.currency || 'INR',
+          name: 'PrintOk',
+          description: `${job.fileName} · ${job.pageCount} page(s)`,
+          order_id: order.orderId,
+          notes: { jobId: job.id },
+          theme: { color: '#6c2cff' },
+          handler: async (response) => {
+            try {
+              const verifyRes = await fetch(`${API_BASE}/api/payments/verify`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  jobId: job.id,
+                  razorpayOrderId: response.razorpay_order_id,
+                  razorpayPaymentId: response.razorpay_payment_id,
+                  razorpaySignature: response.razorpay_signature,
+                }),
+              });
+              const verified = await verifyRes.json();
+              if (!verifyRes.ok) throw new Error(verified.error || 'Payment could not be verified.');
+              resolve(verified.job || job);
+            } catch (err) {
+              reject(err);
+            }
+          },
+          modal: {
+            // Closing the popup abandons payment; the job stays unpaid rather
+            // than silently printing.
+            ondismiss: () => reject(new Error('Payment was cancelled.')),
+          },
+        });
+
+        checkout.on('payment.failed', (event) => {
+          reject(new Error(event?.error?.description || 'The payment failed.'));
+        });
+
+        checkout.open();
+      });
+    }
+
+    function showJobStatus(job, message) {
+      if (screenCustomer) screenCustomer.hidden = true;
+      if (screenStatus) screenStatus.hidden = false;
+
+      document.getElementById('statusTokenNumber').textContent = `Token ${job.tokenNumber || '#001'}`;
+      document.getElementById('stFileName').textContent = job.fileName;
+      document.getElementById('stPageCopy').textContent =
+        `${job.pageCount} ${job.pageCount === 1 ? 'page' : 'pages'}, ${job.copies} ${job.copies === 1 ? 'copy' : 'copies'}`;
+      document.getElementById('stAmount').textContent = formatRupees(job.totalPriceInCents);
+
+      renderJobProgress(job);
+      if (message) showToast('success', message.title, message.body);
+      startPollingJobStatus(job.id);
+    }
+
+    async function submitCustomerPrintJob(method) {
       if (submitting) return; // guard against a double tap creating two paid jobs
       if (!selectedFile || !fileBase64) {
         showToast('warning', 'Still Preparing', 'Your document is still being read. Try again in a moment.');
@@ -1457,7 +1538,9 @@ document.addEventListener('DOMContentLoaded', () => {
       showToast('info', 'Submitting Job...', 'Uploading document to printer queue...');
 
       try {
-        const res = await fetch(`${API_BASE}/api/print-jobs?autoApprove=${autoApprove}`, {
+        // autoApprove=false for both routes: a job is only ever queued once
+        // payment is actually confirmed.
+        const res = await fetch(`${API_BASE}/api/print-jobs?autoApprove=false`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1474,26 +1557,30 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         const data = await res.json();
-        if (res.ok && data.job) {
-          if (screenCustomer) screenCustomer.hidden = true;
-          if (screenStatus) screenStatus.hidden = false;
-
-          document.getElementById('statusTokenNumber').textContent = `Token ${data.job.tokenNumber || '#001'}`;
-          document.getElementById('stFileName').textContent = data.job.fileName;
-          document.getElementById('stPageCopy').textContent =
-            `${data.job.pageCount} ${data.job.pageCount === 1 ? 'page' : 'pages'}, ${data.job.copies} ${data.job.copies === 1 ? 'copy' : 'copies'}`;
-          document.getElementById('stAmount').textContent = formatRupees(data.job.totalPriceInCents);
-
-          renderJobProgress(data.job);
-          showToast('success', 'Job Submitted!', `Token ${data.job.tokenNumber || '#001'} queued for printing.`);
-          startPollingJobStatus(data.job.id);
-        } else {
+        if (!res.ok || !data.job) {
           showToast('danger', 'Submission Error', data.error || 'Could not create print job.');
           submitting = false;
           setPayButtonsEnabled(true);
+          return;
         }
-      } catch {
-        showToast('danger', 'Network Failure', 'Failed to submit print job.');
+
+        if (method === 'cash') {
+          showJobStatus(data.job, {
+            title: 'Show this token at the counter',
+            body: `Pay ₹${(data.job.totalPriceInCents / 100).toFixed(2)} in cash. Printing starts once the shop confirms.`,
+          });
+          return;
+        }
+
+        showToast('info', 'Opening payment...', 'Complete the payment to start printing.');
+        const paidJob = await payWithRazorpay(data.job);
+        showJobStatus(paidJob, {
+          title: 'Payment received',
+          body: `Token ${paidJob.tokenNumber || ''} is queued for printing.`,
+        });
+      } catch (err) {
+        // The job exists but is unpaid; the customer can retry or pay cash.
+        showToast('danger', 'Payment not completed', err.message || 'Failed to submit print job.');
         submitting = false;
         setPayButtonsEnabled(true);
       }
