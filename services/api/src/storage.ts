@@ -6,6 +6,7 @@ import {
 import { S3StorageService } from './s3Storage';
 import { calculateJobPriceBreakdown, DEFAULT_PRICING_CONFIG } from './pricing';
 import { canTransitionPrintState, canTransitionPaymentState, isDocumentPurgeable } from './jobStateMachine';
+import { isStale, recoveryActionFor } from './jobRecovery';
 
 /** Optional inputs captured at job creation (PRD 9, 11). */
 export interface CreateJobOptions {
@@ -67,6 +68,14 @@ export interface PairingCodeRecord {
   usedAt?: string;
 }
 
+/** Outcome of one sweep for abandoned jobs (PRD 12, 13). */
+export interface ReclaimResult {
+  /** Jobs safely returned to the queue because nothing reached paper. */
+  requeued: string[];
+  /** Jobs handed to a human because reprinting could double-print or double-charge. */
+  escalated: string[];
+}
+
 /** Stored response of a previously executed idempotent request (PRD 11). */
 export interface StoredIdempotencyRecord {
   key: string;
@@ -85,6 +94,15 @@ export interface IStorageProvider {
   createPrinter(shopId: string, printerName: string, baseUrlOrTargetUrl: string, qrCodeDataUrl?: string, qrGeneratorFn?: (url: string) => Promise<string>): Promise<Printer>;
   getPrinter(id: string): Promise<Printer | undefined>;
   getPrinterByApiKey(apiKey: string): Promise<Printer | undefined>;
+  /**
+   * Rebuilds a printer's QR target and image against a new web base URL, for
+   * printers registered while the public URL was misconfigured.
+   */
+  regeneratePrinterQr(
+    printerId: string,
+    baseUrl: string,
+    qrGeneratorFn: (url: string) => Promise<string>
+  ): Promise<Printer | undefined>;
   createPrintJob(
     printerId: string,
     fileName: string,
@@ -107,6 +125,14 @@ export interface IStorageProvider {
   assignJobToDevice(jobId: string, deviceId: string): Promise<StateChangeResult>;
   /** Append-only lifecycle trail for a job (PRD 9, 22). */
   getJobEvents(jobId: string, limit?: number): Promise<JobEvent[]>;
+  /**
+   * Recovers jobs abandoned mid-flight by an agent that died or lost the network
+   * (PRD 12, 13). Safe to call repeatedly; it only acts on jobs past their
+   * staleness threshold.
+   */
+  reclaimStaleJobs(now?: Date): Promise<ReclaimResult>;
+  /** Jobs currently waiting on a human decision (PRD 12). */
+  getJobsRequiringAction(shopId: string, limit?: number): Promise<PrintJob[]>;
   findJobByIdempotencyKey(key: string): Promise<PrintJob | undefined>;
   getIdempotencyRecord(key: string): Promise<StoredIdempotencyRecord | undefined>;
   saveIdempotencyRecord(record: StoredIdempotencyRecord): Promise<void>;
@@ -245,6 +271,21 @@ export class MemoryStorage implements IStorageProvider {
       }
     }
     return undefined;
+  }
+
+  public async regeneratePrinterQr(
+    printerId: string,
+    baseUrl: string,
+    qrGeneratorFn: (url: string) => Promise<string>
+  ): Promise<Printer | undefined> {
+    const printer = this.printers.get(printerId);
+    if (!printer) return undefined;
+
+    const qrTargetUrl = `${baseUrl.replace(/\/$/, '')}/?printer=${printerId}`;
+    printer.qrTargetUrl = qrTargetUrl;
+    printer.qrCodeDataUrl = await qrGeneratorFn(qrTargetUrl);
+    this.printers.set(printerId, printer);
+    return printer;
   }
 
   private getNextTokenNumber(printerId: string): string {
@@ -398,6 +439,54 @@ export class MemoryStorage implements IStorageProvider {
       if (job.idempotencyKey === key) return job;
     }
     return undefined;
+  }
+
+  public async reclaimStaleJobs(now: Date = new Date()): Promise<ReclaimResult> {
+    const result: ReclaimResult = { requeued: [], escalated: [] };
+
+    for (const job of this.printJobs.values()) {
+      // Measure from the last sign of life, not from creation.
+      const since = job.lastAttemptAt || job.assignedAt || job.updatedAt;
+      if (!isStale(job.printState, since ? new Date(since) : undefined, now)) continue;
+
+      const decision = recoveryActionFor(
+        job.printState,
+        job.attemptCount ?? 0,
+        job.maxAttempts ?? 3
+      );
+
+      if (decision.action === 'requeue') {
+        const from = job.printState;
+        job.printState = PrintState.Queued;
+        job.deviceId = undefined;
+        job.updatedAt = now.toISOString();
+        this.printJobs.set(job.id, job);
+        this.appendEvent(job.id, 'RECLAIMED_REQUEUED', from, PrintState.Queued, {
+          actor: 'system',
+          detail: { reason: decision.reason },
+        });
+        result.requeued.push(job.id);
+      } else {
+        const from = job.printState;
+        job.printState = PrintState.RequiresShopAction;
+        job.failureCategory = FailureCategory.SafetyCritical;
+        job.errorMessage = decision.reason;
+        job.updatedAt = now.toISOString();
+        this.printJobs.set(job.id, job);
+        this.appendEvent(job.id, 'RECLAIM_ESCALATED', from, PrintState.RequiresShopAction, {
+          actor: 'system',
+          detail: { reason: decision.reason },
+        });
+        result.escalated.push(job.id);
+      }
+    }
+
+    return result;
+  }
+
+  public async getJobsRequiringAction(shopId: string, limit = 50): Promise<PrintJob[]> {
+    const jobs = await this.getRecentJobsForShop(shopId, 500);
+    return jobs.filter((j) => j.printState === PrintState.RequiresShopAction).slice(0, limit);
   }
 
   public async getIdempotencyRecord(key: string): Promise<StoredIdempotencyRecord | undefined> {

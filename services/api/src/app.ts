@@ -8,6 +8,7 @@ import { AgentWebSocketServer } from './ws';
 import { processDocument } from './documentProcessor';
 import { RazorpayService } from './razorpayService';
 import { parsePrintState } from './jobStateMachine';
+import { classifyFailure } from './jobRecovery';
 import {
   generatePairingCode, normalizePairingCode, hashDeviceToken, issueDeviceToken,
   PAIRING_CODE_TTL_MS, AgentIdentity,
@@ -145,7 +146,18 @@ export function createApp(
       const shop = await storage.createShop(shopName, ownerEmail, upiId, bankAccountNumber, bankIfsc);
       
       // PUBLIC_WEB_URL must be set to the Vercel frontend URL in Render env vars (e.g. https://printok.vercel.app)
-      const baseUrl = (process.env.PUBLIC_WEB_URL || 'http://localhost:3000').replace(/\/$/, '');
+      // A QR poster is printed and physically mounted in a shop. Emitting a
+      // localhost URL produces a poster that can never work, and nothing about
+      // the successful response would reveal it, so refuse instead of guessing.
+      const configuredWebUrl = process.env.PUBLIC_WEB_URL;
+      if (!configuredWebUrl && process.env.NODE_ENV === 'production') {
+        return res.status(500).json({
+          error:
+            'PUBLIC_WEB_URL is not configured. Refusing to register a shop, because its QR code ' +
+            'would point at localhost and could never be scanned by a customer.',
+        });
+      }
+      const baseUrl = (configuredWebUrl || 'http://localhost:3000').replace(/\/$/, '');
 
       // Pass baseUrl + QR generator so createPrinter builds the correct URL after the ID is known
       const printer = await storage.createPrinter(
@@ -291,6 +303,63 @@ export function createApp(
       res.setHeader('Content-Type', 'application/json');
       res.setHeader('Content-Disposition', `attachment; filename="appsettings.json"`);
       return res.send(JSON.stringify(config, null, 2));
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Jobs waiting on a human decision (PRD 12).
+   */
+  app.get('/api/shops/:shopId/jobs/requires-action', async (req: Request, res: Response) => {
+    try {
+      const limit = Math.min(Number(req.query.limit) || 50, 200);
+      const jobs = await storage.getJobsRequiringAction(req.params.shopId, limit);
+      return res.json({ jobs });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Sweep for jobs abandoned by a dead or disconnected agent (PRD 12, 13).
+   * Runs automatically on a timer; exposed so it can also be triggered manually.
+   */
+  app.post('/api/admin/reclaim-stale-jobs', async (_req: Request, res: Response) => {
+    try {
+      const result = await storage.reclaimStaleJobs();
+      return res.json({
+        requeued: result.requeued.length,
+        escalated: result.escalated.length,
+        jobIds: result,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Regenerate a printer's QR code against the currently configured web URL.
+   * Needed for printers registered while PUBLIC_WEB_URL was unset, whose posters
+   * encode an unreachable localhost address.
+   */
+  app.post('/api/printers/:printerId/regenerate-qr', async (req: Request, res: Response) => {
+    try {
+      const configuredWebUrl = process.env.PUBLIC_WEB_URL;
+      if (!configuredWebUrl) {
+        return res.status(500).json({
+          error: 'PUBLIC_WEB_URL is not configured; regenerating would reproduce the same broken URL.',
+        });
+      }
+
+      const printer = await storage.getPrinter(req.params.printerId);
+      if (!printer) {
+        return res.status(404).json({ error: 'Printer not found.' });
+      }
+
+      const baseUrl = configuredWebUrl.replace(/\/$/, '');
+      const updated = await storage.regeneratePrinterQr(printer.id, baseUrl, generateQrCodeDataUrl);
+      return res.json({ printer: updated });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -685,6 +754,10 @@ export function createApp(
       const result = await storage.updateJobPrintState(id, requestedState, errorMessage, {
         actor: `agent:${deviceId}`,
         deviceId,
+        // Classify who can resolve this, so the right person is asked (PRD 12).
+        ...(requestedState === PrintState.Failed
+          ? { failureCategory: classifyFailure(errorMessage) }
+          : {}),
       });
 
       if (!result.ok) {

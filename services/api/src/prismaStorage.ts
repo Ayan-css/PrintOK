@@ -7,11 +7,14 @@ import {
 } from '@printok/shared-types';
 import {
   IStorageProvider, CreateJobOptions, TransitionMeta, StateChangeResult, StoredIdempotencyRecord,
-  AgentDeviceRecord, AgentSecurityEventRecord, PairingCodeRecord,
+  AgentDeviceRecord, AgentSecurityEventRecord, PairingCodeRecord, ReclaimResult,
 } from './storage';
 import { S3StorageService } from './s3Storage';
 import { calculateJobPriceBreakdown, DEFAULT_PRICING_CONFIG } from './pricing';
 import { canTransitionPrintState, canTransitionPaymentState, isDocumentPurgeable } from './jobStateMachine';
+import {
+  recoveryActionFor, ASSIGNED_STALE_MS, DOWNLOADING_STALE_MS, PRINTING_STALE_MS,
+} from './jobRecovery';
 
 const HEARTBEAT_ONLINE_WINDOW_MS = 45_000;
 
@@ -94,6 +97,25 @@ export class PrismaStorage implements IStorageProvider {
   public async getPrinterByApiKey(apiKey: string): Promise<Printer | undefined> {
     const printer = await this.prisma.printer.findUnique({ where: { apiKey } });
     return printer ? this.mapPrinter(printer) : undefined;
+  }
+
+  public async regeneratePrinterQr(
+    printerId: string,
+    baseUrl: string,
+    qrGeneratorFn: (url: string) => Promise<string>
+  ): Promise<Printer | undefined> {
+    const existing = await this.prisma.printer.findUnique({ where: { id: printerId } });
+    if (!existing) return undefined;
+
+    const qrTargetUrl = `${baseUrl.replace(/\/$/, '')}/?printer=${printerId}`;
+    const qrCodeDataUrl = await qrGeneratorFn(qrTargetUrl);
+
+    const printer = await this.prisma.printer.update({
+      where: { id: printerId },
+      data: { qrTargetUrl, qrCodeDataUrl },
+    });
+
+    return this.mapPrinter(printer);
   }
 
   // ------------------------------------------------------------------ jobs ---
@@ -453,6 +475,83 @@ export class PrismaStorage implements IStorageProvider {
       create: { key: record.key, ...data },
       update: data,
     });
+  }
+
+  /**
+   * Recovers jobs abandoned mid-flight (PRD 12, 13).
+   *
+   * Each transient state has its own staleness threshold, and the decision to
+   * requeue or escalate is made by jobRecovery so both storage providers apply
+   * exactly the same policy.
+   */
+  public async reclaimStaleJobs(now: Date = new Date()): Promise<ReclaimResult> {
+    const result: ReclaimResult = { requeued: [], escalated: [] };
+
+    const windows: Array<{ state: PrintState; cutoff: Date }> = [
+      { state: PrintState.Assigned, cutoff: new Date(now.getTime() - ASSIGNED_STALE_MS) },
+      { state: PrintState.Downloading, cutoff: new Date(now.getTime() - DOWNLOADING_STALE_MS) },
+      { state: PrintState.Printing, cutoff: new Date(now.getTime() - PRINTING_STALE_MS) },
+    ];
+
+    for (const { state, cutoff } of windows) {
+      const stale = await this.prisma.printJob.findMany({
+        where: {
+          printState: state,
+          // Measure from the last sign of life, falling back to the last write.
+          OR: [
+            { lastAttemptAt: { lt: cutoff } },
+            { AND: [{ lastAttemptAt: null }, { updatedAt: { lt: cutoff } }] },
+          ],
+        },
+        take: 200,
+      });
+
+      for (const job of stale) {
+        const decision = recoveryActionFor(state, job.attemptCount, job.maxAttempts);
+
+        if (decision.action === 'requeue') {
+          // Conditional update: if an agent reported progress since we read the
+          // row, leave it alone rather than yanking a live job back.
+          const moved = await this.prisma.printJob.updateMany({
+            where: { id: job.id, printState: state },
+            data: { printState: PrintState.Queued, deviceId: null },
+          });
+          if (moved.count === 0) continue;
+
+          await this.recordEvent(job.id, 'RECLAIMED_REQUEUED', state, PrintState.Queued, 'system', {
+            reason: decision.reason,
+          });
+          result.requeued.push(job.id);
+        } else {
+          const moved = await this.prisma.printJob.updateMany({
+            where: { id: job.id, printState: state },
+            data: {
+              printState: PrintState.RequiresShopAction,
+              failureCategory: FailureCategory.SafetyCritical,
+              errorMessage: decision.reason,
+            },
+          });
+          if (moved.count === 0) continue;
+
+          await this.recordEvent(
+            job.id, 'RECLAIM_ESCALATED', state, PrintState.RequiresShopAction, 'system',
+            { reason: decision.reason }
+          );
+          result.escalated.push(job.id);
+        }
+      }
+    }
+
+    return result;
+  }
+
+  public async getJobsRequiringAction(shopId: string, limit = 50): Promise<PrintJob[]> {
+    const jobs = await this.prisma.printJob.findMany({
+      where: { shopId, printState: PrintState.RequiresShopAction },
+      orderBy: { updatedAt: 'desc' },
+      take: limit,
+    });
+    return jobs.map((j) => this.mapPrintJob(j));
   }
 
   // --------------------------------------- agent device identity & pairing ---

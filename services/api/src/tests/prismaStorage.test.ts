@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { PrintState, PaymentState } from '@printok/shared-types';
+import { PrintState, PaymentState, FailureCategory } from '@printok/shared-types';
+import { ASSIGNED_STALE_MS, PRINTING_STALE_MS } from '../jobRecovery';
 
 /**
  * PrismaStorage integration tests.
@@ -23,6 +24,9 @@ const TEST_DATABASE_URL =
 // PrismaClient reads DATABASE_URL at construction, so point it at the test
 // database before the storage module is imported.
 process.env.DATABASE_URL = TEST_DATABASE_URL;
+// Prisma Migrate follows directUrl. Pin it to the test database so nothing in
+// this suite can ever reach the real one via the DIRECT_URL inherited from .env.
+process.env.DIRECT_URL = TEST_DATABASE_URL;
 
 // Instantiating PrismaClient loads .env, which carries real object-storage
 // credentials. dotenv does not overwrite variables that are already defined, so
@@ -286,6 +290,99 @@ test('PrismaStorage (PostgreSQL) integration', async (t) => {
     const events = await storage.listSecurityEvents(printer.id, 10);
     assert.ok(events.length > 0);
     assert.ok(events.some((e) => e.type === 'AUTH_REJECTED'));
+  });
+
+  await t.test('an agent that dies before printing returns its job to the queue', async () => {
+    const pdf = Buffer.from('%PDF-1.4 reclaim test').toString('base64');
+    const job = await storage.createPrintJob(printer.id, 'reclaim.pdf', pdf, 1, 1, false, true, false, 'A4');
+
+    await storage.assignJobToDevice(job.id, 'device-dead');
+
+    // Nothing happened for longer than the Assigned threshold.
+    const later = new Date(Date.now() + ASSIGNED_STALE_MS + 60_000);
+    const result = await storage.reclaimStaleJobs(later);
+
+    assert.ok(result.requeued.includes(job.id), 'an abandoned claim must be requeued');
+
+    const reread = await storage.getPrintJob(job.id);
+    assert.strictEqual(reread!.printState, PrintState.Queued);
+    assert.strictEqual(reread!.deviceId, undefined, 'the dead device must release its claim');
+
+    // And it is collectable again.
+    const pending = await storage.getPendingJobsForPrinter(printer.id);
+    assert.ok(pending.some((j) => j.id === job.id));
+  });
+
+  await t.test('an agent that dies WHILE printing is escalated, never reprinted', async () => {
+    const pdf = Buffer.from('%PDF-1.4 ambiguous test').toString('base64');
+    const job = await storage.createPrintJob(printer.id, 'ambiguous.pdf', pdf, 1, 1, false, true, false, 'A4');
+
+    await storage.assignJobToDevice(job.id, 'device-dead');
+    await storage.updateJobPrintState(job.id, PrintState.Printing);
+
+    const later = new Date(Date.now() + PRINTING_STALE_MS + 60_000);
+    const result = await storage.reclaimStaleJobs(later);
+
+    // Paper may already have come out. Reprinting would double-charge and
+    // double-print, so this must go to a human instead (PRD 11, 12).
+    assert.ok(result.escalated.includes(job.id), 'an ambiguous stall must escalate');
+    assert.ok(!result.requeued.includes(job.id), 'an ambiguous stall must NOT be requeued');
+
+    const reread = await storage.getPrintJob(job.id);
+    assert.strictEqual(reread!.printState, PrintState.RequiresShopAction);
+    assert.strictEqual(reread!.failureCategory, FailureCategory.SafetyCritical);
+
+    const needsAction = await storage.getJobsRequiringAction(shop.id);
+    assert.ok(needsAction.some((j) => j.id === job.id), 'it must surface to the shop');
+  });
+
+  await t.test('a job still making progress is left alone', async () => {
+    const pdf = Buffer.from('%PDF-1.4 healthy test').toString('base64');
+    const job = await storage.createPrintJob(printer.id, 'healthy.pdf', pdf, 1, 1, false, true, false, 'A4');
+    await storage.assignJobToDevice(job.id, 'device-alive');
+
+    // Sweeping now, well inside the threshold, must not disturb it.
+    const result = await storage.reclaimStaleJobs(new Date());
+    assert.ok(!result.requeued.includes(job.id));
+    assert.ok(!result.escalated.includes(job.id));
+
+    const reread = await storage.getPrintJob(job.id);
+    assert.strictEqual(reread!.printState, PrintState.Assigned);
+  });
+
+  await t.test('a job out of retries is escalated instead of looping forever', async () => {
+    const pdf = Buffer.from('%PDF-1.4 retry test').toString('base64');
+    const job = await storage.createPrintJob(printer.id, 'retry.pdf', pdf, 1, 1, false, true, false, 'A4');
+
+    // Exhaust the attempt budget by repeatedly claiming and abandoning.
+    for (let i = 0; i < 3; i++) {
+      await storage.assignJobToDevice(job.id, `device-${i}`);
+      await storage.reclaimStaleJobs(new Date(Date.now() + ASSIGNED_STALE_MS + 60_000));
+    }
+
+    const reread = await storage.getPrintJob(job.id);
+    assert.strictEqual(
+      reread!.printState,
+      PrintState.RequiresShopAction,
+      'a job that keeps being abandoned must stop retrying and ask for help'
+    );
+  });
+
+  await t.test('a QR code can be regenerated against a corrected web URL', async () => {
+    const before = await storage.getPrinter(printer.id);
+    assert.ok(before!.qrTargetUrl.includes('printok.test'));
+
+    const updated = await storage.regeneratePrinterQr(
+      printer.id,
+      'https://real.example.com',
+      async (url) => `data:image/png;base64,${Buffer.from(url).toString('base64')}`
+    );
+
+    assert.ok(updated!.qrTargetUrl.startsWith('https://real.example.com/?printer='));
+    assert.ok(!updated!.qrTargetUrl.includes('localhost'));
+
+    const reread = await storage.getPrinter(printer.id);
+    assert.strictEqual(reread!.qrTargetUrl, updated!.qrTargetUrl, 'the new URL must persist');
   });
 
   await t.test('shop stats aggregate from the database', async () => {

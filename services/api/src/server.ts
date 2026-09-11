@@ -32,8 +32,31 @@ async function startServer() {
 
   server.on('request', app);
 
+  // Sweep for jobs abandoned by a dead or disconnected agent (PRD 12, 13).
+  // Without this, a shop PC that loses power mid-job leaves the customer's job
+  // stuck outside the Queued filter forever, with no one aware of it.
+  const RECLAIM_INTERVAL_MS = Number(process.env.RECLAIM_INTERVAL_MS) || 60_000;
+  const reclaimTimer = setInterval(async () => {
+    try {
+      const { requeued, escalated } = await storage.reclaimStaleJobs();
+      if (requeued.length || escalated.length) {
+        console.log(
+          `[PrintOk Recovery] Requeued ${requeued.length} abandoned job(s); ` +
+          `escalated ${escalated.length} to shop action.`
+        );
+      }
+    } catch (err: any) {
+      // A failed sweep must never take the API down; the next tick retries.
+      console.error('[PrintOk Recovery] Sweep failed:', err?.message || err);
+    }
+  }, RECLAIM_INTERVAL_MS);
+
+  // Do not hold the process open purely for the sweeper.
+  reclaimTimer.unref();
+
   server.listen(PORT, () => {
     console.log(`[PrintOk Cloud API] Listening on http://localhost:${PORT} (WS: ws://localhost:${PORT}/ws/agent)`);
+    console.log(`[PrintOk Recovery] Stale-job sweep every ${RECLAIM_INTERVAL_MS / 1000}s.`);
   });
 }
 

@@ -20,7 +20,17 @@ docker exec -i "$CONTAINER" psql -U "$DB_USER" -d postgres -c "DROP DATABASE IF 
 docker exec -i "$CONTAINER" psql -U "$DB_USER" -d postgres -c "CREATE DATABASE \"$DB_NAME\";" >/dev/null
 
 export DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@localhost:5432/${DB_NAME}"
-echo "Applying migrations..."
+# Prisma Migrate follows directUrl, so DIRECT_URL must be overridden too.
+# Without this it inherits the value from .env and migrates the REAL database
+# instead of this throwaway one.
+export DIRECT_URL="$DATABASE_URL"
+
+if [[ "$DATABASE_URL" != *"localhost"* && "$DATABASE_URL" != *"127.0.0.1"* ]]; then
+  echo "Refusing to run: the test database URL is not local ($DATABASE_URL)." >&2
+  exit 1
+fi
+
+echo "Applying migrations to $DB_NAME..."
 npx prisma migrate deploy
 
 echo "Test database ready: $DATABASE_URL"
