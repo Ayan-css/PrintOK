@@ -9,6 +9,7 @@ import {
   IStorageProvider, CreateJobOptions, TransitionMeta, StateChangeResult, StoredIdempotencyRecord,
   AgentDeviceRecord, AgentSecurityEventRecord, PairingCodeRecord, ReclaimResult,
   AdminUserRecord, ShopPlan, AdminShopSummary, AdminOverview,
+  ShopRemovalSafety, ShopRemovalResult, AdminAuditEntry,
 } from './storage';
 import { S3StorageService } from './s3Storage';
 import { calculateJobPriceBreakdown, DEFAULT_PRICING_CONFIG } from './pricing';
@@ -767,8 +768,9 @@ export class PrismaStorage implements IStorageProvider {
     };
   }
 
-  public async listAdminShopSummaries(limit = 200): Promise<AdminShopSummary[]> {
+  public async listAdminShopSummaries(limit = 200, includeArchived = false): Promise<AdminShopSummary[]> {
     const shops = await this.prisma.shop.findMany({
+      where: includeArchived ? {} : { archivedAt: null },
       orderBy: { createdAt: 'desc' },
       take: limit,
       include: { printers: { include: { telemetry: true, devices: true } } },
@@ -778,7 +780,7 @@ export class PrismaStorage implements IStorageProvider {
     const onlineSince = new Date(Date.now() - HEARTBEAT_ONLINE_WINDOW_MS);
 
     // Aggregate per shop in the database rather than loading every job.
-    const [paidTotals, jobCounts, recentCounts, actionCounts, lastJobs] = await Promise.all([
+    const [paidTotals, jobCounts, recentCounts, actionCounts, lastJobs, paidJobCounts] = await Promise.all([
       this.prisma.printJob.groupBy({
         by: ['shopId'],
         where: { paymentState: PaymentState.Paid },
@@ -799,6 +801,11 @@ export class PrismaStorage implements IStorageProvider {
         by: ['shopId'],
         _max: { createdAt: true },
       }),
+      this.prisma.printJob.groupBy({
+        by: ['shopId'],
+        where: { paymentState: PaymentState.Paid },
+        _count: { _all: true },
+      }),
     ]);
 
     const revenueByShop = new Map(paidTotals.map((r) => [r.shopId, r._sum.totalPriceInCents ?? 0]));
@@ -806,6 +813,7 @@ export class PrismaStorage implements IStorageProvider {
     const recentByShop = new Map(recentCounts.map((r) => [r.shopId, r._count._all]));
     const actionByShop = new Map(actionCounts.map((r) => [r.shopId, r._count._all]));
     const lastJobByShop = new Map(lastJobs.map((r) => [r.shopId, r._max.createdAt]));
+    const paidJobCountByShop = new Map(paidJobCounts.map((r) => [r.shopId, r._count._all]));
 
     return shops.map((shop) => {
       const grossRevenueCents = revenueByShop.get(shop.id) ?? 0;
@@ -831,8 +839,130 @@ export class PrismaStorage implements IStorageProvider {
         commissionCents: Math.round((grossRevenueCents * shop.commissionBps) / 10_000),
         jobsRequiringAction: actionByShop.get(shop.id) ?? 0,
         lastJobAt: lastJobByShop.get(shop.id)?.toISOString(),
+        archivedAt: shop.archivedAt?.toISOString(),
+        archiveReason: shop.archiveReason ?? undefined,
+        // No paid job means no real money ever moved, so the row is disposable.
+        canHardDelete: (paidJobCountByShop.get(shop.id) ?? 0) === 0,
       };
     });
+  }
+
+  // ------------------------------------------------- shop lifecycle (PRD 21) ---
+
+  public async getShopRemovalSafety(shopId: string): Promise<ShopRemovalSafety> {
+    const shop = await this.prisma.shop.findUnique({ where: { id: shopId } });
+    if (!shop) {
+      return {
+        shopId, exists: false, paidJobCount: 0, totalJobCount: 0,
+        printerCount: 0, canHardDelete: false, reason: 'Shop not found.',
+      };
+    }
+
+    const [paidJobCount, totalJobCount, printerCount] = await Promise.all([
+      this.prisma.printJob.count({ where: { shopId, paymentState: PaymentState.Paid } }),
+      this.prisma.printJob.count({ where: { shopId } }),
+      this.prisma.printer.count({ where: { shopId } }),
+    ]);
+
+    const canHardDelete = paidJobCount === 0;
+
+    return {
+      shopId,
+      exists: true,
+      paidJobCount,
+      totalJobCount,
+      printerCount,
+      canHardDelete,
+      reason: canHardDelete
+        ? undefined
+        : `This shop has ${paidJobCount} paid job(s). Deleting it would destroy payment records, so it can only be archived.`,
+    };
+  }
+
+  public async hardDeleteShop(shopId: string): Promise<ShopRemovalResult> {
+    const safety = await this.getShopRemovalSafety(shopId);
+    if (!safety.exists) {
+      return { shopId, ok: false, action: 'refused', reason: 'Shop not found.' };
+    }
+    if (!safety.canHardDelete) {
+      return { shopId, ok: false, action: 'refused', reason: safety.reason };
+    }
+
+    // Pairing codes reference a printer by id without a foreign key, so they
+    // would survive the cascade as orphans. Clear them explicitly.
+    const printers = await this.prisma.printer.findMany({
+      where: { shopId },
+      select: { id: true },
+    });
+    const printerIds = printers.map((p) => p.id);
+
+    if (printerIds.length) {
+      await this.prisma.agentPairingCode.deleteMany({ where: { printerId: { in: printerIds } } });
+    }
+
+    // Printers, jobs, job events, telemetry, devices and pricing all cascade
+    // from Shop. AgentSecurityEvent is deliberately left: a security trail
+    // should outlive the thing it describes.
+    await this.prisma.shop.delete({ where: { id: shopId } });
+
+    return { shopId, ok: true, action: 'deleted' };
+  }
+
+  public async archiveShop(shopId: string, actor: string, reason?: string): Promise<ShopRemovalResult> {
+    const shop = await this.prisma.shop.findUnique({ where: { id: shopId } });
+    if (!shop) return { shopId, ok: false, action: 'refused', reason: 'Shop not found.' };
+    if (shop.archivedAt) return { shopId, ok: true, action: 'archived', reason: 'Already archived.' };
+
+    await this.prisma.shop.update({
+      where: { id: shopId },
+      data: { archivedAt: new Date(), archivedBy: actor, archiveReason: reason, planStatus: 'cancelled' },
+    });
+
+    return { shopId, ok: true, action: 'archived' };
+  }
+
+  public async restoreShop(shopId: string): Promise<ShopRemovalResult> {
+    const shop = await this.prisma.shop.findUnique({ where: { id: shopId } });
+    if (!shop) return { shopId, ok: false, action: 'refused', reason: 'Shop not found.' };
+
+    await this.prisma.shop.update({
+      where: { id: shopId },
+      data: { archivedAt: null, archivedBy: null, archiveReason: null, planStatus: 'active' },
+    });
+
+    return { shopId, ok: true, action: 'restored' };
+  }
+
+  public async recordAdminAudit(entry: Omit<AdminAuditEntry, 'id' | 'createdAt'>): Promise<void> {
+    await this.prisma.adminAuditLog.create({
+      data: {
+        id: `aud_${crypto.randomBytes(8).toString('hex')}`,
+        actorId: entry.actorId,
+        actorEmail: entry.actorEmail,
+        action: entry.action,
+        targetType: entry.targetType,
+        targetId: entry.targetId,
+        detail: (entry.detail || {}) as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  public async listAdminAudit(limit = 100): Promise<AdminAuditEntry[]> {
+    const rows = await this.prisma.adminAuditLog.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+
+    return rows.map((r) => ({
+      id: r.id,
+      actorId: r.actorId,
+      actorEmail: r.actorEmail,
+      action: r.action,
+      targetType: r.targetType,
+      targetId: r.targetId,
+      detail: (r.detail as Record<string, unknown>) ?? undefined,
+      createdAt: r.createdAt.toISOString(),
+    }));
   }
 
   public async getAdminOverview(): Promise<AdminOverview> {

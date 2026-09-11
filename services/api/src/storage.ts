@@ -86,6 +86,36 @@ export interface ShopPlan {
   planStatus: 'active' | 'suspended' | 'cancelled';
 }
 
+/** Whether a shop is safe to remove, and how (PRD 21). */
+export interface ShopRemovalSafety {
+  shopId: string;
+  exists: boolean;
+  paidJobCount: number;
+  totalJobCount: number;
+  printerCount: number;
+  /** Hard delete is permitted only when no real money ever moved through it. */
+  canHardDelete: boolean;
+  reason?: string;
+}
+
+export interface ShopRemovalResult {
+  shopId: string;
+  ok: boolean;
+  action: 'deleted' | 'archived' | 'restored' | 'refused';
+  reason?: string;
+}
+
+export interface AdminAuditEntry {
+  id: string;
+  actorId: string;
+  actorEmail: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  detail?: Record<string, unknown>;
+  createdAt: string;
+}
+
 /** One row of the admin shop table (PRD 21). */
 export interface AdminShopSummary {
   shop: Shop;
@@ -99,6 +129,10 @@ export interface AdminShopSummary {
   commissionCents: number;
   jobsRequiringAction: number;
   lastJobAt?: string;
+  archivedAt?: string;
+  archiveReason?: string;
+  /** Mirrors canHardDelete, so the console can offer the right action. */
+  canHardDelete: boolean;
 }
 
 /** Network-wide operational overview (PRD 21, 25). */
@@ -214,7 +248,15 @@ export interface IStorageProvider {
   recordAdminLogin(id: string): Promise<void>;
   getShopPlan(shopId: string): Promise<ShopPlan | undefined>;
   updateShopPlan(shopId: string, plan: Partial<ShopPlan>): Promise<ShopPlan | undefined>;
-  listAdminShopSummaries(limit?: number): Promise<AdminShopSummary[]>;
+  listAdminShopSummaries(limit?: number, includeArchived?: boolean): Promise<AdminShopSummary[]>;
+  /** Checks whether a shop can be hard deleted, without changing anything. */
+  getShopRemovalSafety(shopId: string): Promise<ShopRemovalSafety>;
+  /** Permanently removes a shop and everything cascading from it. */
+  hardDeleteShop(shopId: string): Promise<ShopRemovalResult>;
+  archiveShop(shopId: string, actor: string, reason?: string): Promise<ShopRemovalResult>;
+  restoreShop(shopId: string): Promise<ShopRemovalResult>;
+  recordAdminAudit(entry: Omit<AdminAuditEntry, 'id' | 'createdAt'>): Promise<void>;
+  listAdminAudit(limit?: number): Promise<AdminAuditEntry[]>;
   getAdminOverview(): Promise<AdminOverview>;
 
   recordHeartbeat(printerId: string, paperStatus?: string, deviceId?: string, agentVersion?: string): Promise<PrinterTelemetry>;
@@ -238,6 +280,8 @@ export class MemoryStorage implements IStorageProvider {
   private securityEvents: AgentSecurityEventRecord[] = [];
   private adminUsers = new Map<string, AdminUserRecord & { passwordHash: string }>();
   private shopPlans = new Map<string, ShopPlan>();
+  private archivedShops = new Map<string, { at: string; by: string; reason?: string }>();
+  private auditLog: AdminAuditEntry[] = [];
   private s3Service = new S3StorageService();
 
   /** Appends to the job's lifecycle trail. Never overwrites earlier entries. */
@@ -607,11 +651,15 @@ export class MemoryStorage implements IStorageProvider {
     return updated;
   }
 
-  public async listAdminShopSummaries(limit = 200): Promise<AdminShopSummary[]> {
+  public async listAdminShopSummaries(limit = 200, includeArchived = false): Promise<AdminShopSummary[]> {
     const summaries: AdminShopSummary[] = [];
     const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
 
-    for (const shop of [...this.shops.values()].slice(0, limit)) {
+    const candidates = [...this.shops.values()]
+      .filter((shop) => includeArchived || !this.archivedShops.has(shop.id))
+      .slice(0, limit);
+
+    for (const shop of candidates) {
       const printers = [...this.printers.values()].filter((p) => p.shopId === shop.id);
       const jobs = [...this.printJobs.values()].filter((j) => j.shopId === shop.id);
       const plan = (await this.getShopPlan(shop.id))!;
@@ -645,6 +693,9 @@ export class MemoryStorage implements IStorageProvider {
         commissionCents: Math.round((grossRevenueCents * plan.commissionBps) / 10_000),
         jobsRequiringAction: jobs.filter((j) => j.printState === PrintState.RequiresShopAction).length,
         lastJobAt: lastJob,
+        archivedAt: this.archivedShops.get(shop.id)?.at,
+        archiveReason: this.archivedShops.get(shop.id)?.reason,
+        canHardDelete: jobs.filter((j) => j.paymentState === PaymentState.Paid).length === 0,
       });
     }
 
@@ -673,6 +724,100 @@ export class MemoryStorage implements IStorageProvider {
       jobsRequiringAction: summaries.reduce((n, s) => n + s.jobsRequiringAction, 0),
       shopsByTier,
     };
+  }
+
+  // --- Shop lifecycle (PRD 21) ---
+
+  public async getShopRemovalSafety(shopId: string): Promise<ShopRemovalSafety> {
+    if (!this.shops.has(shopId)) {
+      return {
+        shopId, exists: false, paidJobCount: 0, totalJobCount: 0,
+        printerCount: 0, canHardDelete: false, reason: 'Shop not found.',
+      };
+    }
+
+    const printers = [...this.printers.values()].filter((p) => p.shopId === shopId);
+    const jobs = [...this.printJobs.values()].filter((j) => j.shopId === shopId);
+    const paidJobCount = jobs.filter((j) => j.paymentState === PaymentState.Paid).length;
+    const canHardDelete = paidJobCount === 0;
+
+    return {
+      shopId,
+      exists: true,
+      paidJobCount,
+      totalJobCount: jobs.length,
+      printerCount: printers.length,
+      canHardDelete,
+      reason: canHardDelete
+        ? undefined
+        : `This shop has ${paidJobCount} paid job(s). Deleting it would destroy payment records, so it can only be archived.`,
+    };
+  }
+
+  public async hardDeleteShop(shopId: string): Promise<ShopRemovalResult> {
+    const safety = await this.getShopRemovalSafety(shopId);
+    if (!safety.exists) return { shopId, ok: false, action: 'refused', reason: 'Shop not found.' };
+    if (!safety.canHardDelete) return { shopId, ok: false, action: 'refused', reason: safety.reason };
+
+    const printerIds = [...this.printers.values()]
+      .filter((p) => p.shopId === shopId)
+      .map((p) => p.id);
+
+    for (const job of [...this.printJobs.values()]) {
+      if (job.shopId === shopId) {
+        this.printJobs.delete(job.id);
+        this.jobEvents.delete(job.id);
+      }
+    }
+    for (const id of printerIds) {
+      this.printers.delete(id);
+      this.telemetries.delete(id);
+      for (const [deviceId, device] of this.agentDevices) {
+        if (device.printerId === id) this.agentDevices.delete(deviceId);
+      }
+      for (const [code, pairing] of this.pairingCodes) {
+        if (pairing.printerId === id) this.pairingCodes.delete(code);
+      }
+    }
+
+    this.shops.delete(shopId);
+    this.shopPricings.delete(shopId);
+    this.shopPlans.delete(shopId);
+    this.archivedShops.delete(shopId);
+
+    return { shopId, ok: true, action: 'deleted' };
+  }
+
+  public async archiveShop(shopId: string, actor: string, reason?: string): Promise<ShopRemovalResult> {
+    if (!this.shops.has(shopId)) return { shopId, ok: false, action: 'refused', reason: 'Shop not found.' };
+
+    this.archivedShops.set(shopId, { at: new Date().toISOString(), by: actor, reason });
+    const plan = await this.getShopPlan(shopId);
+    if (plan) this.shopPlans.set(shopId, { ...plan, planStatus: 'cancelled' });
+
+    return { shopId, ok: true, action: 'archived' };
+  }
+
+  public async restoreShop(shopId: string): Promise<ShopRemovalResult> {
+    if (!this.shops.has(shopId)) return { shopId, ok: false, action: 'refused', reason: 'Shop not found.' };
+
+    this.archivedShops.delete(shopId);
+    const plan = await this.getShopPlan(shopId);
+    if (plan) this.shopPlans.set(shopId, { ...plan, planStatus: 'active' });
+
+    return { shopId, ok: true, action: 'restored' };
+  }
+
+  public async recordAdminAudit(entry: Omit<AdminAuditEntry, 'id' | 'createdAt'>): Promise<void> {
+    this.auditLog.unshift({
+      ...entry,
+      id: `aud_${crypto.randomBytes(8).toString('hex')}`,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  public async listAdminAudit(limit = 100): Promise<AdminAuditEntry[]> {
+    return this.auditLog.slice(0, limit);
   }
 
   public async getIdempotencyRecord(key: string): Promise<StoredIdempotencyRecord | undefined> {

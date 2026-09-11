@@ -85,9 +85,9 @@
         ${plan.highlighted ? '<div class="price-badge">Most popular</div>' : ''}
         <h3>${escapeHtml(plan.name)}</h3>
         <p class="price-tagline">${escapeHtml(plan.tagline)}</p>
-        <div class="price-amount">
-          <span class="price-figure">${escapeHtml(plan.price)}</span>
-          <span class="price-cadence">${escapeHtml(plan.cadence)}</span>
+        <div class="plan-price">
+          <span class="plan-figure">${escapeHtml(plan.price)}</span>
+          <span class="plan-cadence">${escapeHtml(plan.cadence)}</span>
         </div>
         <div class="price-commission">+ ${escapeHtml(plan.commission)}</div>
         <ul class="price-features">

@@ -92,20 +92,40 @@
         </div>
 
         <!-- Shop network -->
-        <div class="card card--elevated" style="margin-top: 18px;">
-          <div class="card-header">
+        <div class="card card--elevated admin-panel">
+          <div class="card-header admin-panel-header">
             <div>
               <h2 class="card-title">Shop Network</h2>
               <p class="meta-text">Every registered shop, its plan and its activity.</p>
             </div>
-            <input type="search" id="adminShopFilter" class="form-input admin-filter"
-                   placeholder="Filter by name, email or ID" aria-label="Filter shops">
+            <div class="admin-panel-tools">
+              <input type="search" id="adminShopFilter" class="form-input admin-filter"
+                     placeholder="Filter by name, email or ID" aria-label="Filter shops">
+              <label class="admin-toggle">
+                <input type="checkbox" id="adminShowArchived">
+                <span>Show archived</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Bulk actions, revealed only when rows are selected -->
+          <div class="bulk-bar" id="adminBulkBar" hidden aria-live="polite">
+            <span class="bulk-count" id="adminBulkCount">0 selected</span>
+            <div class="bulk-actions">
+              <button class="btn btn-outline btn-sm" id="btnBulkArchive" type="button">Archive</button>
+              <button class="btn btn-danger btn-sm" id="btnBulkDelete" type="button">Delete permanently</button>
+              <button class="btn btn-outline btn-sm" id="btnBulkRestore" type="button">Restore</button>
+              <button class="btn btn-ghost btn-sm" id="btnBulkClear" type="button">Clear</button>
+            </div>
           </div>
 
           <div class="table-scroll">
             <table class="admin-table">
               <thead>
                 <tr>
+                  <th scope="col" class="col-select">
+                    <input type="checkbox" id="adminSelectAll" aria-label="Select all shops">
+                  </th>
                   <th scope="col">Shop</th>
                   <th scope="col">Plan</th>
                   <th scope="col">Commission</th>
@@ -114,14 +134,29 @@
                   <th scope="col">Gross</th>
                   <th scope="col">Our Cut</th>
                   <th scope="col">Status</th>
+                  <th scope="col">Actions</th>
                 </tr>
               </thead>
               <tbody id="adminShopRows">
-                <tr><td colspan="8" class="meta-text" style="padding:16px;">Loading…</td></tr>
+                <tr><td colspan="10" class="meta-text" style="padding:16px;">Loading…</td></tr>
               </tbody>
             </table>
           </div>
         </div>
+        <!-- Operator audit trail -->
+        <div class="card card--elevated admin-panel">
+          <div class="card-header admin-panel-header">
+            <div>
+              <h2 class="card-title">Recent Admin Activity</h2>
+              <p class="meta-text">Destructive and commercial actions, with who did them.</p>
+            </div>
+            <button class="btn btn-outline btn-sm" id="btnLoadAudit" type="button">Load</button>
+          </div>
+          <div class="audit-list" id="adminAuditList">
+            <p class="meta-text">Not loaded.</p>
+          </div>
+        </div>
+
       </section>
 
     </div>

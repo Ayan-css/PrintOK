@@ -26,6 +26,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
   const baseUrl = `http://localhost:${address.port}`;
 
   let createdPrinterId = '';
+  let createdShopId = '';
   let agentApiKey = '';
   let createdJobId = '';
 
@@ -49,6 +50,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.ok(data.printer.apiKey.startsWith('prn_key_'));
 
     createdPrinterId = data.printer.id;
+    createdShopId = data.shop.id;
     agentApiKey = data.printer.apiKey;
   });
 
@@ -606,6 +608,135 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const checked = (await check.json()) as any;
     assert.strictEqual(checked.job.paymentState, PaymentState.Pending);
     assert.strictEqual(checked.job.printState, PrintState.AwaitingPayment);
+  });
+
+  await t.test('19. A shop with paid jobs cannot be deleted, only archived', async () => {
+    const login = await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'ops@printok.test', password: 'CorrectHorse99x' }),
+    });
+    const { token } = (await login.json()) as any;
+    const auth = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+    // The suite's first shop has paid jobs by this point.
+    const safetyRes = await fetch(
+      `${baseUrl}/api/admin/shops/${createdShopId}/removal-safety`, { headers: auth });
+    const { safety } = (await safetyRes.json()) as any;
+    assert.ok(safety.paidJobCount > 0, 'precondition: this shop has taken payment');
+    assert.strictEqual(safety.canHardDelete, false);
+
+    // Deleting it would destroy payment records, so it must be refused.
+    const del = await fetch(`${baseUrl}/api/admin/shops/remove`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ shopIds: [createdShopId], mode: 'delete' }),
+    });
+    const delBody = (await del.json()) as any;
+    assert.strictEqual(delBody.succeeded, 0);
+    assert.strictEqual(delBody.results[0].action, 'refused');
+    assert.match(delBody.results[0].reason, /paid job/i);
+
+    // The shop must still be there.
+    const stillThere = await fetch(`${baseUrl}/api/shops/${createdShopId}/pricing`);
+    assert.strictEqual(stillThere.status, 200, 'a refused delete must not remove anything');
+
+    // Archiving is allowed, and hides it from the default listing.
+    const arch = await fetch(`${baseUrl}/api/admin/shops/remove`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ shopIds: [createdShopId], mode: 'archive', reason: 'test cleanup' }),
+    });
+    assert.strictEqual(((await arch.json()) as any).succeeded, 1);
+
+    const listed = (await (await fetch(`${baseUrl}/api/admin/shops`, { headers: auth })).json()) as any;
+    assert.ok(!listed.shops.some((x: any) => x.shop.id === createdShopId),
+      'archived shops are hidden by default');
+
+    const withArchived = (await (await fetch(
+      `${baseUrl}/api/admin/shops?includeArchived=true`, { headers: auth })).json()) as any;
+    const archivedRow = withArchived.shops.find((x: any) => x.shop.id === createdShopId);
+    assert.ok(archivedRow?.archivedAt, 'and are visible when explicitly requested');
+
+    // Restore puts it back.
+    const restore = await fetch(`${baseUrl}/api/admin/shops/remove`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ shopIds: [createdShopId], mode: 'restore' }),
+    });
+    assert.strictEqual(((await restore.json()) as any).succeeded, 1);
+  });
+
+  await t.test('20. Test shops delete cleanly, in bulk, and are audited', async () => {
+    const login = await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'ops@printok.test', password: 'CorrectHorse99x' }),
+    });
+    const { token } = (await login.json()) as any;
+    const auth = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+    // Three shops that never took payment — the case this feature exists for.
+    const throwaway: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const res = await fetch(`${baseUrl}/api/shops/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shopName: `Throwaway ${i}`, ownerEmail: `throwaway${i}@test.com`, printerName: 'P',
+        }),
+      });
+      throwaway.push(((await res.json()) as any).shop.id);
+    }
+
+    const del = await fetch(`${baseUrl}/api/admin/shops/remove`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ shopIds: throwaway, mode: 'delete', reason: 'test data' }),
+    });
+    const body = (await del.json()) as any;
+    assert.strictEqual(body.succeeded, 3, 'all three unpaid shops delete');
+    assert.strictEqual(body.refused, 0);
+
+    // Gone from the listing.
+    const listed = (await (await fetch(
+      `${baseUrl}/api/admin/shops?includeArchived=true`, { headers: auth })).json()) as any;
+    for (const id of throwaway) {
+      assert.ok(!listed.shops.some((x: any) => x.shop.id === id), `${id} must be gone`);
+    }
+
+    // And recorded, so a deletion is explainable after the row is gone.
+    const audit = (await (await fetch(`${baseUrl}/api/admin/audit`, { headers: auth })).json()) as any;
+    const deletions = audit.entries.filter((e: any) => e.action === 'SHOP_DELETED');
+    assert.ok(deletions.length >= 3);
+    assert.strictEqual(deletions[0].actorEmail, 'ops@printok.test');
+    assert.ok(deletions[0].detail, 'the audit entry records what was removed');
+  });
+
+  await t.test('21. A mixed bulk delete removes what it can and refuses the rest', async () => {
+    const login = await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'ops@printok.test', password: 'CorrectHorse99x' }),
+    });
+    const { token } = (await login.json()) as any;
+    const auth = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+    const res = await fetch(`${baseUrl}/api/shops/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopName: 'Unpaid', ownerEmail: 'unpaid@test.com', printerName: 'P' }),
+    });
+    const unpaidShopId = ((await res.json()) as any).shop.id;
+
+    // One deletable, one protected: the protected one must not block the other.
+    const del = await fetch(`${baseUrl}/api/admin/shops/remove`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ shopIds: [unpaidShopId, createdShopId], mode: 'delete' }),
+    });
+    const body = (await del.json()) as any;
+    assert.strictEqual(body.succeeded, 1);
+    assert.strictEqual(body.refused, 1);
+
+    const byId = Object.fromEntries(body.results.map((r: any) => [r.shopId, r.action]));
+    assert.strictEqual(byId[unpaidShopId], 'deleted');
+    assert.strictEqual(byId[createdShopId], 'refused');
   });
 
   await t.test('13. An unknown device token is rejected', async () => {

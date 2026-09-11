@@ -111,6 +111,14 @@
   // --------------------------------------------------------------- console ---
 
   let allShops = [];
+  const selected = new Set();
+
+  function updateBulkBar() {
+    const bar = $('adminBulkBar');
+    bar.hidden = selected.size === 0;
+    $('adminBulkCount').textContent =
+      `${selected.size} shop${selected.size === 1 ? '' : 's'} selected`;
+  }
 
   function renderOverview(o) {
     $('statShops').textContent = o.totalShops;
@@ -133,7 +141,7 @@
     const tbody = $('adminShopRows');
 
     if (!shops.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="meta-text" style="padding:16px;">No shops match.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" class="meta-text" style="padding:24px;">No shops match.</td></tr>';
       return;
     }
 
@@ -148,7 +156,12 @@
         : (online ? 'badge-success' : 'badge-muted');
 
       return `
-        <tr>
+        <tr class="${s.archivedAt ? 'row--archived' : ''}">
+          <td class="col-select">
+            <input type="checkbox" data-select="${escapeHtml(shop.id)}"
+                   ${selected.has(shop.id) ? 'checked' : ''}
+                   aria-label="Select ${escapeHtml(shop.name)}">
+          </td>
           <td>
             <div class="cell-title">${escapeHtml(shop.name)}</div>
             <div class="meta-text">${escapeHtml(shop.ownerEmail)}</div>
@@ -183,8 +196,101 @@
               : ''}
             <div class="meta-text">last job ${escapeHtml(relativeTime(s.lastJobAt))}</div>
           </td>
+          <td>
+            <div class="row-actions">
+              ${s.archivedAt
+                ? `<button class="btn btn-outline btn-sm" data-restore="${escapeHtml(shop.id)}" type="button">Restore</button>`
+                : `<button class="btn btn-outline btn-sm" data-archive="${escapeHtml(shop.id)}" type="button">Archive</button>`}
+              ${s.canHardDelete
+                ? `<button class="btn btn-danger btn-sm" data-delete="${escapeHtml(shop.id)}" type="button">Delete</button>`
+                : `<span class="meta-text protected-note" title="This shop has taken payment, so deleting it would destroy payment records.">Protected</span>`}
+            </div>
+          </td>
         </tr>`;
     }).join('');
+
+    // Re-rendering replaces the checkboxes, so reflect the current selection.
+    tbody.querySelectorAll('[data-select]').forEach((box) => {
+      box.checked = selected.has(box.getAttribute('data-select'));
+    });
+    updateBulkBar();
+  }
+
+  /**
+   * Applies a removal to one or more shops.
+   *
+   * Deletion is irreversible, so the confirmation names the shops and states
+   * plainly what will be lost rather than asking "are you sure?".
+   */
+  async function removeShops(shopIds, mode, options = {}) {
+    if (!shopIds.length) return;
+
+    const names = shopIds
+      .map((id) => allShops.find((x) => x.shop.id === id)?.shop.name || id)
+      .slice(0, 8);
+    const more = shopIds.length > names.length ? ` and ${shopIds.length - names.length} more` : '';
+
+    if (mode === 'delete') {
+      const ok = window.confirm(
+        `Permanently delete ${shopIds.length} shop${shopIds.length === 1 ? '' : 's'}?\n\n` +
+        `${names.join(', ')}${more}\n\n` +
+        'Their printers, print jobs and history will be destroyed. This cannot be undone.\n' +
+        'Shops that have taken a payment will be refused automatically.'
+      );
+      if (!ok) return;
+    } else if (mode === 'archive' && !options.skipConfirm) {
+      const ok = window.confirm(
+        `Archive ${shopIds.length} shop${shopIds.length === 1 ? '' : 's'}?\n\n` +
+        `${names.join(', ')}${more}\n\nThey will be hidden but keep all their data. You can restore them later.`
+      );
+      if (!ok) return;
+    }
+
+    try {
+      const body = await api('/api/admin/shops/remove', {
+        method: 'POST',
+        body: JSON.stringify({ shopIds, mode, reason: options.reason }),
+      });
+
+      const refused = body.results.filter((r) => !r.ok);
+      if (body.succeeded) {
+        toast('success', `${body.succeeded} shop${body.succeeded === 1 ? '' : 's'} ${mode}d`,
+          refused.length ? `${refused.length} were refused.` : 'Done.');
+      }
+      // Every refusal has a specific reason; surface the first one rather than
+      // a generic failure.
+      if (refused.length) {
+        toast('warning', `${refused.length} refused`, refused[0].reason || 'Not permitted.');
+      }
+
+      selected.clear();
+      await loadConsole();
+    } catch (err) {
+      toast('danger', 'Action failed', err.message);
+    }
+  }
+
+  async function loadAudit() {
+    const list = $('adminAuditList');
+    try {
+      const { entries } = await api('/api/admin/audit?limit=50');
+      if (!entries.length) {
+        list.innerHTML = '<p class="meta-text">No admin activity recorded yet.</p>';
+        return;
+      }
+
+      list.innerHTML = entries.map((e) => `
+        <div class="audit-row">
+          <span class="badge ${e.action === 'SHOP_DELETED' ? 'badge-danger' : 'badge-muted'}">
+            ${escapeHtml(e.action.replace(/_/g, ' ').toLowerCase())}
+          </span>
+          <span class="mono">${escapeHtml(e.targetId)}</span>
+          <span class="meta-text">by ${escapeHtml(e.actorEmail)}</span>
+          <span class="meta-text">${escapeHtml(relativeTime(e.createdAt))}</span>
+        </div>`).join('');
+    } catch (err) {
+      list.innerHTML = `<p class="meta-text">Could not load: ${escapeHtml(err.message)}</p>`;
+    }
   }
 
   function applyFilter() {
@@ -199,9 +305,10 @@
 
   async function loadConsole() {
     try {
+      const includeArchived = $('adminShowArchived').checked;
       const [{ overview }, { shops }] = await Promise.all([
         api('/api/admin/overview'),
-        api('/api/admin/shops'),
+        api(`/api/admin/shops?includeArchived=${includeArchived}`),
       ]);
       allShops = shops;
       renderOverview(overview);
@@ -289,9 +396,51 @@
 
     $('btnAdminRefresh').addEventListener('click', loadConsole);
     $('adminShopFilter').addEventListener('input', applyFilter);
+    $('adminShowArchived').addEventListener('change', loadConsole);
+    $('btnLoadAudit').addEventListener('click', loadAudit);
+
+    $('adminSelectAll').addEventListener('change', (event) => {
+      // Only the rows currently visible after filtering.
+      document.querySelectorAll('[data-select]').forEach((box) => {
+        const id = box.getAttribute('data-select');
+        if (event.target.checked) selected.add(id); else selected.delete(id);
+        box.checked = event.target.checked;
+      });
+      updateBulkBar();
+    });
+
+    const bulk = (mode) => () => removeShops([...selected], mode);
+    $('btnBulkArchive').addEventListener('click', bulk('archive'));
+    $('btnBulkDelete').addEventListener('click', bulk('delete'));
+    $('btnBulkRestore').addEventListener('click', bulk('restore'));
+    $('btnBulkClear').addEventListener('click', () => {
+      selected.clear();
+      document.querySelectorAll('[data-select]').forEach((b) => { b.checked = false; });
+      $('adminSelectAll').checked = false;
+      updateBulkBar();
+    });
+
+    $('adminShopRows').addEventListener('click', (event) => {
+      const del = event.target.closest('[data-delete]');
+      if (del) return removeShops([del.getAttribute('data-delete')], 'delete');
+
+      const arch = event.target.closest('[data-archive]');
+      if (arch) return removeShops([arch.getAttribute('data-archive')], 'archive');
+
+      const rest = event.target.closest('[data-restore]');
+      if (rest) return removeShops([rest.getAttribute('data-restore')], 'restore');
+    });
 
     // Plan edits are delegated, so re-rendering the table never loses handlers.
     $('adminShopRows').addEventListener('change', (event) => {
+      const selectBox = event.target.closest('[data-select]');
+      if (selectBox) {
+        const id = selectBox.getAttribute('data-select');
+        if (selectBox.checked) selected.add(id); else selected.delete(id);
+        updateBulkBar();
+        return;
+      }
+
       const tierSelect = event.target.closest('[data-plan-tier]');
       if (tierSelect) {
         return savePlan(tierSelect.getAttribute('data-plan-tier'), { planTier: tierSelect.value });

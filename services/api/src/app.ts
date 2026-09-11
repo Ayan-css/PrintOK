@@ -441,7 +441,117 @@ export function createApp(
 
     try {
       const limit = Math.min(Number(req.query.limit) || 200, 500);
-      return res.json({ shops: await storage.listAdminShopSummaries(limit) });
+      const includeArchived = req.query.includeArchived === 'true';
+      return res.json({ shops: await storage.listAdminShopSummaries(limit, includeArchived) });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Whether a shop can be hard deleted, without changing anything.
+   * The console calls this before offering a destructive action.
+   */
+  app.get('/api/admin/shops/:shopId/removal-safety', async (req: Request, res: Response) => {
+    const admin = await authenticateAdmin(req, res);
+    if (!admin) return;
+
+    try {
+      return res.json({ safety: await storage.getShopRemovalSafety(req.params.shopId) });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Removes shops (PRD 21).
+   *
+   * Handles one or many in the same call, so bulk cleanup and a single deletion
+   * share one guarded path rather than two that can drift.
+   *
+   * mode 'delete'  - permanent, and refused for any shop that has taken a paid
+   *                  job, because that would destroy payment records
+   * mode 'archive' - hides the shop but keeps everything, the only safe option
+   *                  once real money has moved through it
+   * mode 'restore' - undoes an archive
+   *
+   * A bulk request is not atomic on purpose: one shop being undeletable must not
+   * prevent the rest from being cleaned up. Every outcome is reported per shop.
+   */
+  app.post('/api/admin/shops/remove', async (req: Request, res: Response) => {
+    const admin = await authenticateAdmin(req, res);
+    if (!admin) return;
+
+    if (!canWrite(admin.role)) {
+      return res.status(403).json({ error: 'Your role is read-only.' });
+    }
+
+    try {
+      const { shopIds, mode, reason } = req.body || {};
+      const ids: string[] = Array.isArray(shopIds) ? shopIds : shopIds ? [shopIds] : [];
+
+      if (ids.length === 0) {
+        return res.status(400).json({ error: 'shopIds is required.' });
+      }
+      if (ids.length > 100) {
+        return res.status(400).json({ error: 'At most 100 shops can be removed in one request.' });
+      }
+      if (!['delete', 'archive', 'restore'].includes(mode)) {
+        return res.status(400).json({ error: "mode must be 'delete', 'archive' or 'restore'." });
+      }
+
+      const results = [];
+      for (const shopId of ids) {
+        // Capture what is about to be destroyed, so the audit entry still
+        // explains the deletion after the row is gone.
+        const safety = await storage.getShopRemovalSafety(shopId);
+
+        let result;
+        if (mode === 'delete') {
+          result = await storage.hardDeleteShop(shopId);
+        } else if (mode === 'archive') {
+          result = await storage.archiveShop(shopId, admin.email, reason);
+        } else {
+          result = await storage.restoreShop(shopId);
+        }
+
+        if (result.ok) {
+          await storage.recordAdminAudit({
+            actorId: admin.sub,
+            actorEmail: admin.email,
+            action: `SHOP_${result.action.toUpperCase()}`,
+            targetType: 'shop',
+            targetId: shopId,
+            detail: {
+              reason,
+              paidJobCount: safety.paidJobCount,
+              totalJobCount: safety.totalJobCount,
+              printerCount: safety.printerCount,
+            },
+          });
+        }
+
+        results.push(result);
+      }
+
+      return res.json({
+        results,
+        succeeded: results.filter((r) => r.ok).length,
+        refused: results.filter((r) => !r.ok).length,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /** Operator action history (PRD 22). */
+  app.get('/api/admin/audit', async (req: Request, res: Response) => {
+    const admin = await authenticateAdmin(req, res);
+    if (!admin) return;
+
+    try {
+      const limit = Math.min(Number(req.query.limit) || 100, 500);
+      return res.json({ entries: await storage.listAdminAudit(limit) });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -477,6 +587,15 @@ export function createApp(
         planTier, commissionBps: commissionBps !== undefined ? Number(commissionBps) : undefined, planStatus,
       });
       if (!plan) return res.status(404).json({ error: 'Shop not found.' });
+
+      await storage.recordAdminAudit({
+        actorId: admin.sub,
+        actorEmail: admin.email,
+        action: 'PLAN_CHANGED',
+        targetType: 'shop',
+        targetId: req.params.shopId,
+        detail: { planTier, commissionBps, planStatus },
+      });
 
       return res.json({ plan });
     } catch (err: any) {

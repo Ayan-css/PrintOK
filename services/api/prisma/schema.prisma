@@ -46,6 +46,13 @@ model Shop {
   /// active | suspended | cancelled
   planStatus        String       @default("active")
 
+  /// Soft delete. An archived shop is hidden from normal listings but keeps its
+  /// jobs and payment records, which is the only safe option once real money
+  /// has moved through it.
+  archivedAt        DateTime?
+  archivedBy        String?
+  archiveReason     String?
+
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt @default(now())
 
@@ -54,6 +61,7 @@ model Shop {
   pricing           ShopPricing?
 
   @@index([ownerEmail])
+  @@index([archivedAt])
 }
 
 /// Per-shop rate card. Previously computed from hardcoded constants, which made
@@ -319,4 +327,26 @@ model AdminUser {
   updatedAt    DateTime  @updatedAt @default(now())
 
   @@index([email])
+}
+
+
+/// Record of destructive or commercially significant operator actions (PRD 21, 22).
+///
+/// Deliberately not cascaded from the thing it describes: the whole point is to
+/// survive the deletion of its target.
+model AdminAuditLog {
+  id         String   @id
+  actorId    String
+  actorEmail String
+  /// SHOP_ARCHIVED | SHOP_RESTORED | SHOP_DELETED | PLAN_CHANGED
+  action     String
+  targetType String   @default("shop")
+  targetId   String
+  /// Snapshot of what was removed, so a deletion is explainable afterwards.
+  detail     Json?
+  createdAt  DateTime @default(now())
+
+  @@index([targetId, createdAt])
+  @@index([action, createdAt])
+  @@index([actorId, createdAt])
 }
