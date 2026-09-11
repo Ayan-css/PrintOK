@@ -1,0 +1,47 @@
+# Render Blueprint for the PrintOk Cloud API.
+#
+# The service was originally configured by hand in the Render dashboard; this
+# file records the intended configuration so it is reviewable in git. Applying
+# it as a Blueprint is optional — `services/api`'s `start` script runs
+# `prisma migrate deploy` on every boot either way, so a deploy can never serve
+# application code against an un-migrated database.
+
+services:
+  - type: web
+    name: prinok-api
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm install && npm run build
+    startCommand: npm start --workspace=@printok/api
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Neon connection string. Use a pooled URL for the app.
+      - key: DATABASE_URL
+        sync: false
+      - key: API_BASE_URL
+        sync: false
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_REGION
+        sync: false
+      - key: S3_BUCKET_NAME
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: AGENT_PAIRING_SECRET
+        sync: false
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      - key: PRINT_AGENT_REPO
+        value: Ayan-css/PrintOK

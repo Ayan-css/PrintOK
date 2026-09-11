@@ -1,5 +1,13 @@
+-- Baseline of the schema as it existed before migrations were introduced.
+--
+-- The production database predates Prisma Migrate and therefore has no
+-- _prisma_migrations table, so the very first `migrate deploy` would try to
+-- create tables that already exist. Every statement here is written to be
+-- idempotent, making this migration a no-op against the existing database and a
+-- normal create against a fresh one (e.g. a new Neon branch).
+
 -- CreateTable
-CREATE TABLE "Shop" (
+CREATE TABLE IF NOT EXISTS "Shop" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "ownerEmail" TEXT NOT NULL,
@@ -13,7 +21,7 @@ CREATE TABLE "Shop" (
 );
 
 -- CreateTable
-CREATE TABLE "Printer" (
+CREATE TABLE IF NOT EXISTS "Printer" (
     "id" TEXT NOT NULL,
     "shopId" TEXT NOT NULL,
     "printerName" TEXT NOT NULL,
@@ -27,7 +35,7 @@ CREATE TABLE "Printer" (
 );
 
 -- CreateTable
-CREATE TABLE "PrintJob" (
+CREATE TABLE IF NOT EXISTS "PrintJob" (
     "id" TEXT NOT NULL,
     "printerId" TEXT NOT NULL,
     "fileName" TEXT NOT NULL,
@@ -48,11 +56,23 @@ CREATE TABLE "PrintJob" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Printer_apiKey_key" ON "Printer"("apiKey");
+CREATE UNIQUE INDEX IF NOT EXISTS "Printer_apiKey_key" ON "Printer"("apiKey");
 
 -- AddForeignKey
-ALTER TABLE "Printer" ADD CONSTRAINT "Printer_shopId_fkey" FOREIGN KEY ("shopId") REFERENCES "Shop"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'Printer_shopId_fkey'
+  ) THEN
+    ALTER TABLE "Printer" ADD CONSTRAINT "Printer_shopId_fkey" FOREIGN KEY ("shopId") REFERENCES "Shop"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "PrintJob" ADD CONSTRAINT "PrintJob_printerId_fkey" FOREIGN KEY ("printerId") REFERENCES "Printer"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'PrintJob_printerId_fkey'
+  ) THEN
+    ALTER TABLE "PrintJob" ADD CONSTRAINT "PrintJob_printerId_fkey" FOREIGN KEY ("printerId") REFERENCES "Printer"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
 
