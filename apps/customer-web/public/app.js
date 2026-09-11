@@ -124,20 +124,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const ShopContext = {
     read() {
-      const params = new URLSearchParams(window.location.search);
-      const fromUrl = {
-        shopId: params.get('shop'),
-        printerId: params.get('printer'),
-      };
-      if (fromUrl.shopId || fromUrl.printerId) return fromUrl;
-
+      let stored = { shopId: null, printerId: null };
       try {
         const raw = localStorage.getItem('printok.shopContext');
-        if (raw) return JSON.parse(raw);
+        if (raw) stored = { ...stored, ...JSON.parse(raw) };
       } catch {
         // localStorage can be unavailable (private mode / blocked cookies)
       }
-      return { shopId: null, printerId: null };
+
+      // The URL overrides what is stored, but only field by field. Opening the
+      // dashboard with just ?printer=<id> used to discard the stored shop id
+      // along with it, which left the whole dashboard in its no-shop state.
+      const params = new URLSearchParams(window.location.search);
+      return {
+        shopId: params.get('shop') || stored.shopId || null,
+        printerId: params.get('printer') || stored.printerId || null,
+      };
     },
     write(ctx) {
       try {
@@ -436,6 +438,69 @@ document.addEventListener('DOMContentLoaded', () => {
   //  2. MERCHANT DASHBOARD DRIVER (/dashboard, dashboard.html)
   // ============================================================
   if (isDashboardPage) {
+    // --- Theme --------------------------------------------------------------
+    // The <head> has already applied any stored choice before first paint; this
+    // only keeps the button in sync with it and records changes.
+    const ThemeToggle = {
+      KEY: 'printok.theme',
+      stored() {
+        try { return localStorage.getItem(this.KEY); } catch { return null; }
+      },
+      /** What is actually on screen, whether chosen here or inherited from the OS. */
+      current() {
+        const chosen = document.documentElement.getAttribute('data-theme');
+        if (chosen === 'dark' || chosen === 'light') return chosen;
+        return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+          ? 'dark'
+          : 'light';
+      },
+      apply(theme, { persist = true } = {}) {
+        document.documentElement.setAttribute('data-theme', theme);
+        if (persist) {
+          try { localStorage.setItem(this.KEY, theme); } catch { /* private browsing */ }
+        }
+        this.render(theme);
+      },
+      render(theme) {
+        const btn = document.getElementById('btnThemeToggle');
+        const icon = document.getElementById('themeToggleIcon');
+        const label = document.getElementById('themeToggleLabel');
+        const dark = theme === 'dark';
+        // The button offers the theme you would switch *to*.
+        if (icon) icon.textContent = dark ? '☀️' : '🌙';
+        if (label) label.textContent = dark ? 'Light' : 'Dark';
+        if (btn) {
+          btn.setAttribute('aria-pressed', String(dark));
+          btn.setAttribute('title', dark ? 'Switch to light' : 'Switch to dark');
+        }
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', dark ? '#121210' : '#0d0d0d');
+      },
+      init() {
+        this.render(this.current());
+
+        const btn = document.getElementById('btnThemeToggle');
+        if (btn) {
+          btn.addEventListener('click', () => {
+            this.apply(this.current() === 'dark' ? 'light' : 'dark');
+          });
+        }
+
+        // Follow the OS while the shop has expressed no preference of its own.
+        // Not persisted: that would turn an OS change into a standing choice
+        // and stop the dashboard following the OS from then on.
+        if (window.matchMedia) {
+          const os = window.matchMedia('(prefers-color-scheme: dark)');
+          const onChange = (e) => {
+            if (!this.stored()) this.apply(e.matches ? 'dark' : 'light', { persist: false });
+          };
+          if (os.addEventListener) os.addEventListener('change', onChange);
+          else if (os.addListener) os.addListener(onChange);
+        }
+      },
+    };
+    ThemeToggle.init();
+
     // --- Sign-in gate -------------------------------------------------------
     const loginView = document.getElementById('merchantLoginView');
     const dashboardView = document.getElementById('dashboardView');
@@ -529,6 +594,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const ctx = ShopContext.read();
     let dashShopId = ctx.shopId || null;
     let dashPrinterId = ctx.printerId || null;
+    // Resolved once from the session by resolveIdentity(), then reused so the
+    // 8-second refresh does not re-fetch it.
+    let identity = { shop: null, printer: null };
     let queueFilter = 'all';
     let cachedJobs = [];
     let shopUpiId = null; // the shop's own payout UPI wins over the API's placeholder
@@ -582,13 +650,20 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     });
 
-    if (!dashShopId) {
-      showNoShopState();
-    } else {
+    // Ask the session which shop this is before deciding there isn't one. The
+    // URL and localStorage are hints, not the authority, and a merchant who has
+    // just signed in on a new browser has neither.
+    (async () => {
+      if (!dashShopId || !dashPrinterId) await resolveIdentity();
+
+      if (!dashShopId) {
+        showNoShopState();
+        return;
+      }
       loadDashboard();
       dashTimer = setInterval(loadDashboard, 8000);
       window.addEventListener('beforeunload', () => clearInterval(dashTimer));
-    }
+    })();
 
     const btnRefreshQueue = document.getElementById('btnRefreshQueue');
     if (btnRefreshQueue) {
@@ -967,26 +1042,55 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
+    /**
+     * Resolves which shop and printer this dashboard belongs to, from the session.
+     *
+     * The dashboard used to take its shop id only from the URL or localStorage,
+     * and its printer from the shop's most recent job. A merchant who simply
+     * signs in has no such URL, and a shop that has never printed has no such
+     * job — so for every newly registered shop dashShopId was null, the boot
+     * gate dropped straight into the "No Shop Connected" state, and nothing was
+     * ever loaded. The session token knows which shop it belongs to, so ask the
+     * API instead of guessing from the client's leftovers.
+     */
+    async function resolveIdentity() {
+      try {
+        const res = await shopFetch('/api/merchant/me');
+        if (!res.ok) return identity;
+
+        const me = await res.json();
+        const printers = me.printers || [];
+        identity.shop = me.shop || null;
+        // Honour an explicitly requested printer for shops that have several;
+        // otherwise take the first, which every shop gets when it registers.
+        identity.printer =
+          printers.find(p => p.id === dashPrinterId) || printers[0] || null;
+
+        if (identity.shop) dashShopId = identity.shop.id;
+        if (identity.printer) dashPrinterId = identity.printer.id;
+        if (dashShopId) ShopContext.write({ shopId: dashShopId, printerId: dashPrinterId });
+      } catch {
+        // keep whatever context we already had
+      }
+      return identity;
+    }
+
     /** Populates the shop header, QR tab and agent pairing panel — all previously stuck on "--". */
     async function loadShopIdentity() {
-      if (!dashPrinterId) {
-        // Derive the printer from the shop's most recent job when it wasn't stored.
-        try {
-          const res = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/jobs?limit=1`);
-          if (res.ok) {
-            const data = await res.json();
-            if (data.jobs && data.jobs[0]) dashPrinterId = data.jobs[0].printerId;
-          }
-        } catch {
-          // leave the pairing panel empty
-        }
-      }
+      let { shop, printer } = identity;
+      if (!shop || !printer) ({ shop, printer } = await resolveIdentity());
       if (!dashPrinterId) return;
 
       try {
-        const res = await fetch(`${API_BASE}/api/printers/${encodeURIComponent(dashPrinterId)}`);
-        if (!res.ok) return;
-        const { printer, shop } = await res.json();
+        if (!printer || !shop) {
+          // Last resort when /api/merchant/me could not be reached. This record
+          // is public, so it carries the name and status but no agent key.
+          const res = await fetch(`${API_BASE}/api/printers/${encodeURIComponent(dashPrinterId)}`);
+          if (!res.ok) return;
+          const body = await res.json();
+          printer = printer || body.printer;
+          shop = shop || body.shop;
+        }
 
         const set = (id, val) => {
           const el = document.getElementById(id);

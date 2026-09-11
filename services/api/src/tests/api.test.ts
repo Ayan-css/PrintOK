@@ -10,6 +10,12 @@ import { PLAN_CATALOGUE, PAYMENT_GATEWAY_FEE_BPS, calculateShopNetCents } from '
 const TEST_WEBHOOK_SECRET = 'printok_test_webhook_secret';
 process.env.RAZORPAY_WEBHOOK_SECRET = TEST_WEBHOOK_SECRET;
 
+// Without this every route that issues or checks a session answers 500
+// ("JWT_SECRET is not configured"), which silently disabled the merchant and
+// admin coverage below: those tests were asserting against error responses
+// rather than the behaviour they describe.
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'printok_test_jwt_secret_key';
+
 /** Signs the exact bytes that will be sent, as Razorpay does. */
 function signWebhook(rawBody: string): string {
   return crypto.createHmac('sha256', TEST_WEBHOOK_SECRET).update(rawBody).digest('hex');
@@ -1064,6 +1070,70 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(config.PrintOk.ApiBaseUrl, config.PrintOkApiUrl);
     assert.strictEqual(config.PrintOk.ApiKey, config.AgentApiKey);
     assert.strictEqual(config.PrintOk.PrinterId, createdPrinterId);
+  });
+
+  await t.test('28. A brand new shop can find itself from its session alone', async () => {
+    // The dashboard has no shop id of its own when a merchant signs in: not in
+    // the URL, and nothing in localStorage on a fresh browser. It asks this
+    // endpoint who it is. If that answer is incomplete the dashboard falls back
+    // to its "No Shop Connected" state and shows nothing at all — which is what
+    // every newly registered shop used to see, since the printer was previously
+    // derived from the shop's most recent job and a new shop has none.
+    const signup = await fetch(`${baseUrl}/api/merchant/signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopName: 'Fresh Prints', ownerEmail: 'fresh@example.com',
+        printerName: 'Brother HL-L2350DW', password: 'FreshOwner77xy',
+      }),
+    });
+    assert.strictEqual(signup.status, 201);
+    const { token } = (await signup.json()) as any;
+
+    const me = await fetch(`${baseUrl}/api/merchant/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.strictEqual(me.status, 200);
+    const body = (await me.json()) as any;
+
+    assert.ok(body.shop && body.shop.id, 'the session must resolve to a shop');
+    assert.strictEqual(body.shop.name, 'Fresh Prints');
+
+    // A shop that has never printed still has the printer it registered with,
+    // and the dashboard needs all of this to render its QR and pairing panels.
+    assert.ok(Array.isArray(body.printers) && body.printers.length > 0,
+      'a shop with no jobs must still report its printer');
+    const [printer] = body.printers;
+    assert.strictEqual(printer.printerName, 'Brother HL-L2350DW');
+    assert.ok(printer.qrCodeDataUrl, 'the QR tab needs the printer QR');
+    assert.ok(printer.apiKey.startsWith('prn_key_'),
+      'the pairing panel needs the agent key, which only this route may give it');
+  });
+
+  await t.test('29. The public printer record leaks neither the agent key nor the owner', async () => {
+    // This endpoint has to stay public — the printer id is printed on the QR
+    // poster and the customer page reads the shop name and status from it. So
+    // it must carry nothing an attacker could use. It used to return the agent
+    // API key, which is all that is needed to poll a shop's queue, claim its
+    // jobs and report false statuses, along with the owner's email address.
+    const res = await fetch(`${baseUrl}/api/printers/${createdPrinterId}`);
+    assert.strictEqual(res.status, 200);
+    const body = (await res.json()) as any;
+
+    const serialised = JSON.stringify(body);
+    assert.ok(!serialised.includes(agentApiKey),
+      'the agent API key must never appear in an unauthenticated response');
+    assert.ok(!serialised.includes('owner@metrocopy.com'),
+      'the owner email must never appear in an unauthenticated response');
+    assert.strictEqual(body.printer.apiKey, undefined);
+    assert.strictEqual(body.shop.ownerEmail, undefined);
+
+    // What the customer page legitimately needs is still there.
+    assert.strictEqual(body.printer.id, createdPrinterId);
+    assert.ok(body.printer.printerName);
+    assert.ok(body.printer.status);
+    assert.strictEqual(body.shop.id, createdShopId);
+    assert.ok(body.shop.name);
   });
 
   server.close();

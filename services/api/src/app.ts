@@ -482,7 +482,26 @@ export function createApp(
       }
       const shop = await storage.getShop(printer.shopId);
       const telemetry = await storage.getPrinterTelemetry(printerId);
-      return res.json({ printer, shop, telemetry });
+
+      // This endpoint is necessarily public: the printer id is printed on the
+      // QR poster and the customer page needs the shop name and status. It must
+      // therefore expose nothing an attacker could use.
+      //
+      // It previously returned the printer's agent API key, which authenticates
+      // the print agent — so anyone who scanned a poster could poll that shop's
+      // queue, claim its jobs and report false statuses. It also returned the
+      // owner's email address.
+      return res.json({
+        printer: {
+          id: printer.id,
+          shopId: printer.shopId,
+          printerName: printer.printerName,
+          status: printer.status,
+          qrTargetUrl: printer.qrTargetUrl,
+        },
+        shop: shop ? { id: shop.id, name: shop.name } : undefined,
+        telemetry,
+      });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }

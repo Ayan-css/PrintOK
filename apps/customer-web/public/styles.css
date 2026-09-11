@@ -4,6 +4,8 @@
 
 /* --- DESIGN TOKENS --- */
 :root {
+  color-scheme: light;
+
   /* Colors */
   --color-black:         #0d0d0d;
   --color-white:         #fafaf8;
@@ -40,6 +42,31 @@
   --color-border:        #0d0d0d;
   --color-border-muted:  #c8c4bc;
 
+  /* Paper grain overlay */
+  --color-grain:         rgba(0,0,0,0.04);
+
+  /* Desk surface the app sits on at desktop widths */
+  --color-desk:          #e2ddd3;
+  --color-desk-dot:      #0d0d0d;
+
+  /* A warmer raised surface, for callouts that sit on top of a card */
+  --color-surface-alt:   #fffbe6;
+
+  /* Accent text: readable on the matching --color-*-light tint */
+  --color-primary-text:  var(--color-primary);
+  --color-success-text:  #0f7a50;
+  --color-warning-text:  #b87000;
+  --color-danger-text:   #b42318;
+  --color-info-text:     #1a7ec0;
+
+  /* Terminal-style command blocks */
+  --color-code-bg:       #111111;
+  --color-code-text:     #fafaf8;
+
+  /* Neutral "muted" badge */
+  --color-badge-muted-bg:   #e6e6e6;
+  --color-badge-muted-text: #444444;
+
   /* Text */
   --color-text-primary:  #0d0d0d;
   --color-text-secondary:#4a4845;
@@ -47,11 +74,12 @@
   --color-text-on-dark:  #fafaf8;
 
   /* Neo-Brutalist Shadows */
-  --shadow-xs:  2px 2px 0 var(--color-black);
-  --shadow-sm:  3px 3px 0 var(--color-black);
-  --shadow-md:  4px 4px 0 var(--color-black);
-  --shadow-lg:  6px 6px 0 var(--color-black);
-  --shadow-xl:  8px 8px 0 var(--color-black);
+  --shadow-color: var(--color-black);
+  --shadow-xs:  2px 2px 0 var(--shadow-color);
+  --shadow-sm:  3px 3px 0 var(--shadow-color);
+  --shadow-md:  4px 4px 0 var(--shadow-color);
+  --shadow-lg:  6px 6px 0 var(--shadow-color);
+  --shadow-xl:  8px 8px 0 var(--shadow-color);
 
   /* Typography */
   --font-display: 'Space Grotesk', 'Inter', system-ui, sans-serif;
@@ -147,8 +175,8 @@ a { color: inherit; }
 
 @media (min-width: 768px) {
   .app-wrapper {
-    background-color: #e2ddd3;
-    background-image: radial-gradient(#0d0d0d 0.8px, transparent 0.8px);
+    background-color: var(--color-desk);
+    background-image: radial-gradient(var(--color-desk-dot) 0.8px, transparent 0.8px);
     background-size: 18px 18px;
     padding: var(--space-8) var(--space-4);
     display: flex;
@@ -187,7 +215,9 @@ a { color: inherit; }
   font-family: var(--font-display);
   font-size: 12px;
   font-weight: 700;
-  color: var(--color-paper);
+  /* The bar stays black in both themes, so its text is the fixed on-dark
+     colour rather than the page colour, which inverts. */
+  color: var(--color-text-on-dark);
   text-decoration: none;
   text-align: center;
   border-radius: 6px;
@@ -588,11 +618,11 @@ a { color: inherit; }
 }
 
 .badge-neutral  { background: var(--color-surface-muted); border-color: var(--color-border-muted); color: var(--color-text-secondary); }
-.badge-queued   { background: var(--color-primary-light);  border-color: var(--color-primary);       color: var(--color-primary); }
-.badge-download { background: var(--color-info-light);     border-color: var(--color-info);          color: #1a7ec0; }
-.badge-printing { background: var(--color-warning-light);  border-color: var(--color-warning);       color: #b87000; }
-.badge-success  { background: var(--color-success-light);  border-color: var(--color-success);       color: #0f7a50; }
-.badge-danger   { background: var(--color-danger-light);   border-color: var(--color-danger);        color: var(--color-danger); }
+.badge-queued   { background: var(--color-primary-light);  border-color: var(--color-primary);       color: var(--color-primary-text); }
+.badge-download { background: var(--color-info-light);     border-color: var(--color-info);          color: var(--color-info-text); }
+.badge-printing { background: var(--color-warning-light);  border-color: var(--color-warning);       color: var(--color-warning-text); }
+.badge-success  { background: var(--color-success-light);  border-color: var(--color-success);       color: var(--color-success-text); }
+.badge-danger   { background: var(--color-danger-light);   border-color: var(--color-danger);        color: var(--color-danger-text); }
 
 /* ============================================================
    INPUTS & FORMS
@@ -1306,8 +1336,8 @@ body::before {
       0deg,
       transparent,
       transparent 39px,
-      rgba(0,0,0,0.04) 39px,
-      rgba(0,0,0,0.04) 40px
+      var(--color-grain) 39px,
+      var(--color-grain) 40px
     );
   pointer-events: none;
   z-index: 0;
@@ -1364,10 +1394,10 @@ body::before {
 }
 
 .agent-offline-banner {
-  background: #fff3cd;
-  border: 2px solid #ffebaba0;
-  border-left: 6px solid #ffc107;
-  color: #856404;
+  background: var(--color-warning-light);
+  border: 2px solid var(--color-warning);
+  border-left: 6px solid var(--color-warning);
+  color: var(--color-warning-text);
   padding: 10px 14px;
   border-radius: var(--radius-md);
   font-size: 12px;
@@ -2200,7 +2230,9 @@ body::before {
   line-height: 1;
 }
 
-/* --- QR poster preview --- */
+/* --- QR poster preview ---
+   Deliberately white in both themes: a QR code inverted against a dark
+   surface is unreliable to scan, and this one is meant to be printed. */
 .qr-poster-preview {
   background: #fff;
   border: var(--border);
@@ -2448,8 +2480,8 @@ body::before {
   margin: 6px 0;
   padding: 8px 10px;
   border-radius: 6px;
-  background: #111;
-  color: #fff;
+  background: var(--color-code-bg);
+  color: var(--color-code-text);
   font-size: 0.85rem;
   /* Long commands must scroll rather than widen the dashboard on phones. */
   overflow-x: auto;
@@ -2536,7 +2568,7 @@ body::before {
 .stat-tile--accent { background: var(--color-surface-alt, #fffbe6); }
 
 /* Reserved for a state that genuinely needs a person to act. */
-.stat-tile--warn { border-color: #b42318; background: #fff4f3; }
+.stat-tile--warn { border-color: var(--color-danger); background: var(--color-danger-light); }
 
 .stat-label {
   font-size: 0.72rem;
@@ -2580,12 +2612,12 @@ body::before {
 .cell-title { font-weight: 700; }
 .cell-accent { font-weight: 700; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; }
-.warn-text { color: #b42318; font-weight: 600; }
+.warn-text { color: var(--color-danger-text); font-weight: 600; }
 
 .form-input--compact { padding: 5px 8px; font-size: 0.82rem; max-width: 110px; }
 .commission-cell { display: flex; align-items: center; gap: 5px; }
 
-.badge-muted { background: #e6e6e6; color: #444; }
+.badge-muted { background: var(--color-badge-muted-bg); color: var(--color-badge-muted-text); }
 
 @media (max-width: 640px) {
   .admin-topbar { flex-direction: column; align-items: stretch; }
@@ -3387,3 +3419,61 @@ body::before {
 }
 
 .preview-note--warn { color: var(--color-danger); font-weight: 600; }
+
+/* ============================================================
+   DARK THEME
+   ------------------------------------------------------------
+   Everything here is a token swap. The components are unchanged:
+   they were already built on the tokens above, so the palette is
+   the only thing that has to know about dark mode.
+
+   Driven entirely by data-theme on <html>. The operating system
+   preference is resolved in dashboard.html's inline script rather
+   than by a media query here, so that following the OS stays scoped
+   to the merchant dashboard: the customer-facing pages are not part
+   of this and must keep rendering exactly as they always have.
+   ============================================================ */
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-paper:         #121210;
+  --color-paper-dark:    #0b0b0a;
+  --color-white:         #1c1c19;
+
+  --color-surface:       #1c1c19;
+  --color-surface-muted: #26261f;
+  --color-border:        #e6e2d8;
+  --color-border-muted:  #56534c;
+
+  --color-text-primary:  #f2efe7;
+  --color-text-secondary:#bdb9b0;
+  --color-text-muted:    #8d8980;
+
+  --shadow-color:        #46443e;
+  --color-grain:         rgba(255,255,255,0.035);
+
+  --color-primary-light: #2a1a52;
+  --color-secondary-light: #3a3005;
+  --color-accent-mint-light: #0d3b2c;
+  --color-accent-coral-light: #4a1d1d;
+  --color-success-light: #0d3b2c;
+  --color-warning-light: #3d2a05;
+  --color-danger-light:  #4a1717;
+  --color-info-light:    #0f2f47;
+
+  /* Accent text, brightened to stay legible on the tints above. */
+  --color-primary-text:  #b394ff;
+  --color-success-text:  #4fd8a4;
+  --color-warning-text:  #f0b44a;
+  --color-danger-text:   #ff8a8a;
+  --color-info-text:     #7cc7f5;
+
+  --color-desk:          #0a0a09;
+  --color-desk-dot:      #2e2c27;
+  --color-surface-alt:   #2a2410;
+  --color-code-bg:       #0a0a09;
+  --color-code-text:     #f2efe7;
+  --color-badge-muted-bg:   #33332c;
+  --color-badge-muted-text: #c4c0b6;
+}
