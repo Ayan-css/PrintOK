@@ -73,3 +73,7 @@ newFeatures.md
 
 # Local database exports (may contain customer data)
 backups/
+
+# Personal action list: environments, accounts and dashboards only you can set up.
+# Kept out of git so it can name services and steps freely.
+taskFyou.prd

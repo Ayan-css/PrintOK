@@ -2825,29 +2825,64 @@ body::before {
   gap: 14px;
 }
 
+/* The handset itself: a bezel with the screen inset, at the 19.5:9 of a modern
+   iPhone. One fixed frame for every step, so the captions line up across a row
+   — the captures vary slightly in aspect ratio, and letting each set its own
+   height staggered every caption against its neighbour. */
 .walk-shot {
-  margin: 0;
+  margin: 0 auto;
+  /* Capped: at full column width a phone is taller than the copy it
+     illustrates, and the section stops being scannable. */
+  max-width: 268px;
+  aspect-ratio: 9 / 19.5;
+  background: var(--color-black);
   border: 3px solid var(--color-border);
-  border-radius: 14px;
-  /* The captures are of a white phone screen, so the frame stays light in dark
-     mode too — a dark mount around a white screenshot reads as a broken image. */
-  background: #fff;
+  border-radius: 40px;
   box-shadow: 5px 5px 0 var(--color-border);
-  overflow: hidden;
-  /* One phone-shaped frame for every step, so the captions line up across a
-     row. The captures vary slightly in aspect ratio, and letting each set its
-     own height staggered every caption against its neighbour. */
-  aspect-ratio: 39 / 85;
-  /* Capped and centred: at full column width a phone capture is taller than the
-     copy it illustrates, and the section stops being scannable. */
-  max-width: 272px;
-  margin-inline: auto;
+  padding: 8px;
 }
 
-.walk-shot img {
-  display: block;
-  width: 100%;
+.walk-screen {
+  position: relative;
   height: 100%;
+  /* The captures are of a light phone screen, so the screen stays light in dark
+     mode too — inverting it would misrepresent what the customer sees.
+     The status strip takes the colour the capture itself has along its top
+     edge, so the reserved band reads as part of the screen rather than as a
+     white bar sitting above a purple checkout. */
+  background: linear-gradient(var(--screen-top, #fff) 30px, #fff 30px);
+  border-radius: 33px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  /* Reserves the strip the island sits in, so the pill never covers the
+     screenshot underneath it. */
+  padding-top: 30px;
+}
+
+/* Sampled from the top edge of each capture. */
+.walk-screen--paper  { --screen-top: #f5f2ec; }
+.walk-screen--violet { --screen-top: #6d2efe; }
+
+/* Dynamic Island. Decorative: it carries no information, and a screen reader
+   announcing it would only add noise between the steps. */
+.walk-screen::before {
+  content: '';
+  position: absolute;
+  top: 9px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 32%;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--color-black);
+}
+
+.walk-screen img {
+  display: block;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
   /* contain, never cover: a crop would cut the running total off the bottom of
      the pricing step, which is the one thing that step exists to show. */
   object-fit: contain;

@@ -47,5 +47,15 @@ services:
         sync: false
       - key: RAZORPAY_WEBHOOK_SECRET
         sync: false
+      # The public URL of the customer front-end, e.g. https://printok.vercel.app.
+      # Required in production: shop registration refuses to issue a QR poster
+      # without it, rather than printing a code that could never be scanned.
+      - key: PUBLIC_WEB_URL
+        sync: false
+      # Set to "true" only once Razorpay has activated Route on the account.
+      # Until then the API keeps taking payments through the single-account
+      # flow, so leaving this unset is safe.
+      - key: RAZORPAY_ROUTE_ENABLED
+        value: "false"
       - key: PRINT_AGENT_REPO
         value: Ayan-css/PrintOK
