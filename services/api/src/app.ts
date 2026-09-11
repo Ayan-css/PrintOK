@@ -10,7 +10,10 @@ import { RazorpayService } from './razorpayService';
 import { RazorpayRouteService } from './razorpayRoute';
 import { parsePrintState } from './jobStateMachine';
 import { classifyFailure } from './jobRecovery';
-import { PLAN_CATALOGUE, PLAN_TIERS, getPlan, PAYMENT_GATEWAY_FEE_BPS, PAYMENT_GATEWAY_LABEL } from '@printok/shared-types';
+import {
+  PLAN_CATALOGUE, PLAN_TIERS, getPlan,
+  PAYMENT_GATEWAY_FEE_BPS, PAYMENT_GATEWAY_LABEL, calculateShopNetCents,
+} from '@printok/shared-types';
 import {
   hashPassword, verifyPassword, validatePasswordStrength,
   issueAdminToken, verifyAdminToken, canWrite, AdminTokenPayload,
@@ -1672,20 +1675,33 @@ export function createApp(
 
     try {
       const { shopId } = req.params;
-      const stats = await storage.getShopStats(shopId);
+      const [stats, shop, plan] = await Promise.all([
+        storage.getShopStats(shopId),
+        storage.getShop(shopId),
+        storage.getShopPlan(shopId),
+      ]);
+
       const grossCents = stats ? stats.todayRevenueCents : 0;
 
-      const razorpayFeeCents = Math.round(grossCents * 0.0236);
-      const platformCommissionCents = Math.round(grossCents * 0.0200);
-      const netAvailableCents = Math.max(0, grossCents - razorpayFeeCents - platformCommissionCents);
+      // The shop's own commission, not a hardcoded 2%: a Start shop pays 8% and
+      // was previously shown a figure from a plan it is not on.
+      const commissionBps = plan?.commissionBps ?? 800;
+      const { gatewayFeeCents, serviceFeeCents, netCents } =
+        calculateShopNetCents(grossCents, commissionBps);
+
+      const routeLinked = shop?.razorpayAccountStatus === 'activated';
 
       return res.json({
         shopId,
         grossCents,
-        razorpayFeeCents,
-        platformCommissionCents,
-        netAvailableCents,
-        payoutUpiId: 'metroprint@upi'
+        commissionBps,
+        razorpayFeeCents: gatewayFeeCents,
+        platformCommissionCents: serviceFeeCents,
+        netAvailableCents: netCents,
+        // The shop's own payout destination. This was hardcoded, so every shop
+        // was shown the same address regardless of what it had registered.
+        payoutUpiId: shop?.upiId || null,
+        settlement: routeLinked ? 'automatic' : 'manual',
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -1701,28 +1717,27 @@ export function createApp(
 
     try {
       const { shopId } = req.params;
-      const stats = await storage.getShopStats(shopId);
-      const grossCents = stats ? stats.todayRevenueCents : 0;
+      const shop = await storage.getShop(shopId);
+      if (!shop) return res.status(404).json({ error: 'Shop not found.' });
 
-      const razorpayFeeCents = Math.round(grossCents * 0.0236);
-      const platformCommissionCents = Math.round(grossCents * 0.0200);
-      const netAvailableCents = Math.max(0, grossCents - razorpayFeeCents - platformCommissionCents);
-
-      if (netAvailableCents <= 0) {
-        return res.status(400).json({ error: 'No available balance to withdraw.' });
+      // This endpoint previously answered "Instant UPI payout request processed
+      // successfully" while moving no money and recording nothing. Telling a
+      // shop owner their money has been sent when it has not is worse than
+      // having no button at all, so it now reports the truth.
+      if (shop.razorpayAccountStatus === 'activated') {
+        return res.status(409).json({
+          error:
+            'This shop settles automatically. Each paid order is transferred to your own ' +
+            'Razorpay account at the time of payment, so there is nothing to withdraw here.',
+          settlement: 'automatic',
+        });
       }
 
-      return res.json({
-        success: true,
-        message: 'Instant UPI payout request processed successfully via Razorpay Payouts.',
-        payout: {
-          shopId,
-          grossCents,
-          totalDeductionsCents: razorpayFeeCents + platformCommissionCents,
-          netTransferredCents: netAvailableCents,
-          payoutUpiId: 'metroprint@upi',
-          timestamp: new Date().toISOString()
-        }
+      return res.status(501).json({
+        error:
+          'Manual withdrawal is not available yet. Connect your shop to Razorpay from the ' +
+          'dashboard to receive each order directly, or contact support for a manual payout.',
+        settlement: 'manual',
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });

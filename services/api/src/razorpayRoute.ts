@@ -93,41 +93,56 @@ export class RazorpayRouteService {
   }
 
   /**
-   * Splits an order so the shop receives everything except the PrintOk fee.
+   * Splits an order into the shop's share and what PrintOk retains.
    *
-   * Razorpay's own gateway fee is charged to the platform account, not deducted
-   * from this transfer — so the service fee must cover it or PrintOk loses money
-   * on the transaction. See `estimatePlatformMargin`.
+   * Both the gateway fee and the service fee come off the shop's share, which is
+   * what the published terms state: "Payment gateway charges are billed by
+   * Razorpay and deducted before settlement. They are separate from the PrintOk
+   * service fee."
+   *
+   * Mechanically, Razorpay charges its fee to the platform account rather than
+   * to the transfer, so PrintOk retains serviceFee + gatewayFee here, pays the
+   * gateway fee out of that, and nets exactly the service fee. Transferring
+   * gross - serviceFee instead would silently make PrintOk absorb the gateway
+   * fee, turning every Business and Enterprise order into a loss.
    */
   public buildTransfer(
     shopAccountId: string,
     grossCents: number,
     commissionBps: number,
     jobId: string
-  ): { transfer: TransferInstruction; serviceFeeCents: number } {
+  ): { transfer: TransferInstruction; serviceFeeCents: number; gatewayFeeCents: number } {
     const serviceFeeCents = Math.round((grossCents * commissionBps) / 10_000);
-    const shopShareCents = Math.max(0, grossCents - serviceFeeCents);
+    const gatewayFeeCents = Math.round((grossCents * PAYMENT_GATEWAY_FEE_BPS) / 10_000);
+    const shopShareCents = Math.max(0, grossCents - serviceFeeCents - gatewayFeeCents);
 
     return {
       serviceFeeCents,
+      gatewayFeeCents,
       transfer: {
         account: shopAccountId,
         amount: shopShareCents,
         currency: 'INR',
-        notes: { jobId, serviceFeeCents: String(serviceFeeCents) },
+        notes: {
+          jobId,
+          serviceFeeCents: String(serviceFeeCents),
+          gatewayFeeCents: String(gatewayFeeCents),
+        },
       },
     };
   }
 
   /**
-   * What PrintOk actually keeps once Razorpay has taken its cut.
+   * What PrintOk keeps from an order once Razorpay has been paid.
    *
-   * Negative means the tier's service fee does not cover the gateway fee and the
-   * platform is subsidising every order on that plan.
+   * PrintOk retains the service fee plus the gateway fee, then Razorpay deducts
+   * the gateway fee from the platform account — so the margin is the service
+   * fee. This holds on every tier, including Enterprise at 0.5%.
    */
   public estimatePlatformMargin(grossCents: number, commissionBps: number): {
     serviceFeeCents: number;
     gatewayFeeCents: number;
+    retainedCents: number;
     marginCents: number;
   } {
     const serviceFeeCents = Math.round((grossCents * commissionBps) / 10_000);
@@ -135,7 +150,8 @@ export class RazorpayRouteService {
     return {
       serviceFeeCents,
       gatewayFeeCents,
-      marginCents: serviceFeeCents - gatewayFeeCents,
+      retainedCents: serviceFeeCents + gatewayFeeCents,
+      marginCents: serviceFeeCents,
     };
   }
 

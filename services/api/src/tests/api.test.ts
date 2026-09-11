@@ -990,37 +990,53 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(attempt.ok, false);
     assert.strictEqual(attempt.routeUnavailable, true);
 
-    // ₹100 on Business (2%): the shop receives ₹98, PrintOk retains ₹2.
-    const { transfer, serviceFeeCents } = route.buildTransfer('acc_test', 10000, 200, 'job_1');
+    // ₹100 on Business (2%): both fees come off the shop's share, exactly as
+    // the published terms say. Shop gets ₹95.64, PrintOk retains ₹4.36 and pays
+    // ₹2.36 of that to Razorpay.
+    const { transfer, serviceFeeCents, gatewayFeeCents } =
+      route.buildTransfer('acc_test', 10000, 200, 'job_1');
     assert.strictEqual(transfer.account, 'acc_test');
-    assert.strictEqual(transfer.amount, 9800);
+    assert.strictEqual(transfer.amount, 9564);
     assert.strictEqual(serviceFeeCents, 200);
-    assert.strictEqual(transfer.amount + serviceFeeCents, 10000, 'the split must account for every paisa');
+    assert.strictEqual(gatewayFeeCents, 236);
+    assert.strictEqual(
+      transfer.amount + serviceFeeCents + gatewayFeeCents, 10000,
+      'the split must account for every paisa'
+    );
 
-    // A transfer can never exceed the order, even at the highest fee.
+    // A transfer can never go negative, even at the highest permitted fee.
     const maxFee = route.buildTransfer('acc_test', 100, 5000, 'job_2');
     assert.ok(maxFee.transfer.amount >= 0);
-    assert.strictEqual(maxFee.transfer.amount + maxFee.serviceFeeCents, 100);
   });
 
-  await t.test('27. Enterprise service fee does not cover the gateway fee', async () => {
+  await t.test('27. What the shop is told matches what it is paid', async () => {
     const { RazorpayRouteService } = await import('../razorpayRoute');
     const route = new RazorpayRouteService();
 
-    // Razorpay charges the platform ~2.36%. On tiers below that, the service
-    // fee does not cover it and PrintOk subsidises the transaction. This is a
-    // deliberate commercial choice, pinned here so it cannot change unnoticed.
-    const business = route.estimatePlatformMargin(10000, 200);   // 2.0%
-    const enterprise = route.estimatePlatformMargin(10000, 50);  // 0.5%
+    // The published terms, the payout summary and the actual Route transfer
+    // must agree. They did not: the summary deducted both fees while the
+    // transfer deducted only the service fee, so a shop was paid more than it
+    // was told and PrintOk lost the difference.
+    for (const plan of PLAN_CATALOGUE) {
+      const gross = 10000;
+      const told = calculateShopNetCents(gross, plan.commissionBps);
+      const { transfer } = route.buildTransfer('acc_test', gross, plan.commissionBps, 'job_x');
 
-    assert.ok(business.marginCents < 0,
-      'Business at 2% is below the 2.36% gateway fee');
-    assert.ok(enterprise.marginCents < business.marginCents,
-      'Enterprise at 0.5% loses more per order than Business');
+      assert.strictEqual(
+        transfer.amount, told.netCents,
+        `${plan.tier}: the transfer must equal what the payout summary states`
+      );
+    }
 
-    // Start at 8% is comfortably profitable.
-    const start = route.estimatePlatformMargin(10000, 800);
-    assert.ok(start.marginCents > 0);
+    // PrintOk retains both fees and pays the gateway out of that, so its margin
+    // is the service fee on every tier — including Enterprise at 0.5%.
+    const enterprise = route.estimatePlatformMargin(10000, 50);
+    assert.strictEqual(enterprise.marginCents, enterprise.serviceFeeCents);
+    assert.strictEqual(
+      enterprise.retainedCents,
+      enterprise.serviceFeeCents + enterprise.gatewayFeeCents
+    );
+    assert.ok(enterprise.marginCents > 0, 'no tier should lose money per order');
   });
 
   await t.test('13. An unknown device token is rejected', async () => {
