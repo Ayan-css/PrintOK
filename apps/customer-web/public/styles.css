@@ -2415,3 +2415,81 @@ body::before {
 .step-wizard {
   list-style: none;
 }
+
+/* ---------------------------------------------------------------------------
+   Agent pairing & paired device list
+   --------------------------------------------------------------------------- */
+
+.pairing-block {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 2px solid var(--color-border, #111);
+}
+
+.pairing-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.pairing-code-box {
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 2px dashed var(--color-border, #111);
+  border-radius: 8px;
+  background: var(--color-surface-alt, #fffbe6);
+}
+
+.pairing-command {
+  display: block;
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #111;
+  color: #fff;
+  font-size: 0.85rem;
+  /* Long commands must scroll rather than widen the dashboard on phones. */
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.pairing-expiry { font-weight: 600; }
+
+.device-list { display: flex; flex-direction: column; gap: 8px; }
+
+.device-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 2px solid var(--color-border, #111);
+  border-radius: 8px;
+  background: var(--color-surface, #fff);
+}
+
+.device-row--revoked { opacity: 0.55; }
+
+.device-info { min-width: 0; flex: 1 1 200px; }
+
+.device-name {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.device-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 480px) {
+  .pairing-header { flex-direction: column; align-items: stretch; }
+  .device-row { flex-direction: column; align-items: stretch; }
+  .device-actions { justify-content: space-between; }
+}

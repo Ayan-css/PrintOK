@@ -262,6 +262,27 @@
                   </button>
                 </div>
 
+                <!-- Agent Pairing: gives each shop PC its own revocable credential -->
+                <div class="pairing-block">
+                  <div class="pairing-header">
+                    <div>
+                      <div class="label-text">Paired Shop PCs</div>
+                      <div class="meta-text">Each PC gets its own key, so you can remove one without affecting the others.</div>
+                    </div>
+                    <button class="btn btn-primary btn-sm" id="btnPairAgent" type="button">🔗 Pair New PC</button>
+                  </div>
+
+                  <div id="pairingCodeBox" class="pairing-code-box" hidden aria-live="polite">
+                    <div class="meta-text">On the shop PC, run:</div>
+                    <code class="pairing-command">WindowsPrintAgent.exe --PairingCode=<span id="pairingCodeValue">--</span></code>
+                    <div class="pairing-expiry meta-text" id="pairingExpiry">Expires in 15:00</div>
+                  </div>
+
+                  <div id="pairedDeviceList" class="device-list" aria-live="polite">
+                    <div class="meta-text">No PCs paired yet.</div>
+                  </div>
+                </div>
+
                 <div id="agentStatusText" class="meta-text" style="margin-top: 8px; font-weight: 600; color: var(--color-primary);">
                   Agent Status: Offline
                 </div>

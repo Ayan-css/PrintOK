@@ -584,6 +584,137 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
+    // --- Agent pairing: each shop PC gets its own revocable credential ---
+
+    let pairingCountdown = null;
+
+    function renderPairedDevices(devices) {
+      const list = document.getElementById('pairedDeviceList');
+      if (!list) return;
+
+      if (!devices || devices.length === 0) {
+        list.innerHTML = '<div class="meta-text">No PCs paired yet.</div>';
+        return;
+      }
+
+      list.innerHTML = devices.map((d) => {
+        const revoked = d.status === 'revoked';
+        const lastSeen = d.lastSeenAt
+          ? new Date(d.lastSeenAt).toLocaleString()
+          : 'never connected';
+
+        return `
+          <div class="device-row${revoked ? ' device-row--revoked' : ''}">
+            <div class="device-info">
+              <div class="device-name">${escapeHtml(d.deviceName || d.id)}</div>
+              <div class="meta-text">
+                ${escapeHtml(d.osVersion || 'Unknown OS')}
+                ${d.agentVersion ? ' &middot; agent ' + escapeHtml(d.agentVersion) : ''}
+                &middot; last seen ${escapeHtml(lastSeen)}
+              </div>
+            </div>
+            <div class="device-actions">
+              <span class="badge ${revoked ? 'badge-danger' : 'badge-success'}">
+                ${revoked ? 'Revoked' : 'Active'}
+              </span>
+              ${revoked ? '' : `<button class="btn btn-outline btn-sm" data-revoke-device="${escapeHtml(d.id)}" type="button">Revoke</button>`}
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    async function loadPairedDevices() {
+      if (!dashPrinterId) return;
+      try {
+        const res = await fetch(`${API_BASE}/api/printers/${encodeURIComponent(dashPrinterId)}/devices`);
+        if (!res.ok) return;
+        const data = await res.json();
+        renderPairedDevices(data.devices);
+      } catch {
+        // The device list is supplementary; a failure here must not break the tab.
+      }
+    }
+
+    const btnPairAgent = document.getElementById('btnPairAgent');
+    if (btnPairAgent) {
+      btnPairAgent.addEventListener('click', async () => {
+        if (!dashPrinterId) {
+          showToast('warning', 'No Printer', 'Connect a shop before pairing a PC.');
+          return;
+        }
+
+        btnPairAgent.disabled = true;
+        try {
+          const res = await fetch(`${API_BASE}/api/printers/${encodeURIComponent(dashPrinterId)}/pairing-code`, {
+            method: 'POST',
+          });
+          if (!res.ok) throw new Error('Could not generate a pairing code.');
+
+          const data = await res.json();
+          const box = document.getElementById('pairingCodeBox');
+          const value = document.getElementById('pairingCodeValue');
+          const expiry = document.getElementById('pairingExpiry');
+
+          if (value) value.textContent = data.code;
+          if (box) box.hidden = false;
+
+          // The code is single use and short lived; show the operator how long is left.
+          let remaining = data.expiresInSeconds || 900;
+          clearInterval(pairingCountdown);
+          pairingCountdown = setInterval(() => {
+            remaining -= 1;
+            if (remaining <= 0) {
+              clearInterval(pairingCountdown);
+              if (expiry) expiry.textContent = 'Expired — generate a new code.';
+              if (value) value.textContent = '--';
+              return;
+            }
+            const mins = Math.floor(remaining / 60);
+            const secs = String(remaining % 60).padStart(2, '0');
+            if (expiry) expiry.textContent = `Expires in ${mins}:${secs}`;
+          }, 1000);
+
+          showToast('success', 'Pairing Code Ready', 'Run the command shown on the shop PC within 15 minutes.');
+        } catch (err) {
+          showToast('danger', 'Pairing Failed', err.message);
+        } finally {
+          btnPairAgent.disabled = false;
+        }
+      });
+    }
+
+    const pairedDeviceList = document.getElementById('pairedDeviceList');
+    if (pairedDeviceList) {
+      pairedDeviceList.addEventListener('click', async (event) => {
+        const button = event.target.closest('[data-revoke-device]');
+        if (!button) return;
+
+        const deviceId = button.getAttribute('data-revoke-device');
+        if (!window.confirm('Revoke this PC? It will stop printing immediately and must be paired again.')) {
+          return;
+        }
+
+        button.disabled = true;
+        try {
+          const res = await fetch(
+            `${API_BASE}/api/printers/${encodeURIComponent(dashPrinterId)}/devices/${encodeURIComponent(deviceId)}/revoke`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ reason: 'Revoked from dashboard' }),
+            }
+          );
+          if (!res.ok) throw new Error('Revoke failed.');
+
+          showToast('success', 'PC Revoked', 'That machine can no longer collect print jobs.');
+          await loadPairedDevices();
+        } catch (err) {
+          showToast('danger', 'Revoke Failed', err.message);
+          button.disabled = false;
+        }
+      });
+    }
+
     const btnToggleSimulatedAgent = document.getElementById('btnToggleSimulatedAgent');
     if (btnToggleSimulatedAgent) {
       let simulating = false;
@@ -757,6 +888,8 @@ document.addEventListener('DOMContentLoaded', () => {
           if (exeLink) exeLink.href = `${API_BASE}/api/agent-installer`;
           const cfgLink = document.getElementById('btnDownloadAgentConfigFile');
           if (cfgLink) cfgLink.href = `${API_BASE}/api/printers/${encodeURIComponent(printer.id)}/agent-config`;
+
+          loadPairedDevices();
         }
       } catch {
         // keep whatever is already rendered
