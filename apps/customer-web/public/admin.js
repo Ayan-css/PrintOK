@@ -270,6 +270,64 @@
     }
   }
 
+  /**
+   * Contact enquiries from the public form.
+   *
+   * The message is shown in full rather than truncated: an operator deciding
+   * whether to reply needs to read it, and these are short by design.
+   */
+  async function loadEnquiries() {
+    const list = $('adminEnquiryList');
+    const status = $('enquiryFilter').value;
+
+    try {
+      const { enquiries, newCount } = await api(
+        `/api/admin/contact-enquiries?status=${encodeURIComponent(status)}&limit=100`
+      );
+
+      const badge = $('enquiryNewBadge');
+      badge.hidden = !newCount;
+      badge.textContent = `${newCount} new`;
+
+      if (!enquiries.length) {
+        list.innerHTML = '<p class="meta-text">No enquiries here.</p>';
+        return;
+      }
+
+      list.innerHTML = enquiries.map((e) => `
+        <article class="enquiry-row enquiry-row--${escapeHtml(e.status)}">
+          <div class="enquiry-head">
+            <div>
+              <span class="cell-title">${escapeHtml(e.name)}</span>
+              ${e.shopName ? `<span class="meta-text"> · ${escapeHtml(e.shopName)}</span>` : ''}
+            </div>
+            <span class="badge ${e.status === 'new' ? 'badge-danger' : 'badge-muted'}">
+              ${escapeHtml(e.status)}
+            </span>
+          </div>
+
+          <div class="meta-text enquiry-contact">
+            <a href="mailto:${escapeHtml(e.email)}">${escapeHtml(e.email)}</a>
+            ${e.phone ? ` · ${escapeHtml(e.phone)}` : ''}
+            · ${escapeHtml(relativeTime(e.createdAt))}
+          </div>
+
+          <p class="enquiry-message">${escapeHtml(e.message)}</p>
+
+          <div class="enquiry-actions">
+            ${['read', 'replied', 'archived']
+              .filter((s) => s !== e.status)
+              .map((s) => `<button class="btn btn-outline btn-sm" type="button"
+                             data-enquiry="${escapeHtml(e.id)}" data-status="${s}">
+                             Mark ${s}
+                           </button>`).join('')}
+          </div>
+        </article>`).join('');
+    } catch (err) {
+      list.innerHTML = `<p class="meta-text">Could not load: ${escapeHtml(err.message)}</p>`;
+    }
+  }
+
   async function loadAudit() {
     const list = $('adminAuditList');
     try {
@@ -398,6 +456,25 @@
     $('adminShopFilter').addEventListener('input', applyFilter);
     $('adminShowArchived').addEventListener('change', loadConsole);
     $('btnLoadAudit').addEventListener('click', loadAudit);
+    $('btnLoadEnquiries').addEventListener('click', loadEnquiries);
+    $('enquiryFilter').addEventListener('change', loadEnquiries);
+
+    $('adminEnquiryList').addEventListener('click', async (event) => {
+      const button = event.target.closest('[data-enquiry]');
+      if (!button) return;
+
+      button.disabled = true;
+      try {
+        await api(`/api/admin/contact-enquiries/${encodeURIComponent(button.getAttribute('data-enquiry'))}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status: button.getAttribute('data-status') }),
+        });
+        await loadEnquiries();
+      } catch (err) {
+        toast('danger', 'Update failed', err.message);
+        button.disabled = false;
+      }
+    });
 
     $('adminSelectAll').addEventListener('change', (event) => {
       // Only the rows currently visible after filtering.

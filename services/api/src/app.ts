@@ -126,6 +126,17 @@ export function createApp(
   app.use('/api/print-jobs', apiLimiter);
   app.use('/api/shops/register', apiLimiter);
 
+  // The contact form is unauthenticated and world-reachable, so it gets a much
+  // tighter budget than the rest of the public API.
+  const contactLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 5,
+    message: { error: 'Too many enquiries from this network. Please try again later.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+  app.use('/api/contact', contactLimiter);
+
   // Health Check Endpoint.
   // Reports the running build so a deploy can actually be verified from outside;
   // a static 200 cannot distinguish a new release from the previous one.
@@ -561,6 +572,114 @@ export function createApp(
         succeeded: results.filter((r) => r.ok).length,
         refused: results.filter((r) => !r.ok).length,
       });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Public contact form submission.
+   *
+   * Enquiries are stored rather than emailed, so nothing depends on a mail
+   * provider being configured and a message cannot be silently lost. Delivery
+   * or notification can be layered on later without changing capture.
+   */
+  app.post('/api/contact', async (req: Request, res: Response) => {
+    try {
+      const { name, email, phone, shopName, message, website } = req.body || {};
+
+      // Honeypot: a real person never fills a field they cannot see. Answer 201
+      // so a bot cannot tell it was rejected.
+      if (website) {
+        return res.status(201).json({ success: true });
+      }
+
+      const trimmedName = String(name || '').trim();
+      const trimmedEmail = String(email || '').trim().toLowerCase();
+      const trimmedMessage = String(message || '').trim();
+
+      if (!trimmedName || !trimmedEmail || !trimmedMessage) {
+        return res.status(400).json({ error: 'Name, email and message are required.' });
+      }
+      if (trimmedName.length > 120 || trimmedEmail.length > 200) {
+        return res.status(400).json({ error: 'Name or email is too long.' });
+      }
+      if (trimmedMessage.length < 10) {
+        return res.status(400).json({ error: 'Please describe what you need in a little more detail.' });
+      }
+      if (trimmedMessage.length > 4000) {
+        return res.status(400).json({ error: 'Message is too long. Please keep it under 4000 characters.' });
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+        return res.status(400).json({ error: 'That email address does not look right.' });
+      }
+
+      // Per-address ceiling on top of the per-IP limiter, so one sender cannot
+      // flood the inbox from a rotating address pool.
+      const recent = await storage.countRecentEnquiriesFrom(trimmedEmail, 60 * 60 * 1000);
+      if (recent >= 3) {
+        return res.status(429).json({
+          error: 'We already have your recent messages. We will reply shortly.',
+        });
+      }
+
+      const enquiry = await storage.createContactEnquiry({
+        name: trimmedName,
+        email: trimmedEmail,
+        phone: phone ? String(phone).trim().slice(0, 40) : undefined,
+        shopName: shopName ? String(shopName).trim().slice(0, 160) : undefined,
+        message: trimmedMessage,
+        source: 'landing',
+        // Coarse origin only, hashed, for abuse investigation.
+        ipHash: req.ip
+          ? crypto.createHash('sha256').update(req.ip).digest('hex').slice(0, 32)
+          : undefined,
+        userAgent: (req.headers['user-agent'] || '').toString().slice(0, 400),
+      });
+
+      return res.status(201).json({ success: true, enquiryId: enquiry.id });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /** Enquiries from the contact form (PRD 24). */
+  app.get('/api/admin/contact-enquiries', async (req: Request, res: Response) => {
+    const admin = await authenticateAdmin(req, res);
+    if (!admin) return;
+
+    try {
+      const status = req.query.status ? String(req.query.status) : undefined;
+      const limit = Math.min(Number(req.query.limit) || 100, 300);
+      return res.json({
+        enquiries: await storage.listContactEnquiries(status, limit),
+        newCount: await storage.countNewContactEnquiries(),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch('/api/admin/contact-enquiries/:id', async (req: Request, res: Response) => {
+    const admin = await authenticateAdmin(req, res);
+    if (!admin) return;
+
+    if (!canWrite(admin.role)) {
+      return res.status(403).json({ error: 'Your role is read-only.' });
+    }
+
+    try {
+      const { status, notes } = req.body || {};
+      if (!['new', 'read', 'replied', 'archived'].includes(status)) {
+        return res.status(400).json({ error: "status must be 'new', 'read', 'replied' or 'archived'." });
+      }
+
+      const enquiry = await storage.updateContactEnquiryStatus(
+        req.params.id, status, admin.email, notes
+      );
+      if (!enquiry) return res.status(404).json({ error: 'Enquiry not found.' });
+
+      return res.json({ enquiry });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }

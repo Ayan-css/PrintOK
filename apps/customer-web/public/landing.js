@@ -16,6 +16,22 @@
   // ===========================================================================
   const PRICING_IS_PLACEHOLDER = true;
 
+  // ===========================================================================
+  // CONTACT EMAIL — PLACEHOLDER, REPLACE BEFORE LAUNCH
+  //
+  // Shown on the page and used as the fallback if the API is unreachable. It is
+  // deliberately an example.com address: a made-up address on a real domain
+  // would look genuine while silently dropping every message sent to it.
+  //
+  // Set CONTACT_EMAIL_IS_PLACEHOLDER to false once this is a real inbox.
+  // Enquiries are stored by the API regardless, so nothing is lost meanwhile.
+  // ===========================================================================
+  const CONTACT_EMAIL = 'your-support-address@example.com';
+  const CONTACT_EMAIL_IS_PLACEHOLDER = true;
+
+  const API_BASE = window.PRINTOK_API_BASE
+    || (location.hostname === 'localhost' ? 'http://localhost:4000' : 'https://prinok-api.onrender.com');
+
   const PRICING = [
     {
       tier: 'free',
@@ -214,50 +230,81 @@
     });
   }
 
+  /** Renders the contact address from the single constant above. */
+  function renderContactEmail() {
+    document.querySelectorAll('[data-contact-email]').forEach((el) => {
+      el.textContent = CONTACT_EMAIL;
+      if (el.tagName === 'A') el.setAttribute('href', `mailto:${CONTACT_EMAIL}`);
+    });
+
+    const note = document.getElementById('contactEmailNote');
+    if (note && CONTACT_EMAIL_IS_PLACEHOLDER) {
+      note.textContent = 'Placeholder address — messages sent here are not monitored. Use the form.';
+      note.hidden = false;
+    }
+  }
+
   /**
    * Contact form.
    *
-   * There is no contact endpoint yet, so rather than pretend to send and
-   * silently drop the message, this opens the visitor's mail client with the
-   * message pre-filled. That way nothing is lost.
+   * Posts to the API, which stores the enquiry. Storing rather than emailing
+   * means a message cannot be lost to an unconfigured mail provider, and the
+   * placeholder address above stays harmless until it is replaced.
    */
   function wireContactForm() {
     const form = document.getElementById('contactForm');
     if (!form) return;
 
-    form.addEventListener('submit', (event) => {
+    const status = document.getElementById('contactStatus');
+    const button = document.getElementById('btnContactSubmit');
+
+    const show = (kind, text) => {
+      status.className = `alert alert-${kind}`;
+      status.textContent = text;
+      status.hidden = false;
+    };
+
+    form.addEventListener('submit', async (event) => {
       event.preventDefault();
 
-      const status = document.getElementById('contactStatus');
-      const name = document.getElementById('contactName').value.trim();
-      const email = document.getElementById('contactEmail').value.trim();
-      const message = document.getElementById('contactMessage').value.trim();
-      const shop = document.getElementById('contactShop').value.trim();
-      const phone = document.getElementById('contactPhone').value.trim();
+      const payload = {
+        name: document.getElementById('contactName').value.trim(),
+        email: document.getElementById('contactEmail').value.trim(),
+        phone: document.getElementById('contactPhone').value.trim(),
+        shopName: document.getElementById('contactShop').value.trim(),
+        message: document.getElementById('contactMessage').value.trim(),
+        // Honeypot: hidden from people, tempting to bots.
+        website: document.getElementById('contactWebsite').value,
+      };
 
-      if (!name || !email || !message) {
-        status.className = 'alert alert-danger';
-        status.textContent = 'Please fill in your name, email and message.';
-        status.hidden = false;
+      if (!payload.name || !payload.email || !payload.message) {
+        show('danger', 'Please fill in your name, email and message.');
         return;
       }
 
-      const body = [
-        `Name: ${name}`,
-        shop ? `Shop: ${shop}` : null,
-        `Email: ${email}`,
-        phone ? `Phone: ${phone}` : null,
-        '',
-        message,
-      ].filter(Boolean).join('\n');
+      button.disabled = true;
+      const originalLabel = button.textContent;
+      button.textContent = 'Sending...';
 
-      window.location.href =
-        `mailto:hello@printok.in?subject=${encodeURIComponent(`PrintOk enquiry from ${name}`)}` +
-        `&body=${encodeURIComponent(body)}`;
+      try {
+        const res = await fetch(`${API_BASE}/api/contact`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json().catch(() => ({}));
 
-      status.className = 'alert alert-success';
-      status.textContent = 'Opening your email app. If nothing happens, write to hello@printok.in.';
-      status.hidden = false;
+        if (!res.ok) throw new Error(body.error || 'Could not send your message.');
+
+        form.reset();
+        show('success', 'Thanks — your message reached us. We will reply by email.');
+      } catch (err) {
+        // Never leave someone with a message they think was sent.
+        show('danger', `${err.message} You can also write to ${CONTACT_EMAIL}.`);
+      } finally {
+        button.disabled = false;
+        button.textContent = originalLabel;
+      }
     });
   }
 
@@ -282,6 +329,7 @@
     wireHeroFlow();
     wireCounters();
     wireReveals();
+    renderContactEmail();
     wireContactForm();
   });
 })();

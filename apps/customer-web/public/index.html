@@ -357,6 +357,13 @@
                       placeholder="e.g. I have a Canon printer and want to connect it."></textarea>
           </div>
 
+          <!-- Honeypot: hidden from people, tempting to bots. Not aria-hidden,
+               because a screen reader user must be told to leave it alone. -->
+          <div class="honeypot">
+            <label for="contactWebsite">Leave this field empty</label>
+            <input type="text" id="contactWebsite" name="website" tabindex="-1" autocomplete="off">
+          </div>
+
           <div id="contactStatus" class="alert" hidden role="status"></div>
 
           <button type="submit" class="btn btn-primary btn-block" id="btnContactSubmit">
@@ -367,7 +374,8 @@
         <aside class="contact-aside">
           <div class="contact-card">
             <h3>📧 Email</h3>
-            <p><a href="mailto:hello@printok.in">hello@printok.in</a></p>
+            <p><a data-contact-email href="#">loading…</a></p>
+            <p class="meta-text" id="contactEmailNote" hidden></p>
             <p class="meta-text">We reply within one working day.</p>
           </div>
           <div class="contact-card">

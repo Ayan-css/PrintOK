@@ -10,6 +10,7 @@ import {
   AgentDeviceRecord, AgentSecurityEventRecord, PairingCodeRecord, ReclaimResult,
   AdminUserRecord, ShopPlan, AdminShopSummary, AdminOverview,
   ShopRemovalSafety, ShopRemovalResult, AdminAuditEntry,
+  ContactEnquiryRecord, CreateContactEnquiryInput,
 } from './storage';
 import { S3StorageService } from './s3Storage';
 import { calculateJobPriceBreakdown, DEFAULT_PRICING_CONFIG } from './pricing';
@@ -947,6 +948,84 @@ export class PrismaStorage implements IStorageProvider {
         detail: (entry.detail || {}) as Prisma.InputJsonValue,
       },
     });
+  }
+
+  public async createContactEnquiry(input: CreateContactEnquiryInput): Promise<ContactEnquiryRecord> {
+    const enquiry = await this.prisma.contactEnquiry.create({
+      data: {
+        id: `enq_${crypto.randomBytes(8).toString('hex')}`,
+        name: input.name,
+        email: input.email,
+        phone: input.phone,
+        shopName: input.shopName,
+        message: input.message,
+        source: input.source || 'landing',
+        ipHash: input.ipHash,
+        userAgent: input.userAgent,
+      },
+    });
+    return this.mapEnquiry(enquiry);
+  }
+
+  public async listContactEnquiries(status?: string, limit = 100): Promise<ContactEnquiryRecord[]> {
+    const enquiries = await this.prisma.contactEnquiry.findMany({
+      where: status && status !== 'all' ? { status } : {},
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+    return enquiries.map((e) => this.mapEnquiry(e));
+  }
+
+  public async updateContactEnquiryStatus(
+    id: string, status: string, handledBy: string, notes?: string
+  ): Promise<ContactEnquiryRecord | undefined> {
+    const existing = await this.prisma.contactEnquiry.findUnique({ where: { id } });
+    if (!existing) return undefined;
+
+    const enquiry = await this.prisma.contactEnquiry.update({
+      where: { id },
+      data: {
+        status,
+        handledBy,
+        handledAt: new Date(),
+        ...(notes !== undefined ? { notes } : {}),
+      },
+    });
+    return this.mapEnquiry(enquiry);
+  }
+
+  public async countNewContactEnquiries(): Promise<number> {
+    return this.prisma.contactEnquiry.count({ where: { status: 'new' } });
+  }
+
+  public async countRecentEnquiriesFrom(email: string, sinceMs: number): Promise<number> {
+    return this.prisma.contactEnquiry.count({
+      where: {
+        email: email.trim().toLowerCase(),
+        createdAt: { gte: new Date(Date.now() - sinceMs) },
+      },
+    });
+  }
+
+  private mapEnquiry(e: {
+    id: string; name: string; email: string; phone: string | null; shopName: string | null;
+    message: string; status: string; source: string; handledBy: string | null;
+    handledAt: Date | null; notes: string | null; createdAt: Date;
+  }): ContactEnquiryRecord {
+    return {
+      id: e.id,
+      name: e.name,
+      email: e.email,
+      phone: e.phone ?? undefined,
+      shopName: e.shopName ?? undefined,
+      message: e.message,
+      status: e.status as ContactEnquiryRecord['status'],
+      source: e.source,
+      handledBy: e.handledBy ?? undefined,
+      handledAt: e.handledAt?.toISOString(),
+      notes: e.notes ?? undefined,
+      createdAt: e.createdAt.toISOString(),
+    };
   }
 
   public async listAdminAudit(limit = 100): Promise<AdminAuditEntry[]> {

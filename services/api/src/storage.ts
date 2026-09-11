@@ -105,6 +105,33 @@ export interface ShopRemovalResult {
   reason?: string;
 }
 
+/** An enquiry from the public contact form. */
+export interface ContactEnquiryRecord {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  shopName?: string;
+  message: string;
+  status: 'new' | 'read' | 'replied' | 'archived';
+  source: string;
+  handledBy?: string;
+  handledAt?: string;
+  notes?: string;
+  createdAt: string;
+}
+
+export interface CreateContactEnquiryInput {
+  name: string;
+  email: string;
+  phone?: string;
+  shopName?: string;
+  message: string;
+  source?: string;
+  ipHash?: string;
+  userAgent?: string;
+}
+
 export interface AdminAuditEntry {
   id: string;
   actorId: string;
@@ -260,6 +287,14 @@ export interface IStorageProvider {
   archiveShop(shopId: string, actor: string, reason?: string): Promise<ShopRemovalResult>;
   restoreShop(shopId: string): Promise<ShopRemovalResult>;
   recordAdminAudit(entry: Omit<AdminAuditEntry, 'id' | 'createdAt'>): Promise<void>;
+  createContactEnquiry(input: CreateContactEnquiryInput): Promise<ContactEnquiryRecord>;
+  listContactEnquiries(status?: string, limit?: number): Promise<ContactEnquiryRecord[]>;
+  updateContactEnquiryStatus(
+    id: string, status: string, handledBy: string, notes?: string
+  ): Promise<ContactEnquiryRecord | undefined>;
+  countNewContactEnquiries(): Promise<number>;
+  /** How many enquiries this sender has left recently, to blunt form spam. */
+  countRecentEnquiriesFrom(email: string, sinceMs: number): Promise<number>;
   listAdminAudit(limit?: number): Promise<AdminAuditEntry[]>;
   getAdminOverview(): Promise<AdminOverview>;
 
@@ -286,6 +321,7 @@ export class MemoryStorage implements IStorageProvider {
   private shopPlans = new Map<string, ShopPlan>();
   private archivedShops = new Map<string, { at: string; by: string; reason?: string }>();
   private auditLog: AdminAuditEntry[] = [];
+  private contactEnquiries: ContactEnquiryRecord[] = [];
   private s3Service = new S3StorageService();
 
   /** Appends to the job's lifecycle trail. Never overwrites earlier entries. */
@@ -812,6 +848,53 @@ export class MemoryStorage implements IStorageProvider {
     if (plan) this.shopPlans.set(shopId, { ...plan, planStatus: 'active' });
 
     return { shopId, ok: true, action: 'restored' };
+  }
+
+  public async createContactEnquiry(input: CreateContactEnquiryInput): Promise<ContactEnquiryRecord> {
+    const record: ContactEnquiryRecord = {
+      id: `enq_${crypto.randomBytes(8).toString('hex')}`,
+      name: input.name,
+      email: input.email,
+      phone: input.phone,
+      shopName: input.shopName,
+      message: input.message,
+      status: 'new',
+      source: input.source || 'landing',
+      createdAt: new Date().toISOString(),
+    };
+    this.contactEnquiries.unshift(record);
+    return record;
+  }
+
+  public async listContactEnquiries(status?: string, limit = 100): Promise<ContactEnquiryRecord[]> {
+    return this.contactEnquiries
+      .filter((e) => !status || status === 'all' || e.status === status)
+      .slice(0, limit);
+  }
+
+  public async updateContactEnquiryStatus(
+    id: string, status: string, handledBy: string, notes?: string
+  ): Promise<ContactEnquiryRecord | undefined> {
+    const record = this.contactEnquiries.find((e) => e.id === id);
+    if (!record) return undefined;
+
+    record.status = status as ContactEnquiryRecord['status'];
+    record.handledBy = handledBy;
+    record.handledAt = new Date().toISOString();
+    if (notes !== undefined) record.notes = notes;
+    return record;
+  }
+
+  public async countNewContactEnquiries(): Promise<number> {
+    return this.contactEnquiries.filter((e) => e.status === 'new').length;
+  }
+
+  public async countRecentEnquiriesFrom(email: string, sinceMs: number): Promise<number> {
+    const cutoff = Date.now() - sinceMs;
+    const needle = email.trim().toLowerCase();
+    return this.contactEnquiries.filter(
+      (e) => e.email.toLowerCase() === needle && new Date(e.createdAt).getTime() >= cutoff
+    ).length;
   }
 
   public async recordAdminAudit(entry: Omit<AdminAuditEntry, 'id' | 'createdAt'>): Promise<void> {

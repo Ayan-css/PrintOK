@@ -143,6 +143,32 @@
             </table>
           </div>
         </div>
+        <!-- Contact enquiries -->
+        <div class="card card--elevated admin-panel">
+          <div class="card-header admin-panel-header">
+            <div>
+              <h2 class="card-title">
+                Enquiries
+                <span class="badge badge-danger" id="enquiryNewBadge" hidden>0 new</span>
+              </h2>
+              <p class="meta-text">Messages from the contact form on the public site.</p>
+            </div>
+            <div class="admin-panel-tools">
+              <select class="form-input form-input--compact" id="enquiryFilter" aria-label="Filter enquiries">
+                <option value="new">New</option>
+                <option value="all">All</option>
+                <option value="read">Read</option>
+                <option value="replied">Replied</option>
+                <option value="archived">Archived</option>
+              </select>
+              <button class="btn btn-outline btn-sm" id="btnLoadEnquiries" type="button">Load</button>
+            </div>
+          </div>
+          <div class="enquiry-list" id="adminEnquiryList">
+            <p class="meta-text">Not loaded.</p>
+          </div>
+        </div>
+
         <!-- Operator audit trail -->
         <div class="card card--elevated admin-panel">
           <div class="card-header admin-panel-header">

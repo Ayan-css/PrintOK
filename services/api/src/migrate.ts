@@ -82,6 +82,23 @@ export async function runMigrations(): Promise<void> {
     );
   }
 
+  // Running the API locally normally means a .env pointing at the live database,
+  // and migrations run on boot — so starting the server on a developer machine
+  // would silently apply pending migrations to production. Deploys set
+  // NODE_ENV=production and are unaffected; anything else must opt in.
+  const target = process.env.DATABASE_URL;
+  const isLocalTarget = /@(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(target);
+
+  if (!isLocalTarget
+      && process.env.NODE_ENV !== 'production'
+      && process.env.PRINTOK_ALLOW_REMOTE_MIGRATE !== 'true') {
+    throw new Error(
+      'Refusing to migrate a remote database from a non-production process. ' +
+      'DATABASE_URL does not point at localhost. Use a local database for development, ' +
+      'or set PRINTOK_ALLOW_REMOTE_MIGRATE=true if this is deliberate.'
+    );
+  }
+
   const prisma = new PrismaClient();
   let hasHistory = false;
   let hasExistingSchema = false;

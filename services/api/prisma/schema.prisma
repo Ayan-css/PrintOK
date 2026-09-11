@@ -350,3 +350,36 @@ model AdminAuditLog {
   @@index([action, createdAt])
   @@index([actorId, createdAt])
 }
+
+/// Enquiry submitted from the public contact form.
+///
+/// Stored rather than emailed so nothing depends on a mail provider being
+/// configured, and so an enquiry cannot be silently lost. Notification can be
+/// layered on later without changing how they are captured.
+model ContactEnquiry {
+  id        String   @id
+  name      String
+  email     String
+  phone     String?
+  shopName  String?
+  message   String
+
+  /// new | read | replied | archived
+  status    String   @default("new")
+  /// Where it came from, e.g. "landing". Useful once there is more than one form.
+  source    String   @default("landing")
+
+  /// Coarse origin for abuse investigation. Hashed, never the raw address.
+  ipHash    String?
+  userAgent String?
+
+  handledBy String?
+  handledAt DateTime?
+  notes     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt @default(now())
+
+  @@index([status, createdAt])
+  @@index([email])
+}

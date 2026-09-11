@@ -739,6 +739,93 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(byId[createdShopId], 'refused');
   });
 
+  await t.test('22. Contact form stores enquiries and rejects junk', async () => {
+    const valid = {
+      name: 'Ramesh Kumar',
+      email: 'Ramesh@Example.com',
+      phone: '9876543210',
+      shopName: 'Kumar Stationery',
+      message: 'I have a Canon printer and want to connect it to PrintOk.',
+    };
+
+    const ok = await fetch(`${baseUrl}/api/contact`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(valid),
+    });
+    assert.strictEqual(ok.status, 201);
+    assert.ok(((await ok.json()) as any).enquiryId.startsWith('enq_'));
+
+    // Missing required fields.
+    const bare = await fetch(`${baseUrl}/api/contact`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Only a name' }),
+    });
+    assert.strictEqual(bare.status, 400);
+
+    const badEmail = await fetch(`${baseUrl}/api/contact`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...valid, email: 'not-an-email' }),
+    });
+    assert.strictEqual(badEmail.status, 400);
+
+    const tooShort = await fetch(`${baseUrl}/api/contact`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...valid, email: 'b@c.com', message: 'hi' }),
+    });
+    assert.strictEqual(tooShort.status, 400);
+
+    // A bot filling the hidden field is accepted so it cannot detect rejection,
+    // but nothing is stored.
+    const honeypot = await fetch(`${baseUrl}/api/contact`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Bot', email: 'bot@spam.test',
+        message: 'Buy cheap things from this link right now.',
+        website: 'http://spam.example',
+      }),
+    });
+    assert.strictEqual(honeypot.status, 201, 'the honeypot must not reveal itself');
+
+    // Enquiries are operator-only data.
+    const anon = await fetch(`${baseUrl}/api/admin/contact-enquiries`);
+    assert.strictEqual(anon.status, 401);
+
+    const login = await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'ops@printok.test', password: 'CorrectHorse99x' }),
+    });
+    const { token } = (await login.json()) as any;
+    const auth = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+    const listed = (await (await fetch(
+      `${baseUrl}/api/admin/contact-enquiries?status=all`, { headers: auth })).json()) as any;
+
+    const stored = listed.enquiries.find((e: any) => e.name === 'Ramesh Kumar');
+    assert.ok(stored, 'the valid enquiry must be stored');
+    assert.strictEqual(stored.email, 'ramesh@example.com', 'email is normalised');
+    assert.strictEqual(stored.status, 'new');
+    assert.ok(!listed.enquiries.some((e: any) => e.name === 'Bot'),
+      'the honeypot submission must not be stored');
+
+    // Status moves through the workflow.
+    const patched = await fetch(`${baseUrl}/api/admin/contact-enquiries/${stored.id}`, {
+      method: 'PATCH', headers: auth, body: JSON.stringify({ status: 'replied' }),
+    });
+    assert.strictEqual(patched.status, 200);
+    assert.strictEqual(((await patched.json()) as any).enquiry.status, 'replied');
+
+    const badStatus = await fetch(`${baseUrl}/api/admin/contact-enquiries/${stored.id}`, {
+      method: 'PATCH', headers: auth, body: JSON.stringify({ status: 'nonsense' }),
+    });
+    assert.strictEqual(badStatus.status, 400);
+  });
+
   await t.test('13. An unknown device token is rejected', async () => {
     const res = await fetch(`${baseUrl}/api/agent/jobs/pending`, {
       headers: { 'x-agent-device-token': 'dvt_deadbeef' },
