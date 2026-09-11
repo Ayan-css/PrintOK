@@ -10,10 +10,12 @@ import { PLAN_CATALOGUE, PAYMENT_GATEWAY_FEE_BPS, calculateShopNetCents } from '
 const TEST_WEBHOOK_SECRET = 'printok_test_webhook_secret';
 process.env.RAZORPAY_WEBHOOK_SECRET = TEST_WEBHOOK_SECRET;
 
-// Without this every route that issues or checks a session answers 500
-// ("JWT_SECRET is not configured"), which silently disabled the merchant and
-// admin coverage below: those tests were asserting against error responses
-// rather than the behaviour they describe.
+// This suite imports ../app directly rather than booting the server, so it
+// deliberately never loads .env and never touches real credentials. That also
+// means it gets no JWT_SECRET, and without one every route that issues or
+// checks a session answers 500 — which silently disabled the merchant and admin
+// coverage below: those tests were asserting against error responses rather
+// than the behaviour they describe.
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'printok_test_jwt_secret_key';
 
 /** Signs the exact bytes that will be sent, as Razorpay does. */

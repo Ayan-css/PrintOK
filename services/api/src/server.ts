@@ -1,3 +1,6 @@
+// Must come first: every import below may read configuration at module scope.
+import { assertRequiredEnv } from './env';
+
 import http from 'http';
 import { createApp } from './app';
 import { MemoryStorage, IStorageProvider } from './storage';
@@ -7,6 +10,10 @@ import { runMigrations } from './migrate';
 const PORT = process.env.PORT || 4000;
 
 async function startServer() {
+  // Say what is missing at boot, rather than as a 500 on the first request
+  // that happens to need it.
+  assertRequiredEnv();
+
   // Migrate before anything touches the database. A failure here must stop the
   // boot rather than let the API serve against a mismatched schema.
   await runMigrations();
