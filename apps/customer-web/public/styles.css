@@ -45,6 +45,10 @@
   /* Paper grain overlay */
   --color-grain:         rgba(0,0,0,0.04);
 
+  /* Fixed ink, for surfaces that stay light in every theme (the QR poster) */
+  --color-ink-muted:     #55534e;
+  --color-paper-tint:    #f0ede6;
+
   /* Desk surface the app sits on at desktop widths */
   --color-desk:          #e2ddd3;
   --color-desk-dot:      #0d0d0d;
@@ -2235,11 +2239,22 @@ body::before {
    surface is unreliable to scan, and this one is meant to be printed. */
 .qr-poster-preview {
   background: #fff;
-  border: var(--border);
+  border: 2px solid var(--color-black);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
   padding: var(--space-4);
   text-align: center;
+}
+
+/* The poster keeps its paper colours in dark mode along with its white
+   background, so its text cannot follow the theme: the shop name would be
+   white on white. These are the printed colours, not the page's. */
+.qr-poster-preview { color: var(--color-ink); }
+.qr-poster-preview .qr-printer-title,
+.qr-poster-preview .qr-url-badge { color: var(--color-ink-muted); }
+.qr-poster-preview .qr-url-badge {
+  background: var(--color-paper-tint);
+  border-color: var(--color-border-muted);
 }
 
 .qr-shop-title {
