@@ -45,13 +45,14 @@
           <span class="shop-status-text" id="shopNameDisplay">
             Loading Shop...
           </span>
+        </div>
       </header>
 
       <!-- GLOBAL TOP NAVIGATION BAR -->
       <nav class="global-nav-bar" aria-label="Global Navigation">
-        <a href="/?printer=prn_test" class="nav-pill active">📱 Customer View</a>
-        <a href="/dashboard.html" class="nav-pill">⚡ Merchant Dashboard</a>
-        <a href="/register.html" class="nav-pill">🏬 Register Shop</a>
+        <a href="/" id="navCustomerLink" class="nav-pill active" aria-current="page">📱 Customer View</a>
+        <a href="/dashboard" class="nav-pill">⚡ Merchant Dashboard</a>
+        <a href="/register" class="nav-pill">🏬 Register Shop</a>
       </nav>
 
       <!-- Offline Printer Warning Banner -->
@@ -131,11 +132,13 @@
             <span class="badge badge-primary">PDF / Word / Image</span>
           </div>
 
-          <div id="dropZone" class="file-drop-zone">
-            <input type="file" id="fileInput" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" hidden>
-            <div class="drop-zone-icon">📄</div>
+          <div id="dropZone" class="file-drop-zone" role="button" tabindex="0"
+               aria-label="Choose a document to print. Supports PDF, Word, Excel, CSV and images up to 25 megabytes.">
+            <input type="file" id="fileInput" class="sr-only"
+                   accept=".pdf,.doc,.docx,.xlsx,.csv,.pptx,.png,.jpg,.jpeg,.webp">
+            <div class="drop-zone-icon" aria-hidden="true">📄</div>
             <div class="drop-zone-text">Tap or Drop Document Here</div>
-            <div class="drop-zone-sub">Supports PDF, Word Documents &amp; Images (Max 25MB)</div>
+            <div class="drop-zone-sub">PDF, Word, Excel, CSV &amp; Images (Max 25MB)</div>
           </div>
 
           <!-- Uploaded File Details Pill -->
@@ -147,7 +150,7 @@
                 <div class="file-meta" id="infoFileMeta">Auto-detecting pages...</div>
               </div>
             </div>
-            <button id="btnRemoveFile" class="btn-icon" title="Remove File">✕</button>
+            <button id="btnRemoveFile" type="button" class="btn-icon" title="Remove File" aria-label="Remove selected file">✕</button>
           </div>
 
           <!-- Document Visual Preview Box -->
@@ -175,49 +178,52 @@
           </div>
 
           <!-- Page Selection Range Pills -->
-          <div class="form-group">
-            <label class="form-label">Page Selection Range</label>
+          <div class="form-group" role="group" aria-labelledby="lblPageRange">
+            <span class="form-label" id="lblPageRange">Page Selection Range</span>
             <div class="option-pill-group">
               <label class="option-pill active" id="pillPagesAll">
-                <input type="radio" name="pageRangeMode" value="all" checked hidden>
+                <input type="radio" name="pageRangeMode" value="all" class="sr-only" checked>
                 <span>📖 All Pages (<span id="allPagesCountBadge">1</span>)</span>
               </label>
               <label class="option-pill" id="pillPagesCustom">
-                <input type="radio" name="pageRangeMode" value="custom" hidden>
+                <input type="radio" name="pageRangeMode" value="custom" class="sr-only">
                 <span>✏️ Custom Range</span>
               </label>
             </div>
             <div id="customPageRangeBox" style="margin-top: 8px;" hidden>
-              <input type="text" id="inputCustomPageRange" class="form-input" placeholder="e.g. 1-3, 5, 8-10 (Leave blank for all)" value="">
+              <label class="sr-only" for="inputCustomPageRange">Custom page range</label>
+              <input type="text" id="inputCustomPageRange" class="form-input" inputmode="numeric"
+                     aria-describedby="customRangeHelp"
+                     placeholder="e.g. 1-3, 5, 8-10 (Leave blank for all)" value="">
               <div class="form-help" id="customRangeHelp">Enter page numbers and ranges separated by commas. E.g. 1-5, 8</div>
             </div>
           </div>
 
           <!-- Color Selector Pills -->
-          <div class="form-group">
-            <label class="form-label">Color Mode</label>
+          <div class="form-group" role="group" aria-labelledby="lblColorMode">
+            <span class="form-label" id="lblColorMode">Color Mode</span>
             <div class="option-pill-group">
               <label class="option-pill active" id="pillBw">
-                <input type="radio" name="colorMode" value="bw" checked hidden>
+                <input type="radio" name="colorMode" value="bw" class="sr-only" checked>
                 <span>📄 Black &amp; White</span>
               </label>
               <label class="option-pill" id="pillColor">
-                <input type="radio" name="colorMode" value="color" hidden>
+                <input type="radio" name="colorMode" value="color" class="sr-only">
                 <span>🎨 Full Color</span>
               </label>
             </div>
           </div>
 
           <!-- Duplex Paper Mode Pills -->
-          <div class="form-group">
-            <label class="form-label">Print Sides (Duplex)</label>
+          <div class="form-group" role="group" aria-labelledby="lblDuplexMode">
+            <span class="form-label" id="lblDuplexMode">Print Sides (Duplex)</span>
             <div class="option-pill-group">
               <label class="option-pill active" id="pillSingle">
-                <input type="radio" name="duplexMode" value="single" checked hidden>
+                <input type="radio" name="duplexMode" value="single" class="sr-only" checked>
                 <span>📄 Single-Sided</span>
               </label>
               <label class="option-pill" id="pillDuplex">
-                <input type="radio" name="duplexMode" value="duplex" hidden>
+                <input type="radio" name="duplexMode" value="duplex" class="sr-only">
                 <span>🔄 Back-to-Back (Duplex)</span>
               </label>
             </div>
@@ -226,7 +232,7 @@
           <!-- Paper Size & Copies Grid -->
           <div class="grid-2">
             <div class="form-group">
-              <label class="form-label">Paper Size</label>
+              <label class="form-label" for="selectPaperSize">Paper Size</label>
               <select id="selectPaperSize" class="form-select">
                 <option value="A4" selected>A4 Standard</option>
                 <option value="A3">A3 Poster</option>
@@ -235,11 +241,11 @@
             </div>
 
             <div class="form-group">
-              <label class="form-label">Copies</label>
+              <span class="form-label" id="lblCopies">Copies</span>
               <div class="stepper-box">
-                <button type="button" id="btnDecCopies" class="stepper-btn">-</button>
-                <span id="copiesVal" class="stepper-val">1</span>
-                <button type="button" id="btnIncCopies" class="stepper-btn">+</button>
+                <button type="button" id="btnDecCopies" class="stepper-btn" aria-label="Decrease copies">-</button>
+                <span id="copiesVal" class="stepper-val" role="status" aria-live="polite" aria-labelledby="lblCopies">1</span>
+                <button type="button" id="btnIncCopies" class="stepper-btn" aria-label="Increase copies">+</button>
               </div>
             </div>
           </div>
@@ -277,7 +283,7 @@
           <div class="token-number" id="statusTokenNumber">#001</div>
           <div class="token-sub">Show Token Number at Shop Counter</div>
           
-          <button id="btnCopyToken" class="btn btn-outline btn-sm" style="margin-top: 10px; border-color: #fff; color: #fff;">
+          <button id="btnCopyToken" type="button" class="btn btn-outline btn-sm" style="margin-top: 10px; border-color: #fff; color: #fff;">
             📋 Copy Token Number
           </button>
         </div>
@@ -286,7 +292,7 @@
         <div class="card card--elevated" style="margin-top: 14px;">
           <div class="card-header">
             <h3 class="card-title">Order Status</h3>
-            <span id="statusBadgeState" class="badge badge-queued">QUEUED</span>
+            <span id="statusBadgeState" class="badge badge-queued" role="status" aria-live="polite">Queued</span>
           </div>
 
           <!-- Progress Stepper Track -->

@@ -38,7 +38,7 @@
         </a>
 
         <!-- Agent Telemetry Live Badge -->
-        <div class="agent-live-pill" id="dashTelemetryPill">
+        <div class="agent-live-pill" id="dashTelemetryPill" role="status" aria-live="polite">
           <div class="status-pulse-dot online" id="dashAgentDot"></div>
           <span id="dashAgentStatusText">Checking Agent...</span>
         </div>
@@ -53,9 +53,9 @@
 
       <!-- GLOBAL TOP NAVIGATION BAR -->
       <nav class="global-nav-bar" aria-label="Global Navigation">
-        <a href="/?printer=prn_test" class="nav-pill">📱 Customer View</a>
-        <a href="/dashboard.html" class="nav-pill active">⚡ Merchant Dashboard</a>
-        <a href="/register.html" class="nav-pill">🏬 Register Shop</a>
+        <a href="/" id="navCustomerLink" class="nav-pill">📱 Customer View</a>
+        <a href="/dashboard" class="nav-pill active" aria-current="page">⚡ Merchant Dashboard</a>
+        <a href="/register" class="nav-pill">🏬 Register Shop</a>
       </nav>
 
       <!-- Main Dashboard Grid -->
@@ -69,7 +69,7 @@
             <div class="dash-printer-subtitle" id="dashPrinterTitle">Canon ImageRUNNER 2525</div>
           </div>
           <div class="dash-header-actions">
-            <a id="btnCustomerLink" href="/?printer=prn_test" target="_blank" class="btn btn-outline btn-sm" style="text-decoration: none;">
+            <a id="btnCustomerLink" href="/" target="_blank" rel="noopener" class="btn btn-outline btn-sm" style="text-decoration: none;">
               📱 Open Customer View
             </a>
           </div>
@@ -116,35 +116,39 @@
 
         <!-- Tabbed Dashboard Navigation -->
         <div class="card card--elevated" style="padding: 0;">
-          <div class="dash-tabs-bar">
-            <button class="dash-tab-btn active" id="tabBtnQueue" data-tab="tabQueue" type="button">
+          <div class="dash-tabs-bar" role="tablist" aria-label="Dashboard sections">
+            <button class="dash-tab-btn active" id="tabBtnQueue" data-tab="tabQueue" type="button"
+                    role="tab" aria-selected="true" aria-controls="tabQueue">
               ⚡ Live Print Queue
             </button>
-            <button class="dash-tab-btn" id="tabBtnPricing" data-tab="tabPricing" type="button">
+            <button class="dash-tab-btn" id="tabBtnPricing" data-tab="tabPricing" type="button"
+                    role="tab" aria-selected="false" aria-controls="tabPricing" tabindex="-1">
               ⚙️ Rates Matrix
             </button>
-            <button class="dash-tab-btn" id="tabBtnQr" data-tab="tabQr" type="button">
+            <button class="dash-tab-btn" id="tabBtnQr" data-tab="tabQr" type="button"
+                    role="tab" aria-selected="false" aria-controls="tabQr" tabindex="-1">
               🖨️ QR Poster &amp; Agent
             </button>
-            <button class="dash-tab-btn" id="tabBtnStats" data-tab="tabStats" type="button">
+            <button class="dash-tab-btn" id="tabBtnStats" data-tab="tabStats" type="button"
+                    role="tab" aria-selected="false" aria-controls="tabStats" tabindex="-1">
               📊 Revenue Analytics
             </button>
           </div>
 
           <!-- TAB 1: LIVE QUEUE & CASH APPROVALS -->
-          <div id="tabQueue" class="dash-tab-pane active" style="padding: 16px;">
+          <div id="tabQueue" role="tabpanel" aria-labelledby="tabBtnQueue" tabindex="0" class="dash-tab-pane active" style="padding: 16px;">
             <div class="table-toolbar">
               <div class="label-text">Counter Orders Feed</div>
               <div class="filter-pills">
-                <button class="filter-pill active" data-filter="all">All</button>
-                <button class="filter-pill" data-filter="AWAITING_PAYMENT">Awaiting Cash</button>
-                <button class="filter-pill" data-filter="QUEUED">Queued</button>
-                <button class="filter-pill" data-filter="COMPLETED">Printed</button>
+                <button type="button" class="filter-pill active" data-filter="all" aria-pressed="true">All</button>
+                <button type="button" class="filter-pill" data-filter="AwaitingPayment" aria-pressed="false">Awaiting Cash</button>
+                <button type="button" class="filter-pill" data-filter="Queued" aria-pressed="false">Queued</button>
+                <button type="button" class="filter-pill" data-filter="Completed" aria-pressed="false">Printed</button>
               </div>
             </div>
 
             <!-- Queue Feed Container -->
-            <div id="liveQueueList" class="queue-list">
+            <div id="liveQueueList" class="queue-list" aria-live="polite" aria-busy="false">
               <div class="empty-state">
                 <div class="empty-icon">📭</div>
                 <div class="empty-title">No Print Jobs Yet</div>
@@ -154,7 +158,7 @@
           </div>
 
           <!-- TAB 2: PRICING MATRIX CONFIGURATION -->
-          <div id="tabPricing" class="dash-tab-pane" hidden style="padding: 20px;">
+          <div id="tabPricing" role="tabpanel" aria-labelledby="tabBtnPricing" tabindex="0" class="dash-tab-pane" hidden style="padding: 20px;">
             <div class="card-header" style="padding:0 0 12px 0;">
               <div>
                 <h3 class="card-title">Custom Per-Page Print Rates</h3>
@@ -165,19 +169,19 @@
             <form id="formDashboardPricing">
               <div class="grid-2">
                 <div class="form-group">
-                  <label class="form-label">B&amp;W Single-Sided Rate (₹ / page)</label>
+                  <label class="form-label" for="rateBwSingle">B&amp;W Single-Sided Rate (₹ / page)</label>
                   <input type="number" id="rateBwSingle" class="form-input" value="2.00" step="0.5" min="0.5">
                 </div>
                 <div class="form-group">
-                  <label class="form-label">B&amp;W Duplex Rate (₹ / page)</label>
+                  <label class="form-label" for="rateBwDuplex">B&amp;W Duplex Rate (₹ / page)</label>
                   <input type="number" id="rateBwDuplex" class="form-input" value="1.50" step="0.5" min="0.5">
                 </div>
                 <div class="form-group">
-                  <label class="form-label">Color Single-Sided Rate (₹ / page)</label>
+                  <label class="form-label" for="rateColorSingle">Color Single-Sided Rate (₹ / page)</label>
                   <input type="number" id="rateColorSingle" class="form-input" value="10.00" step="1" min="1">
                 </div>
                 <div class="form-group">
-                  <label class="form-label">Color Duplex Rate (₹ / page)</label>
+                  <label class="form-label" for="rateColorDuplex">Color Duplex Rate (₹ / page)</label>
                   <input type="number" id="rateColorDuplex" class="form-input" value="8.00" step="1" min="1">
                 </div>
               </div>
@@ -189,7 +193,7 @@
           </div>
 
           <!-- TAB 3: QR POSTER & AGENT PAIRING -->
-          <div id="tabQr" class="dash-tab-pane" hidden style="padding: 20px;">
+          <div id="tabQr" role="tabpanel" aria-labelledby="tabBtnQr" tabindex="0" class="dash-tab-pane" hidden style="padding: 20px;">
             <div class="grid-2">
               
               <!-- QR Poster Card -->
@@ -241,7 +245,7 @@
                 </div>
 
                 <div class="grid-2" style="margin-top: 12px;">
-                  <a id="btnDownloadAgentExe" href="https://prinok-api.onrender.com/api/agent-installer" target="_blank" class="btn btn-primary btn-sm" style="text-decoration: none; text-align: center;">
+                  <a id="btnDownloadAgentExe" href="#" target="_blank" rel="noopener" class="btn btn-primary btn-sm" style="text-decoration: none; text-align: center;">
                     ⬇️ Download PrintAgent.exe
                   </a>
                   <a id="btnDownloadAgentConfigFile" href="#" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration: none; text-align: center;">
@@ -267,7 +271,7 @@
           </div>
 
           <!-- TAB 4: FINANCIAL ANALYTICS & INSTANT WITHDRAWAL -->
-          <div id="tabStats" class="dash-tab-pane" hidden style="padding: 20px;">
+          <div id="tabStats" role="tabpanel" aria-labelledby="tabBtnStats" tabindex="0" class="dash-tab-pane" hidden style="padding: 20px;">
             <div class="card-header" style="padding: 0 0 12px 0;">
               <div>
                 <h3 class="card-title">Earnings, Payouts &amp; Withdrawals</h3>
