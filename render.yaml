@@ -21,6 +21,10 @@ services:
       # Supabase Postgres connection string (pooled, port 6543).
       - key: DATABASE_URL
         sync: false
+      # Direct/session connection for Prisma Migrate only. Migrations hang on a
+      # transaction pooler, so this must use the session port (Supabase: 5432).
+      - key: DIRECT_URL
+        sync: false
       - key: API_BASE_URL
         sync: false
       - key: S3_ENDPOINT

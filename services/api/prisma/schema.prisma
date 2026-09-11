@@ -11,7 +11,18 @@
 
 datasource db {
   provider = "postgresql"
+
+  // Pooled connection (Supabase transaction pooler, port 6543). Correct for the
+  // application: many short-lived queries, no session state.
   url      = env("DATABASE_URL")
+
+  // Direct/session connection (port 5432) used only by Prisma Migrate.
+  //
+  // Migrations take a session-level advisory lock, which a transaction pooler
+  // does not support - running them through port 6543 blocks forever rather
+  // than failing, which is exactly how a deploy times out with "no open ports".
+  // Falls back to DATABASE_URL when unset so local development still works.
+  directUrl = env("DIRECT_URL")
 }
 
 generator client {

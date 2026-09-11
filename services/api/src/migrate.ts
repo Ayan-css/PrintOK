@@ -33,11 +33,36 @@ const BASELINE_MIGRATION = '20260911000000_baseline';
 const PACKAGE_ROOT = path.resolve(__dirname, '..');
 const SCHEMA_PATH = path.join(PACKAGE_ROOT, 'prisma', 'schema.prisma');
 
+/**
+ * Migrations must never hang. A Prisma Migrate command pointed at a transaction
+ * pooler blocks indefinitely on its advisory lock, and the host simply reports
+ * "no open ports" many minutes later, which says nothing about the real cause.
+ */
+const MIGRATION_TIMEOUT_MS = 120_000;
+
 function runPrisma(args: string[]): void {
-  execFileSync('npx', ['prisma', ...args, '--schema', SCHEMA_PATH], {
-    stdio: 'inherit',
-    cwd: PACKAGE_ROOT,
-  });
+  try {
+    execFileSync('npx', ['prisma', ...args, '--schema', SCHEMA_PATH], {
+      stdio: 'inherit',
+      cwd: PACKAGE_ROOT,
+      timeout: MIGRATION_TIMEOUT_MS,
+      env: {
+        ...process.env,
+        // Prisma Migrate needs a direct (session) connection. Fall back to the
+        // pooled URL only when no direct URL is configured.
+        DIRECT_URL: process.env.DIRECT_URL || process.env.DATABASE_URL || '',
+      },
+    });
+  } catch (err: any) {
+    if (err?.signal === 'SIGTERM' || err?.code === 'ETIMEDOUT') {
+      throw new Error(
+        `prisma ${args[0]} ${args[1] ?? ''} timed out after ${MIGRATION_TIMEOUT_MS / 1000}s. ` +
+        'This usually means DIRECT_URL points at a transaction pooler. Prisma Migrate needs a ' +
+        'direct/session connection (Supabase: port 5432, not 6543, and no pgbouncer=true).'
+      );
+    }
+    throw err;
+  }
 }
 
 export async function runMigrations(): Promise<void> {
