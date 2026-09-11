@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import { PLAN_CATALOGUE, PAYMENT_GATEWAY_FEE_BPS, calculateShopNetCents } from '@printok/shared-types';
 
 // Webhook signatures are verified for real now, so the suite signs its own
 // payloads rather than relying on a bypass string.
@@ -444,8 +447,8 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const shopsRes = await fetch(`${baseUrl}/api/admin/shops`, { headers: auth });
     const { shops } = (await shopsRes.json()) as any;
     assert.ok(shops.length >= 1);
-    assert.strictEqual(shops[0].plan.planTier, 'free', 'new shops default to the free tier');
-    assert.strictEqual(shops[0].plan.commissionBps, 500);
+    assert.strictEqual(shops[0].plan.planTier, 'start', 'new shops default to the entry tier');
+    assert.strictEqual(shops[0].plan.commissionBps, 800);
 
     // Login works with the stored hash, and is case-insensitive on email.
     const login = await fetch(`${baseUrl}/api/admin/login`, {
@@ -482,11 +485,11 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const ok = await fetch(`${baseUrl}/api/admin/shops/${shopId}/plan`, {
       method: 'PATCH',
       headers: auth,
-      body: JSON.stringify({ planTier: 'pro', commissionBps: 250 }),
+      body: JSON.stringify({ planTier: 'business', commissionBps: 250 }),
     });
     assert.strictEqual(ok.status, 200);
     const { plan } = (await ok.json()) as any;
-    assert.strictEqual(plan.planTier, 'pro');
+    assert.strictEqual(plan.planTier, 'business');
     assert.strictEqual(plan.commissionBps, 250);
 
     // A typo must not be able to charge a shop everything it earns.
@@ -500,9 +503,21 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const unknownTier = await fetch(`${baseUrl}/api/admin/shops/${shopId}/plan`, {
       method: 'PATCH',
       headers: auth,
-      body: JSON.stringify({ planTier: 'enterprise' }),
+      body: JSON.stringify({ planTier: 'platinum' }),
     });
     assert.strictEqual(unknownTier.status, 400);
+
+    // Moving tier without naming a fee adopts that tier's published rate, so a
+    // shop is never left paying its old rate on a new plan.
+    const moved = await fetch(`${baseUrl}/api/admin/shops/${shopId}/plan`, {
+      method: 'PATCH',
+      headers: auth,
+      body: JSON.stringify({ planTier: 'enterprise' }),
+    });
+    assert.strictEqual(moved.status, 200);
+    const movedPlan = ((await moved.json()) as any).plan;
+    assert.strictEqual(movedPlan.planTier, 'enterprise');
+    assert.strictEqual(movedPlan.commissionBps, 50, 'Enterprise publishes a 0.5% fee');
   });
 
   await t.test('16. Cash jobs wait for the shop, and are not auto-approved', async () => {
@@ -824,6 +839,66 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
       method: 'PATCH', headers: auth, body: JSON.stringify({ status: 'nonsense' }),
     });
     assert.strictEqual(badStatus.status, 400);
+  });
+
+  await t.test('23. Published plans match what the API charges', async () => {
+    const res = await fetch(`${baseUrl}/api/plans`);
+    assert.strictEqual(res.status, 200);
+    const { plans, paymentGateway } = (await res.json()) as any;
+
+    // The agreed catalogue, asserted explicitly rather than against itself, so
+    // an accidental edit to the numbers fails here.
+    assert.deepStrictEqual(
+      plans.map((p: any) => [p.tier, p.monthlyPriceCents, p.commissionBps, p.maxOrdersPerMonth, p.maxPrinters]),
+      [
+        ['start', 0, 800, 100, 1],
+        ['smart', 7900, 400, 500, 2],
+        ['business', 24900, 200, 2500, 5],
+        ['enterprise', 59900, 50, 10000, 10],
+      ]
+    );
+
+    assert.strictEqual(plans.filter((p: any) => p.popular).length, 1, 'exactly one tier is featured');
+    assert.strictEqual(plans.find((p: any) => p.popular).tier, 'business');
+    assert.strictEqual(paymentGateway.feeBps, PAYMENT_GATEWAY_FEE_BPS);
+  });
+
+  await t.test('24. The landing page cannot drift from the plan catalogue', async () => {
+    // The landing page keeps a static fallback so pricing still renders when
+    // the API is asleep. If that copy disagrees with the catalogue, a shop is
+    // shown a price it will not be charged.
+    const landing = fs.readFileSync(
+      path.join(__dirname, '../../../../apps/customer-web/public/landing.js'), 'utf8'
+    );
+
+    for (const plan of PLAN_CATALOGUE) {
+      const block = new RegExp(
+        `tier: '${plan.tier}'[\\s\\S]{0,400}?monthlyPriceCents: ${plan.monthlyPriceCents}` +
+        `[\\s\\S]{0,80}?commissionBps: ${plan.commissionBps}` +
+        `[\\s\\S]{0,120}?maxOrdersPerMonth: ${plan.maxOrdersPerMonth}` +
+        `[\\s\\S]{0,60}?maxPrinters: ${plan.maxPrinters}`
+      );
+      assert.match(landing, block,
+        `landing.js fallback for '${plan.tier}' does not match PLAN_CATALOGUE`);
+    }
+  });
+
+  await t.test('25. A shop keeps order value minus gateway and service fees', async () => {
+    // ₹100 order on Business: 2.36% gateway, 2% service fee.
+    const { gatewayFeeCents, serviceFeeCents, netCents } = calculateShopNetCents(10000, 200);
+    assert.strictEqual(gatewayFeeCents, 236);
+    assert.strictEqual(serviceFeeCents, 200);
+    assert.strictEqual(netCents, 9564);
+
+    // On Enterprise the gateway takes nearly five times what PrintOk does,
+    // which is exactly why the landing page states it separately.
+    const enterprise = calculateShopNetCents(10000, 50);
+    assert.strictEqual(enterprise.serviceFeeCents, 50);
+    assert.ok(enterprise.gatewayFeeCents > enterprise.serviceFeeCents * 4);
+
+    // Fees never exceed the order.
+    const tiny = calculateShopNetCents(100, 800);
+    assert.ok(tiny.netCents >= 0);
   });
 
   await t.test('13. An unknown device token is rejected', async () => {

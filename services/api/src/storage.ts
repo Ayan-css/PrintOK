@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import {
   Shop, Printer, PrintJob, PaymentState, PrintState, PrinterTelemetry,
-  MerchantPricingConfig, MerchantStats, JobEvent, FailureCategory,
+  MerchantPricingConfig, MerchantStats, JobEvent, FailureCategory, PlanTier, getPlan,
 } from '@printok/shared-types';
 import { S3StorageService } from './s3Storage';
 import { calculateJobPriceBreakdown, DEFAULT_PRICING_CONFIG } from './pricing';
@@ -81,7 +81,7 @@ export interface AdminUserRecord {
 
 /** Commercial settings for a shop (PRD 41, hybrid tier + commission). */
 export interface ShopPlan {
-  planTier: 'free' | 'starter' | 'pro';
+  planTier: PlanTier;
   commissionBps: number;
   planStatus: 'active' | 'suspended' | 'cancelled';
 }
@@ -680,7 +680,9 @@ export class MemoryStorage implements IStorageProvider {
 
   public async getShopPlan(shopId: string): Promise<ShopPlan | undefined> {
     if (!this.shops.has(shopId)) return undefined;
-    return this.shopPlans.get(shopId) || { planTier: 'free', commissionBps: 500, planStatus: 'active' };
+    const entry = getPlan('start')!;
+    return this.shopPlans.get(shopId)
+      || { planTier: 'start', commissionBps: entry.commissionBps, planStatus: 'active' };
   }
 
   public async updateShopPlan(shopId: string, plan: Partial<ShopPlan>): Promise<ShopPlan | undefined> {

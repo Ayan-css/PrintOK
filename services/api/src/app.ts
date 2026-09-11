@@ -9,6 +9,7 @@ import { processDocument } from './documentProcessor';
 import { RazorpayService } from './razorpayService';
 import { parsePrintState } from './jobStateMachine';
 import { classifyFailure } from './jobRecovery';
+import { PLAN_CATALOGUE, PLAN_TIERS, getPlan, PAYMENT_GATEWAY_FEE_BPS, PAYMENT_GATEWAY_LABEL } from '@printok/shared-types';
 import {
   hashPassword, verifyPassword, validatePasswordStrength,
   issueAdminToken, verifyAdminToken, canWrite, AdminTokenPayload,
@@ -578,6 +579,23 @@ export function createApp(
   });
 
   /**
+   * Published plan catalogue (PRD 41).
+   *
+   * Public and unauthenticated: the landing page renders from this, so the
+   * prices a shop is shown are the prices the API actually applies.
+   */
+  app.get('/api/plans', (_req: Request, res: Response) => {
+    return res.json({
+      plans: PLAN_CATALOGUE,
+      paymentGateway: {
+        feeBps: PAYMENT_GATEWAY_FEE_BPS,
+        label: PAYMENT_GATEWAY_LABEL,
+        note: 'Charged by Razorpay and deducted before settlement. Separate from the PrintOk service fee.',
+      },
+    });
+  });
+
+  /**
    * Public contact form submission.
    *
    * Enquiries are stored rather than emailed, so nothing depends on a mail
@@ -710,8 +728,10 @@ export function createApp(
     try {
       const { planTier, commissionBps, planStatus } = req.body || {};
 
-      if (planTier && !['free', 'starter', 'pro'].includes(planTier)) {
-        return res.status(400).json({ error: `Unknown plan tier '${planTier}'.` });
+      if (planTier && !PLAN_TIERS.includes(planTier)) {
+        return res.status(400).json({
+          error: `Unknown plan tier '${planTier}'. Expected one of: ${PLAN_TIERS.join(', ')}.`,
+        });
       }
       if (planStatus && !['active', 'suspended', 'cancelled'].includes(planStatus)) {
         return res.status(400).json({ error: `Unknown plan status '${planStatus}'.` });
@@ -724,8 +744,14 @@ export function createApp(
         }
       }
 
+      // Moving tier adopts that tier's published fee unless one is given
+      // explicitly, so a shop is never left paying its old rate on a new plan.
+      const resolvedCommission = commissionBps !== undefined
+        ? Number(commissionBps)
+        : (planTier ? getPlan(planTier)?.commissionBps : undefined);
+
       const plan = await storage.updateShopPlan(req.params.shopId, {
-        planTier, commissionBps: commissionBps !== undefined ? Number(commissionBps) : undefined, planStatus,
+        planTier, commissionBps: resolvedCommission, planStatus,
       });
       if (!plan) return res.status(404).json({ error: 'Shop not found.' });
 

@@ -1,90 +1,68 @@
 (function () {
   'use strict';
 
-  // ===========================================================================
-  // PRICING — PLACEHOLDER VALUES, NOT YET AGREED
-  //
-  // PRD section 41 leaves the commercial model explicitly undecided ("per-print
-  // platform fee; percentage transaction fee; shop subscription; hybrid model...
-  // remains a business decision"). The numbers below are illustrative so the
-  // page renders, and MUST be replaced with real figures before this site is
-  // promoted publicly. They are gathered here, in one block, so changing them
-  // is a single edit and never a hunt through markup.
-  //
-  // The admin console is the source of truth for what a shop is actually
-  // charged: tier and commission are set per shop there. Keep these in step.
-  // ===========================================================================
-  const PRICING_IS_PLACEHOLDER = true;
+  const API_BASE = window.PRINTOK_API_BASE
+    || (location.hostname === 'localhost' ? 'http://localhost:4000' : 'https://prinok-api.onrender.com');
 
   // ===========================================================================
   // CONTACT EMAIL — PLACEHOLDER, REPLACE BEFORE LAUNCH
   //
-  // Shown on the page and used as the fallback if the API is unreachable. It is
-  // deliberately an example.com address: a made-up address on a real domain
+  // Deliberately an example.com address: a made-up address on a real domain
   // would look genuine while silently dropping every message sent to it.
-  //
   // Set CONTACT_EMAIL_IS_PLACEHOLDER to false once this is a real inbox.
   // Enquiries are stored by the API regardless, so nothing is lost meanwhile.
   // ===========================================================================
   const CONTACT_EMAIL = 'your-support-address@example.com';
   const CONTACT_EMAIL_IS_PLACEHOLDER = true;
 
-  const API_BASE = window.PRINTOK_API_BASE
-    || (location.hostname === 'localhost' ? 'http://localhost:4000' : 'https://prinok-api.onrender.com');
-
-  const PRICING = [
+  // ===========================================================================
+  // PRICING
+  //
+  // Mirrors PLAN_CATALOGUE in @printok/shared-types, which is what the API
+  // actually charges. The page fetches /api/plans and renders that; this copy
+  // is the fallback for when the API is asleep or unreachable, so the pricing
+  // section is never blank.
+  //
+  // A test asserts these figures match the catalogue, so the two cannot drift.
+  // ===========================================================================
+  const FALLBACK_PLANS = [
     {
-      tier: 'free',
-      name: 'Free',
-      price: '₹0',
-      cadence: 'per month',
-      tagline: 'Get your counter online.',
-      commission: '8% per paid job',
+      tier: 'start', name: 'Start', monthlyPriceCents: 0, commissionBps: 800,
+      maxOrdersPerMonth: 100, maxPrinters: 1,
+      tagline: 'Put your counter online and see if it works for you.',
       features: [
-        '1 printer',
         'QR poster for your counter',
         'Customer pays by UPI or card',
-        'Live job queue',
+        'Live job queue and tokens',
+        'Your own per-page rates',
         'Email support',
       ],
-      cta: 'Start free',
-      highlighted: false,
     },
     {
-      tier: 'starter',
-      name: 'Starter',
-      price: '₹299',
-      cadence: 'per month',
+      tier: 'smart', name: 'Smart', monthlyPriceCents: 7900, commissionBps: 400,
+      maxOrdersPerMonth: 500, maxPrinters: 2,
       tagline: 'For a shop printing every day.',
-      commission: '5% per paid job',
-      features: [
-        'Up to 3 printers',
-        'Custom rate card per shop',
-        'Bulk and duplex pricing',
-        'Revenue analytics',
-        'Instant payouts',
-      ],
-      cta: 'Choose Starter',
-      highlighted: true,
+      features: ['Everything in Start', 'Bulk and duplex pricing', 'Revenue analytics', 'Instant payouts'],
     },
     {
-      tier: 'pro',
-      name: 'Pro',
-      price: '₹799',
-      cadence: 'per month',
-      tagline: 'For multi-counter and multi-branch shops.',
-      commission: '2.5% per paid job',
-      features: [
-        'Unlimited printers',
-        'Multiple connected PCs',
-        'Staff accounts',
-        'Priority support',
-        'Onboarding help',
-      ],
-      cta: 'Choose Pro',
-      highlighted: false,
+      tier: 'business', name: 'Business', monthlyPriceCents: 24900, commissionBps: 200,
+      maxOrdersPerMonth: 2500, maxPrinters: 5,
+      tagline: 'For a busy counter running several printers.',
+      features: ['Everything in Smart', 'Multiple connected PCs', 'Priority support', 'Onboarding help'],
+      popular: true,
+    },
+    {
+      tier: 'enterprise', name: 'Enterprise', monthlyPriceCents: 59900, commissionBps: 50,
+      maxOrdersPerMonth: 10000, maxPrinters: 10,
+      tagline: 'For print shops and multi-counter operations.',
+      features: ['Everything in Business', 'Lowest service fee', 'Highest order volume', 'Dedicated support contact'],
     },
   ];
+
+  const FALLBACK_GATEWAY = {
+    label: 'Razorpay 2% + 18% GST',
+    note: 'Charged by Razorpay and deducted before settlement. Separate from the PrintOk service fee.',
+  };
 
   function escapeHtml(value) {
     return String(value == null ? '' : value).replace(/[&<>"']/g, (c) => ({
@@ -92,142 +70,76 @@
     }[c]));
   }
 
-  function renderPricing() {
-    const grid = document.getElementById('pricingGrid');
-    if (!grid) return;
+  const rupees = (cents) => '\u20B9' + (cents / 100).toLocaleString('en-IN');
+  const percent = (bps) => {
+    const value = bps / 100;
+    return (Number.isInteger(value) ? value : value.toFixed(1)) + '%';
+  };
 
-    grid.innerHTML = PRICING.map((plan) => `
-      <article class="price-card${plan.highlighted ? ' price-card--featured' : ''}">
-        ${plan.highlighted ? '<div class="price-badge">Most popular</div>' : ''}
+  function planCardHtml(plan) {
+    return `
+      <article class="price-card${plan.popular ? ' price-card--featured' : ''}">
+        ${plan.popular ? '<div class="price-badge">Most popular</div>' : ''}
         <h3>${escapeHtml(plan.name)}</h3>
         <p class="price-tagline">${escapeHtml(plan.tagline)}</p>
+
         <div class="plan-price">
-          <span class="plan-figure">${escapeHtml(plan.price)}</span>
-          <span class="plan-cadence">${escapeHtml(plan.cadence)}</span>
+          <span class="plan-figure">${escapeHtml(
+            plan.monthlyPriceCents === 0 ? 'Free' : rupees(plan.monthlyPriceCents)
+          )}</span>
+          ${plan.monthlyPriceCents === 0
+            ? '<span class="plan-cadence">forever</span>'
+            : '<span class="plan-cadence">per month</span>'}
         </div>
-        <div class="price-commission">+ ${escapeHtml(plan.commission)}</div>
+
+        <div class="price-commission">
+          ${escapeHtml(percent(plan.commissionBps))} PrintOk service fee per order
+        </div>
+
+        <dl class="plan-limits">
+          <div><dt>Orders</dt><dd>${plan.maxOrdersPerMonth.toLocaleString('en-IN')}/month</dd></div>
+          <div><dt>Printers</dt><dd>${plan.maxPrinters}</dd></div>
+        </dl>
+
         <ul class="price-features">
           ${plan.features.map((f) => `<li>${escapeHtml(f)}</li>`).join('')}
         </ul>
+
         <a href="/register?plan=${encodeURIComponent(plan.tier)}"
-           class="btn ${plan.highlighted ? 'btn-primary' : 'btn-outline'} btn-block">
-          ${escapeHtml(plan.cta)}
+           class="btn ${plan.popular ? 'btn-primary' : 'btn-outline'} btn-block">
+          ${escapeHtml(plan.monthlyPriceCents === 0 ? 'Start free' : `Choose ${plan.name}`)}
         </a>
-      </article>
-    `).join('');
+      </article>`;
+  }
+
+  function renderPricing(plans, gateway) {
+    const grid = document.getElementById('pricingGrid');
+    if (!grid) return;
+
+    grid.innerHTML = plans.map(planCardHtml).join('');
 
     const footnote = document.getElementById('pricingFootnote');
     if (footnote) {
-      footnote.textContent = PRICING_IS_PLACEHOLDER
-        ? 'Indicative pricing — final plans and commission rates are being confirmed.'
-        : 'Commission is charged only on jobs a customer actually pays for.';
+      // Stated plainly: the gateway fee is not ours, and on Enterprise it is
+      // several times larger than our own. A shop finding that out from its
+      // payout instead of this page would rightly feel misled.
+      footnote.textContent =
+        `Payment gateway charges (${gateway.label}) are billed by Razorpay and deducted before ` +
+        'settlement. They are separate from the PrintOk service fee. ' +
+        'The service fee applies only to orders placed through PrintOk.';
     }
   }
 
-  /**
-   * Rotating phrase in the headline.
-   *
-   * Skipped entirely when the visitor has asked for reduced motion, and the
-   * element keeps its initial text so the headline always reads as a sentence.
-   */
-  function wireHeroRotator() {
-    const el = document.getElementById('heroRotator');
-    if (!el || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-
-    const phrases = [
-      'an instant print station',
-      'a self-service counter',
-      'a queue that runs itself',
-      'a shop that never explains twice',
-    ];
-
-    let index = 0;
-    setInterval(() => {
-      index = (index + 1) % phrases.length;
-      el.classList.add('is-swapping');
-      setTimeout(() => {
-        el.textContent = phrases[index];
-        el.classList.remove('is-swapping');
-      }, 260);
-    }, 3200);
-  }
-
-  /** Steps in the hero flow light up in sequence, suggesting the job moving. */
-  function wireHeroFlow() {
-    const flow = document.getElementById('heroFlow');
-    if (!flow || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-
-    const steps = [...flow.querySelectorAll('[data-flow-step]')];
-    if (!steps.length) return;
-
-    let active = 0;
-    setInterval(() => {
-      steps.forEach((s, i) => s.classList.toggle('is-active', i === active));
-      active = (active + 1) % steps.length;
-    }, 1400);
-  }
-
-  /** Counts the hero figures up once, the first time they are scrolled into view. */
-  function wireCounters() {
-    const counters = [...document.querySelectorAll('[data-count-to]')];
-    if (!counters.length) return;
-
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-    const run = (el) => {
-      const target = Number(el.getAttribute('data-count-to')) || 0;
-      if (reduced || target === 0) {
-        el.textContent = String(target);
-        return;
-      }
-
-      const duration = 900;
-      const start = performance.now();
-      const tick = (now) => {
-        const progress = Math.min((now - start) / duration, 1);
-        el.textContent = String(Math.round(target * progress));
-        if (progress < 1) requestAnimationFrame(tick);
-      };
-      requestAnimationFrame(tick);
-    };
-
-    if (typeof IntersectionObserver !== 'function') {
-      counters.forEach(run);
-      return;
+  /** Prefers the live catalogue so the page can never show a stale price. */
+  async function loadPricing() {
+    try {
+      const res = await fetch(`${API_BASE}/api/plans`);
+      if (!res.ok) throw new Error('unavailable');
+      const body = await res.json();
+      renderPricing(body.plans, body.paymentGateway || FALLBACK_GATEWAY);
+    } catch {
+      renderPricing(FALLBACK_PLANS, FALLBACK_GATEWAY);
     }
-
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach((entry) => {
-        if (!entry.isIntersecting) return;
-        run(entry.target);
-        observer.unobserve(entry.target);
-      });
-    }, { threshold: 0.4 });
-
-    counters.forEach((el) => observer.observe(el));
-  }
-
-  /** Reveals sections as they scroll into view. Purely decorative. */
-  function wireReveals() {
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    if (typeof IntersectionObserver !== 'function') return;
-
-    const targets = document.querySelectorAll(
-      '.feature-card, .benefit, .price-card, .arch-node, .faq-item, .contact-card'
-    );
-
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach((entry) => {
-        if (!entry.isIntersecting) return;
-        entry.target.classList.add('is-revealed');
-        observer.unobserve(entry.target);
-      });
-    }, { threshold: 0.12 });
-
-    targets.forEach((el) => {
-      el.classList.add('reveal');
-      observer.observe(el);
-    });
   }
 
   /** Renders the contact address from the single constant above. */
@@ -323,7 +235,7 @@
   }
 
   document.addEventListener('DOMContentLoaded', () => {
-    renderPricing();
+    loadPricing();
     wireAnchors();
     wireHeroRotator();
     wireHeroFlow();

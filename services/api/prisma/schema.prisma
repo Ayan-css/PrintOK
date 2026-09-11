@@ -38,13 +38,23 @@ model Shop {
   bankIfsc          String?
   payoutStatus      String       @default("active")
 
-  /// Subscription tier: free | starter | pro (PRD 41, hybrid model).
-  planTier          String       @default("free")
-  /// Platform commission in basis points (500 = 5.00%). Integer so money
-  /// arithmetic stays exact.
-  commissionBps     Int          @default(500)
+  /// Subscription tier: start | smart | business | enterprise (PRD 41).
+  /// Canonical definitions live in PLAN_CATALOGUE in @printok/shared-types.
+  planTier          String       @default("start")
+  /// PrintOk service fee in basis points (800 = 8.00%). Integer so money
+  /// arithmetic stays exact. Defaults to the tier's published rate.
+  commissionBps     Int          @default(800)
   /// active | suspended | cancelled
   planStatus        String       @default("active")
+
+  // --- Razorpay Route (automatic split settlement) ---
+  /// Linked account id (acc_...). Present once the shop is onboarded to Route.
+  razorpayAccountId     String?
+  /// not_linked | created | needs_kyc | activated | suspended
+  razorpayAccountStatus String   @default("not_linked")
+  razorpayLinkedAt      DateTime?
+  /// Last error Razorpay returned, so a stuck onboarding is explainable.
+  razorpayAccountError  String?
 
   /// Soft delete. An archived shop is hidden from normal listings but keeps its
   /// jobs and payment records, which is the only safe option once real money
@@ -62,6 +72,7 @@ model Shop {
 
   @@index([ownerEmail])
   @@index([archivedAt])
+  @@index([razorpayAccountId])
 }
 
 /// Per-shop rate card. Previously computed from hardcoded constants, which made
@@ -192,6 +203,15 @@ model PrintJob {
   /// Set when the stored document bytes were removed (PRD 15).
   documentDeletedAt DateTime?
 
+  // --- Route settlement ---
+  /// Razorpay transfer id (trf_...) for the shop's share of this payment.
+  transferId        String?
+  /// What the shop is owed from this order, after the PrintOk service fee.
+  transferAmountCents Int?
+  /// What PrintOk retained. Stored per job so payouts reconcile without
+  /// recomputing against a commission rate that may have changed since.
+  serviceFeeCents   Int?
+
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -201,6 +221,7 @@ model PrintJob {
   @@index([shopId, createdAt])
   @@index([printState, createdAt])
   @@index([paymentRef])
+  @@index([transferId])
 }
 
 /// Append-only lifecycle trail (PRD 9 and 22). One row per meaningful transition
