@@ -87,27 +87,125 @@
     <!-- HOW IT WORKS -->
     <section class="landing-section" id="how">
       <h2>How it works</h2>
-      <p class="section-lede">Three things to set up once, then it runs itself.</p>
+      <p class="section-lede">
+        Every screen your customer sees, from scanning the QR on your counter to collecting
+        the printout. No app to install and no account to make.
+      </p>
 
-      <div class="grid-3">
-        <article class="feature-card">
-          <div class="feature-icon">🏬</div>
-          <h3>1. List your shop</h3>
-          <p>Register in a couple of minutes. You get a QR poster for your counter and a
-             dashboard to watch the queue.</p>
-        </article>
-        <article class="feature-card">
-          <div class="feature-icon">💻</div>
-          <h3>2. Connect your PC</h3>
-          <p>Download the print agent, enter a pairing code from your dashboard, and your
-             existing printer is online. It reconnects on its own after a restart.</p>
-        </article>
-        <article class="feature-card">
-          <div class="feature-icon">🖨️</div>
-          <h3>3. Jobs just arrive</h3>
-          <p>Paid jobs print automatically. You only step in when something actually needs
-             you — paper out, or a job that needs a decision.</p>
-        </article>
+      <!-- Real screens from the running app, not mock-ups. Each is a phone-sized
+           capture, so they are given their intrinsic size to reserve layout space
+           and lazy-loaded: six images below the fold should not delay the hero. -->
+      <ol class="walkthrough">
+        <li class="walk-step">
+          <figure class="walk-shot">
+            <img src="/images/how-it-works/01-upload.webp" width="395" height="799"
+                 loading="lazy" decoding="async"
+                 alt="The PrintOk upload screen on a phone: the shop's name in the header
+                      and a dashed drop area reading Tap or Drop Document Here.">
+          </figure>
+          <div class="walk-copy">
+            <span class="walk-num">1</span>
+            <h3>Scan and upload</h3>
+            <p>Your QR opens this page in their browser. PDF, Word, Excel, CSV or a photo,
+               up to 25MB.</p>
+          </div>
+        </li>
+
+        <li class="walk-step">
+          <figure class="walk-shot">
+            <img src="/images/how-it-works/02-preview.webp" width="390" height="855"
+                 loading="lazy" decoding="async"
+                 alt="The uploaded PDF listed with its page count and size, above a preview
+                      showing the first page rendered, with next and previous controls.">
+          </figure>
+          <div class="walk-copy">
+            <span class="walk-num">2</span>
+            <h3>Check the document</h3>
+            <p>They see the pages rendered, not just a filename — so the wrong file gets
+               caught before anyone pays for it or you print it.</p>
+          </div>
+        </li>
+
+        <li class="walk-step">
+          <figure class="walk-shot">
+            <img src="/images/how-it-works/03-configure.webp" width="400" height="864"
+                 loading="lazy" decoding="async"
+                 alt="Print options on a phone: page range, black and white or colour,
+                      single or double sided, paper size and copies, with a running total
+                      above the pay buttons.">
+          </figure>
+          <div class="walk-copy">
+            <span class="walk-num">3</span>
+            <h3>Choose, and see the price</h3>
+            <p>Copies, colour, single or double sided, a page range. The total comes from
+               your rate card and updates as they choose.</p>
+          </div>
+        </li>
+
+        <li class="walk-step">
+          <figure class="walk-shot">
+            <img src="/images/how-it-works/04-checkout.webp" width="392" height="853"
+                 loading="lazy" decoding="async"
+                 alt="The Razorpay checkout opening on the phone, showing the PrintOk name,
+                      the amount due and a field for the customer's mobile number.">
+          </figure>
+          <div class="walk-copy">
+            <span class="walk-num">4</span>
+            <h3>Pay on their own phone</h3>
+            <p>Checkout runs on their handset, so nobody queues at your counter to pay.
+               Cash at the counter stays an option if you want it.</p>
+          </div>
+        </li>
+
+        <li class="walk-step">
+          <figure class="walk-shot">
+            <img src="/images/how-it-works/05-pay.webp" width="399" height="848"
+                 loading="lazy" decoding="async"
+                 alt="Razorpay payment options: a UPI QR code to scan with any UPI app,
+                      plus cards, EMI, netbanking, wallets and pay later.">
+          </figure>
+          <div class="walk-copy">
+            <span class="walk-num">5</span>
+            <h3>Any UPI app, or a card</h3>
+            <p>UPI, cards, netbanking and wallets. The money settles to your account —
+               PrintOk never holds it.</p>
+          </div>
+        </li>
+
+        <li class="walk-step">
+          <figure class="walk-shot">
+            <img src="/images/how-it-works/06-token.webp" width="391" height="858"
+                 loading="lazy" decoding="async"
+                 alt="The confirmation screen showing a large print token number, and an
+                      order status tracker moving through job created, payment verified,
+                      sent to printer and print complete.">
+          </figure>
+          <div class="walk-copy">
+            <span class="walk-num">6</span>
+            <h3>They collect by token</h3>
+            <p>The job reaches your printer and the status moves as it prints. They ask for
+               a number at the counter, not for help with a file.</p>
+          </div>
+        </li>
+      </ol>
+
+      <!-- The owner-side setup, which the customer screens above never show. -->
+      <div class="setup-strip">
+        <h3 class="setup-strip-title">What you do, once</h3>
+        <ol class="setup-steps">
+          <li>
+            <strong>List your shop.</strong> A couple of minutes. You get a QR poster for
+            your counter and a dashboard to watch the queue.
+          </li>
+          <li>
+            <strong>Connect your PC.</strong> Download the print agent and enter a pairing
+            code from your dashboard. It reconnects on its own after a restart.
+          </li>
+          <li>
+            <strong>Then nothing.</strong> Paid jobs print automatically. You step in only
+            when something needs you — paper out, or a job that needs a decision.
+          </li>
+        </ol>
       </div>
     </section>
 
