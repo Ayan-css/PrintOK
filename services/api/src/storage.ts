@@ -68,6 +68,53 @@ export interface PairingCodeRecord {
   usedAt?: string;
 }
 
+/** Platform operator account (PRD 21). */
+export interface AdminUserRecord {
+  id: string;
+  email: string;
+  name?: string;
+  role: string;
+  status: string;
+  lastLoginAt?: string;
+  createdAt: string;
+}
+
+/** Commercial settings for a shop (PRD 41, hybrid tier + commission). */
+export interface ShopPlan {
+  planTier: 'free' | 'starter' | 'pro';
+  commissionBps: number;
+  planStatus: 'active' | 'suspended' | 'cancelled';
+}
+
+/** One row of the admin shop table (PRD 21). */
+export interface AdminShopSummary {
+  shop: Shop;
+  plan: ShopPlan;
+  printerCount: number;
+  onlinePrinterCount: number;
+  pairedDeviceCount: number;
+  totalJobs: number;
+  jobsLast30Days: number;
+  grossRevenueCents: number;
+  commissionCents: number;
+  jobsRequiringAction: number;
+  lastJobAt?: string;
+}
+
+/** Network-wide operational overview (PRD 21, 25). */
+export interface AdminOverview {
+  totalShops: number;
+  activeShops: number;
+  totalPrinters: number;
+  onlinePrinters: number;
+  totalJobs: number;
+  jobsToday: number;
+  grossRevenueCents: number;
+  commissionCents: number;
+  jobsRequiringAction: number;
+  shopsByTier: Record<string, number>;
+}
+
 /** Outcome of one sweep for abandoned jobs (PRD 12, 13). */
 export interface ReclaimResult {
   /** Jobs safely returned to the queue because nothing reached paper. */
@@ -159,6 +206,17 @@ export interface IStorageProvider {
   recordSecurityEvent(event: Omit<AgentSecurityEventRecord, 'id' | 'createdAt'>): Promise<void>;
   listSecurityEvents(printerId: string, limit?: number): Promise<AgentSecurityEventRecord[]>;
 
+  // --- Platform administration (PRD 21, 41) ---
+  createAdminUser(input: { email: string; passwordHash: string; name?: string; role?: string }): Promise<AdminUserRecord>;
+  getAdminUserByEmail(email: string): Promise<(AdminUserRecord & { passwordHash: string }) | undefined>;
+  getAdminUser(id: string): Promise<AdminUserRecord | undefined>;
+  countAdminUsers(): Promise<number>;
+  recordAdminLogin(id: string): Promise<void>;
+  getShopPlan(shopId: string): Promise<ShopPlan | undefined>;
+  updateShopPlan(shopId: string, plan: Partial<ShopPlan>): Promise<ShopPlan | undefined>;
+  listAdminShopSummaries(limit?: number): Promise<AdminShopSummary[]>;
+  getAdminOverview(): Promise<AdminOverview>;
+
   recordHeartbeat(printerId: string, paperStatus?: string, deviceId?: string, agentVersion?: string): Promise<PrinterTelemetry>;
   getPrinterTelemetry(printerId: string): Promise<PrinterTelemetry>;
   getShopPricing(shopId: string): Promise<MerchantPricingConfig>;
@@ -178,6 +236,8 @@ export class MemoryStorage implements IStorageProvider {
   private agentDevices = new Map<string, AgentDeviceRecord & { tokenHash: string }>();
   private pairingCodes = new Map<string, PairingCodeRecord>();
   private securityEvents: AgentSecurityEventRecord[] = [];
+  private adminUsers = new Map<string, AdminUserRecord & { passwordHash: string }>();
+  private shopPlans = new Map<string, ShopPlan>();
   private s3Service = new S3StorageService();
 
   /** Appends to the job's lifecycle trail. Never overwrites earlier entries. */
@@ -487,6 +547,132 @@ export class MemoryStorage implements IStorageProvider {
   public async getJobsRequiringAction(shopId: string, limit = 50): Promise<PrintJob[]> {
     const jobs = await this.getRecentJobsForShop(shopId, 500);
     return jobs.filter((j) => j.printState === PrintState.RequiresShopAction).slice(0, limit);
+  }
+
+  // --- Platform administration (PRD 21, 41) ---
+
+  public async createAdminUser(input: {
+    email: string; passwordHash: string; name?: string; role?: string;
+  }): Promise<AdminUserRecord> {
+    const record: AdminUserRecord & { passwordHash: string } = {
+      id: `adm_${crypto.randomBytes(8).toString('hex')}`,
+      email: input.email.trim().toLowerCase(),
+      passwordHash: input.passwordHash,
+      name: input.name,
+      role: input.role || 'admin',
+      status: 'active',
+      createdAt: new Date().toISOString(),
+    };
+    this.adminUsers.set(record.email, record);
+    const { passwordHash, ...safe } = record;
+    return safe;
+  }
+
+  public async getAdminUserByEmail(
+    email: string
+  ): Promise<(AdminUserRecord & { passwordHash: string }) | undefined> {
+    return this.adminUsers.get(email.trim().toLowerCase());
+  }
+
+  public async getAdminUser(id: string): Promise<AdminUserRecord | undefined> {
+    for (const user of this.adminUsers.values()) {
+      if (user.id === id) {
+        const { passwordHash, ...safe } = user;
+        return safe;
+      }
+    }
+    return undefined;
+  }
+
+  public async countAdminUsers(): Promise<number> {
+    return this.adminUsers.size;
+  }
+
+  public async recordAdminLogin(id: string): Promise<void> {
+    for (const user of this.adminUsers.values()) {
+      if (user.id === id) user.lastLoginAt = new Date().toISOString();
+    }
+  }
+
+  public async getShopPlan(shopId: string): Promise<ShopPlan | undefined> {
+    if (!this.shops.has(shopId)) return undefined;
+    return this.shopPlans.get(shopId) || { planTier: 'free', commissionBps: 500, planStatus: 'active' };
+  }
+
+  public async updateShopPlan(shopId: string, plan: Partial<ShopPlan>): Promise<ShopPlan | undefined> {
+    const current = await this.getShopPlan(shopId);
+    if (!current) return undefined;
+    const updated: ShopPlan = { ...current, ...plan };
+    this.shopPlans.set(shopId, updated);
+    return updated;
+  }
+
+  public async listAdminShopSummaries(limit = 200): Promise<AdminShopSummary[]> {
+    const summaries: AdminShopSummary[] = [];
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+
+    for (const shop of [...this.shops.values()].slice(0, limit)) {
+      const printers = [...this.printers.values()].filter((p) => p.shopId === shop.id);
+      const jobs = [...this.printJobs.values()].filter((j) => j.shopId === shop.id);
+      const plan = (await this.getShopPlan(shop.id))!;
+
+      const grossRevenueCents = jobs
+        .filter((j) => j.paymentState === PaymentState.Paid)
+        .reduce((sum, j) => sum + j.totalPriceInCents, 0);
+
+      let onlinePrinterCount = 0;
+      for (const printer of printers) {
+        const telemetry = await this.getPrinterTelemetry(printer.id);
+        if (telemetry.isOnline) onlinePrinterCount++;
+      }
+
+      const lastJob = jobs
+        .map((j) => j.createdAt)
+        .sort()
+        .pop();
+
+      summaries.push({
+        shop,
+        plan,
+        printerCount: printers.length,
+        onlinePrinterCount,
+        pairedDeviceCount: [...this.agentDevices.values()].filter(
+          (d) => d.status === 'active' && printers.some((p) => p.id === d.printerId)
+        ).length,
+        totalJobs: jobs.length,
+        jobsLast30Days: jobs.filter((j) => new Date(j.createdAt).getTime() >= cutoff).length,
+        grossRevenueCents,
+        commissionCents: Math.round((grossRevenueCents * plan.commissionBps) / 10_000),
+        jobsRequiringAction: jobs.filter((j) => j.printState === PrintState.RequiresShopAction).length,
+        lastJobAt: lastJob,
+      });
+    }
+
+    return summaries;
+  }
+
+  public async getAdminOverview(): Promise<AdminOverview> {
+    const summaries = await this.listAdminShopSummaries(1000);
+    const todayStr = new Date().toISOString().substring(0, 10);
+    const allJobs = [...this.printJobs.values()];
+
+    const shopsByTier: Record<string, number> = {};
+    for (const s of summaries) {
+      shopsByTier[s.plan.planTier] = (shopsByTier[s.plan.planTier] || 0) + 1;
+    }
+
+    return {
+      totalShops: summaries.length,
+      activeShops: summaries.filter((s) => s.jobsLast30Days > 0).length,
+      totalPrinters: summaries.reduce((n, s) => n + s.printerCount, 0),
+      onlinePrinters: summaries.reduce((n, s) => n + s.onlinePrinterCount, 0),
+      totalJobs: allJobs.length,
+      jobsToday: allJobs.filter((j) => j.createdAt.startsWith(todayStr)).length,
+      grossRevenueCents: summaries.reduce((n, s) => n + s.grossRevenueCents, 0),
+      commissionCents: summaries.reduce((n, s) => n + s.commissionCents, 0),
+      jobsRequiringAction: summaries.reduce((n, s) => n + s.jobsRequiringAction, 0),
+      shopsByTier,
+    };
   }
 
   public async getIdempotencyRecord(key: string): Promise<StoredIdempotencyRecord | undefined> {

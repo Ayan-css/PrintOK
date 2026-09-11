@@ -14,6 +14,10 @@ app.get('/registration', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'register.html'));
 });
 
+app.get('/admin', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
 app.get('/dashboard', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
 });

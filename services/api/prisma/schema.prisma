@@ -37,6 +37,15 @@ model Shop {
   bankAccountNumber String?
   bankIfsc          String?
   payoutStatus      String       @default("active")
+
+  /// Subscription tier: free | starter | pro (PRD 41, hybrid model).
+  planTier          String       @default("free")
+  /// Platform commission in basis points (500 = 5.00%). Integer so money
+  /// arithmetic stays exact.
+  commissionBps     Int          @default(500)
+  /// active | suspended | cancelled
+  planStatus        String       @default("active")
+
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt @default(now())
 
@@ -287,4 +296,27 @@ model AgentSecurityEvent {
 
   @@index([printerId, createdAt])
   @@index([type, createdAt])
+}
+
+
+/// Platform operator account (PRD 21).
+///
+/// Separate from shops: these are PrintOk staff who can see across the whole
+/// network. Passwords are stored as scrypt hashes with a per-user salt, never
+/// reversibly.
+model AdminUser {
+  id           String    @id
+  email        String    @unique
+  passwordHash String
+  name         String?
+  /// owner | admin | support - support is read-only (PRD 24).
+  role         String    @default("admin")
+  /// active | disabled
+  status       String    @default("active")
+
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt @default(now())
+
+  @@index([email])
 }

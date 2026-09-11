@@ -2493,3 +2493,101 @@ body::before {
   .device-row { flex-direction: column; align-items: stretch; }
   .device-actions { justify-content: space-between; }
 }
+
+/* ---------------------------------------------------------------------------
+   Platform admin console
+   --------------------------------------------------------------------------- */
+
+.container--wide { max-width: 1200px; }
+
+.admin-auth-view {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 70vh;
+}
+
+.admin-auth-card { width: 100%; max-width: 420px; }
+
+.admin-topbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.admin-topbar-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.stat-tile {
+  padding: 14px;
+  border: 2px solid var(--color-border, #111);
+  border-radius: 10px;
+  background: var(--color-surface, #fff);
+}
+
+.stat-tile--accent { background: var(--color-surface-alt, #fffbe6); }
+
+/* Reserved for a state that genuinely needs a person to act. */
+.stat-tile--warn { border-color: #b42318; background: #fff4f3; }
+
+.stat-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.stat-value { font-size: 1.6rem; font-weight: 800; line-height: 1.2; margin-top: 4px; }
+.stat-sub { font-size: 0.75rem; opacity: 0.7; margin-top: 2px; }
+
+.admin-filter { max-width: 260px; }
+
+/* A wide table must scroll inside its own box rather than widening the page. */
+.table-scroll { overflow-x: auto; }
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 900px;
+}
+
+.admin-table th,
+.admin-table td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+  vertical-align: top;
+  font-size: 0.86rem;
+}
+
+.admin-table th {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 2px solid var(--color-border, #111);
+  white-space: nowrap;
+}
+
+.cell-title { font-weight: 700; }
+.cell-accent { font-weight: 700; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; }
+.warn-text { color: #b42318; font-weight: 600; }
+
+.form-input--compact { padding: 5px 8px; font-size: 0.82rem; max-width: 110px; }
+.commission-cell { display: flex; align-items: center; gap: 5px; }
+
+.badge-muted { background: #e6e6e6; color: #444; }
+
+@media (max-width: 640px) {
+  .admin-topbar { flex-direction: column; align-items: stretch; }
+  .admin-filter { max-width: none; }
+}

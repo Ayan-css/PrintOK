@@ -2,10 +2,29 @@
   "cleanUrls": true,
   "trailingSlash": false,
   "rewrites": [
-    { "source": "/register", "destination": "/apps/customer-web/public/register.html" },
-    { "source": "/registration", "destination": "/apps/customer-web/public/register.html" },
-    { "source": "/dashboard", "destination": "/apps/customer-web/public/dashboard.html" },
-    { "source": "/p/:printerId", "destination": "/apps/customer-web/public/index.html" },
-    { "source": "/(.*)", "destination": "/apps/customer-web/public/$1" }
+    {
+      "source": "/admin",
+      "destination": "/apps/customer-web/public/admin.html"
+    },
+    {
+      "source": "/register",
+      "destination": "/apps/customer-web/public/register.html"
+    },
+    {
+      "source": "/registration",
+      "destination": "/apps/customer-web/public/register.html"
+    },
+    {
+      "source": "/dashboard",
+      "destination": "/apps/customer-web/public/dashboard.html"
+    },
+    {
+      "source": "/p/:printerId",
+      "destination": "/apps/customer-web/public/index.html"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/apps/customer-web/public/$1"
+    }
   ]
 }

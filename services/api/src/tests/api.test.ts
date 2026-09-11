@@ -367,6 +367,130 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.ok(types.includes('LEGACY_KEY_USED'), 'shared-key use must be flagged');
   });
 
+  await t.test('14. Admin console: bootstrap, login and authorization', async () => {
+    // The console is unclaimed until the first operator is created.
+    const status = await fetch(`${baseUrl}/api/admin/status`);
+    assert.deepStrictEqual(await status.json(), { needsBootstrap: true });
+
+    // Weak passwords are refused outright.
+    const weak = await fetch(`${baseUrl}/api/admin/bootstrap`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'ops@printok.test', password: 'short' }),
+    });
+    assert.strictEqual(weak.status, 400);
+
+    const boot = await fetch(`${baseUrl}/api/admin/bootstrap`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'Ops@PrintOk.test', password: 'CorrectHorse99x', name: 'Ops' }),
+    });
+    assert.strictEqual(boot.status, 201);
+    const { token, user } = (await boot.json()) as any;
+    assert.strictEqual(user.email, 'ops@printok.test', 'email must be normalised');
+    assert.strictEqual(user.role, 'owner');
+    assert.ok(!('passwordHash' in user), 'the password hash must never leave the server');
+
+    // Bootstrap closes permanently once an operator exists.
+    const second = await fetch(`${baseUrl}/api/admin/bootstrap`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'attacker@evil.test', password: 'CorrectHorse99x' }),
+    });
+    assert.strictEqual(second.status, 409, 'bootstrap must not create a second admin');
+
+    // Admin data is not readable without a token.
+    const anon = await fetch(`${baseUrl}/api/admin/overview`);
+    assert.strictEqual(anon.status, 401);
+
+    const forged = await fetch(`${baseUrl}/api/admin/overview`, {
+      headers: { Authorization: 'Bearer not.a.token' },
+    });
+    assert.strictEqual(forged.status, 401);
+
+    // A token with a tampered payload must fail signature verification.
+    const [h, , sig] = token.split('.');
+    const evil = Buffer.from(JSON.stringify({
+      sub: 'adm_x', email: 'x@x', role: 'owner',
+      iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 3600,
+    })).toString('base64url');
+    const tampered = await fetch(`${baseUrl}/api/admin/overview`, {
+      headers: { Authorization: `Bearer ${h}.${evil}.${sig}` },
+    });
+    assert.strictEqual(tampered.status, 401, 'a re-signed payload must be rejected');
+
+    const auth = { Authorization: `Bearer ${token}` };
+
+    const overviewRes = await fetch(`${baseUrl}/api/admin/overview`, { headers: auth });
+    assert.strictEqual(overviewRes.status, 200);
+    const { overview } = (await overviewRes.json()) as any;
+    assert.ok(overview.totalShops >= 1);
+    assert.ok('commissionCents' in overview);
+
+    const shopsRes = await fetch(`${baseUrl}/api/admin/shops`, { headers: auth });
+    const { shops } = (await shopsRes.json()) as any;
+    assert.ok(shops.length >= 1);
+    assert.strictEqual(shops[0].plan.planTier, 'free', 'new shops default to the free tier');
+    assert.strictEqual(shops[0].plan.commissionBps, 500);
+
+    // Login works with the stored hash, and is case-insensitive on email.
+    const login = await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'OPS@printok.test', password: 'CorrectHorse99x' }),
+    });
+    assert.strictEqual(login.status, 200);
+
+    const badLogin = await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'ops@printok.test', password: 'WrongPassword1' }),
+    });
+    assert.strictEqual(badLogin.status, 401);
+    const badBody = (await badLogin.json()) as any;
+    assert.strictEqual(badBody.error, 'Incorrect email or password.',
+      'the message must not reveal whether the account exists');
+  });
+
+  await t.test('15. Admin can change a shop plan, within guard rails', async () => {
+    const login = await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'ops@printok.test', password: 'CorrectHorse99x' }),
+    });
+    const { token } = (await login.json()) as any;
+    const auth = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+    const shopsRes = await fetch(`${baseUrl}/api/admin/shops`, { headers: auth });
+    const { shops } = (await shopsRes.json()) as any;
+    const shopId = shops[0].shop.id;
+
+    const ok = await fetch(`${baseUrl}/api/admin/shops/${shopId}/plan`, {
+      method: 'PATCH',
+      headers: auth,
+      body: JSON.stringify({ planTier: 'pro', commissionBps: 250 }),
+    });
+    assert.strictEqual(ok.status, 200);
+    const { plan } = (await ok.json()) as any;
+    assert.strictEqual(plan.planTier, 'pro');
+    assert.strictEqual(plan.commissionBps, 250);
+
+    // A typo must not be able to charge a shop everything it earns.
+    const absurd = await fetch(`${baseUrl}/api/admin/shops/${shopId}/plan`, {
+      method: 'PATCH',
+      headers: auth,
+      body: JSON.stringify({ commissionBps: 10000 }),
+    });
+    assert.strictEqual(absurd.status, 400, 'commission above 50% must be refused');
+
+    const unknownTier = await fetch(`${baseUrl}/api/admin/shops/${shopId}/plan`, {
+      method: 'PATCH',
+      headers: auth,
+      body: JSON.stringify({ planTier: 'enterprise' }),
+    });
+    assert.strictEqual(unknownTier.status, 400);
+  });
+
   await t.test('13. An unknown device token is rejected', async () => {
     const res = await fetch(`${baseUrl}/api/agent/jobs/pending`, {
       headers: { 'x-agent-device-token': 'dvt_deadbeef' },

@@ -8,6 +8,7 @@ import {
 import {
   IStorageProvider, CreateJobOptions, TransitionMeta, StateChangeResult, StoredIdempotencyRecord,
   AgentDeviceRecord, AgentSecurityEventRecord, PairingCodeRecord, ReclaimResult,
+  AdminUserRecord, ShopPlan, AdminShopSummary, AdminOverview,
 } from './storage';
 import { S3StorageService } from './s3Storage';
 import { calculateJobPriceBreakdown, DEFAULT_PRICING_CONFIG } from './pricing';
@@ -693,6 +694,215 @@ export class PrismaStorage implements IStorageProvider {
       revokedReason: d.revokedReason ?? undefined,
       lastSeenAt: d.lastSeenAt?.toISOString(),
       createdAt: d.createdAt.toISOString(),
+    };
+  }
+
+  // ------------------------------------------------- platform administration ---
+
+  public async createAdminUser(input: {
+    email: string; passwordHash: string; name?: string; role?: string;
+  }): Promise<AdminUserRecord> {
+    const user = await this.prisma.adminUser.create({
+      data: {
+        id: `adm_${crypto.randomBytes(8).toString('hex')}`,
+        email: input.email.trim().toLowerCase(),
+        passwordHash: input.passwordHash,
+        name: input.name,
+        role: input.role || 'admin',
+      },
+    });
+    return this.mapAdmin(user);
+  }
+
+  public async getAdminUserByEmail(
+    email: string
+  ): Promise<(AdminUserRecord & { passwordHash: string }) | undefined> {
+    const user = await this.prisma.adminUser.findUnique({
+      where: { email: email.trim().toLowerCase() },
+    });
+    if (!user) return undefined;
+    return { ...this.mapAdmin(user), passwordHash: user.passwordHash };
+  }
+
+  public async getAdminUser(id: string): Promise<AdminUserRecord | undefined> {
+    const user = await this.prisma.adminUser.findUnique({ where: { id } });
+    return user ? this.mapAdmin(user) : undefined;
+  }
+
+  public async countAdminUsers(): Promise<number> {
+    return this.prisma.adminUser.count();
+  }
+
+  public async recordAdminLogin(id: string): Promise<void> {
+    await this.prisma.adminUser.updateMany({ where: { id }, data: { lastLoginAt: new Date() } });
+  }
+
+  public async getShopPlan(shopId: string): Promise<ShopPlan | undefined> {
+    const shop = await this.prisma.shop.findUnique({ where: { id: shopId } });
+    if (!shop) return undefined;
+    return {
+      planTier: shop.planTier as ShopPlan['planTier'],
+      commissionBps: shop.commissionBps,
+      planStatus: shop.planStatus as ShopPlan['planStatus'],
+    };
+  }
+
+  public async updateShopPlan(shopId: string, plan: Partial<ShopPlan>): Promise<ShopPlan | undefined> {
+    const existing = await this.prisma.shop.findUnique({ where: { id: shopId } });
+    if (!existing) return undefined;
+
+    const shop = await this.prisma.shop.update({
+      where: { id: shopId },
+      data: {
+        ...(plan.planTier ? { planTier: plan.planTier } : {}),
+        ...(plan.commissionBps !== undefined ? { commissionBps: plan.commissionBps } : {}),
+        ...(plan.planStatus ? { planStatus: plan.planStatus } : {}),
+      },
+    });
+
+    return {
+      planTier: shop.planTier as ShopPlan['planTier'],
+      commissionBps: shop.commissionBps,
+      planStatus: shop.planStatus as ShopPlan['planStatus'],
+    };
+  }
+
+  public async listAdminShopSummaries(limit = 200): Promise<AdminShopSummary[]> {
+    const shops = await this.prisma.shop.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      include: { printers: { include: { telemetry: true, devices: true } } },
+    });
+
+    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const onlineSince = new Date(Date.now() - HEARTBEAT_ONLINE_WINDOW_MS);
+
+    // Aggregate per shop in the database rather than loading every job.
+    const [paidTotals, jobCounts, recentCounts, actionCounts, lastJobs] = await Promise.all([
+      this.prisma.printJob.groupBy({
+        by: ['shopId'],
+        where: { paymentState: PaymentState.Paid },
+        _sum: { totalPriceInCents: true },
+      }),
+      this.prisma.printJob.groupBy({ by: ['shopId'], _count: { _all: true } }),
+      this.prisma.printJob.groupBy({
+        by: ['shopId'],
+        where: { createdAt: { gte: cutoff } },
+        _count: { _all: true },
+      }),
+      this.prisma.printJob.groupBy({
+        by: ['shopId'],
+        where: { printState: PrintState.RequiresShopAction },
+        _count: { _all: true },
+      }),
+      this.prisma.printJob.groupBy({
+        by: ['shopId'],
+        _max: { createdAt: true },
+      }),
+    ]);
+
+    const revenueByShop = new Map(paidTotals.map((r) => [r.shopId, r._sum.totalPriceInCents ?? 0]));
+    const totalByShop = new Map(jobCounts.map((r) => [r.shopId, r._count._all]));
+    const recentByShop = new Map(recentCounts.map((r) => [r.shopId, r._count._all]));
+    const actionByShop = new Map(actionCounts.map((r) => [r.shopId, r._count._all]));
+    const lastJobByShop = new Map(lastJobs.map((r) => [r.shopId, r._max.createdAt]));
+
+    return shops.map((shop) => {
+      const grossRevenueCents = revenueByShop.get(shop.id) ?? 0;
+      return {
+        shop: this.mapShop(shop),
+        plan: {
+          planTier: shop.planTier as ShopPlan['planTier'],
+          commissionBps: shop.commissionBps,
+          planStatus: shop.planStatus as ShopPlan['planStatus'],
+        },
+        printerCount: shop.printers.length,
+        onlinePrinterCount: shop.printers.filter(
+          (p) => p.telemetry && p.telemetry.lastHeartbeat >= onlineSince
+        ).length,
+        pairedDeviceCount: shop.printers.reduce(
+          (n, p) => n + p.devices.filter((d) => d.status === 'active').length,
+          0
+        ),
+        totalJobs: totalByShop.get(shop.id) ?? 0,
+        jobsLast30Days: recentByShop.get(shop.id) ?? 0,
+        grossRevenueCents,
+        // Commission is derived from the shop's own rate, not a global constant.
+        commissionCents: Math.round((grossRevenueCents * shop.commissionBps) / 10_000),
+        jobsRequiringAction: actionByShop.get(shop.id) ?? 0,
+        lastJobAt: lastJobByShop.get(shop.id)?.toISOString(),
+      };
+    });
+  }
+
+  public async getAdminOverview(): Promise<AdminOverview> {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const onlineSince = new Date(Date.now() - HEARTBEAT_ONLINE_WINDOW_MS);
+
+    const [
+      totalShops, totalPrinters, onlinePrinters, totalJobs, jobsToday,
+      requiresAction, tierGroups, shopsWithJobs,
+    ] = await Promise.all([
+      this.prisma.shop.count(),
+      this.prisma.printer.count(),
+      this.prisma.printerTelemetry.count({ where: { lastHeartbeat: { gte: onlineSince } } }),
+      this.prisma.printJob.count(),
+      this.prisma.printJob.count({ where: { createdAt: { gte: startOfDay } } }),
+      this.prisma.printJob.count({ where: { printState: PrintState.RequiresShopAction } }),
+      this.prisma.shop.groupBy({ by: ['planTier'], _count: { _all: true } }),
+      this.prisma.printJob.groupBy({
+        by: ['shopId'],
+        where: { createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } },
+        _count: { _all: true },
+      }),
+    ]);
+
+    // Commission varies per shop, so it cannot be a single aggregate query.
+    const paidByShop = await this.prisma.printJob.groupBy({
+      by: ['shopId'],
+      where: { paymentState: PaymentState.Paid },
+      _sum: { totalPriceInCents: true },
+    });
+    const shopRates = await this.prisma.shop.findMany({ select: { id: true, commissionBps: true } });
+    const rateByShop = new Map(shopRates.map((s) => [s.id, s.commissionBps]));
+
+    let grossRevenueCents = 0;
+    let commissionCents = 0;
+    for (const row of paidByShop) {
+      const gross = row._sum.totalPriceInCents ?? 0;
+      grossRevenueCents += gross;
+      commissionCents += Math.round((gross * (rateByShop.get(row.shopId) ?? 500)) / 10_000);
+    }
+
+    return {
+      totalShops,
+      // "Active" means it actually printed something recently, not merely that
+      // a row exists.
+      activeShops: shopsWithJobs.length,
+      totalPrinters,
+      onlinePrinters,
+      totalJobs,
+      jobsToday,
+      grossRevenueCents,
+      commissionCents,
+      jobsRequiringAction: requiresAction,
+      shopsByTier: Object.fromEntries(tierGroups.map((g) => [g.planTier, g._count._all])),
+    };
+  }
+
+  private mapAdmin(u: {
+    id: string; email: string; name: string | null; role: string; status: string;
+    lastLoginAt: Date | null; createdAt: Date;
+  }): AdminUserRecord {
+    return {
+      id: u.id,
+      email: u.email,
+      name: u.name ?? undefined,
+      role: u.role,
+      status: u.status,
+      lastLoginAt: u.lastLoginAt?.toISOString(),
+      createdAt: u.createdAt.toISOString(),
     };
   }
 

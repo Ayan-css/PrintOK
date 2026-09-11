@@ -10,6 +10,10 @@ import { RazorpayService } from './razorpayService';
 import { parsePrintState } from './jobStateMachine';
 import { classifyFailure } from './jobRecovery';
 import {
+  hashPassword, verifyPassword, validatePasswordStrength,
+  issueAdminToken, verifyAdminToken, canWrite, AdminTokenPayload,
+} from './adminAuth';
+import {
   generatePairingCode, normalizePairingCode, hashDeviceToken, issueDeviceToken,
   PAIRING_CODE_TTL_MS, AgentIdentity,
 } from './agentAuth';
@@ -308,6 +312,173 @@ export function createApp(
     }
   });
 
+  // ------------------------------------------------------------------------
+  // Platform administration (PRD 21)
+  // ------------------------------------------------------------------------
+
+  /**
+   * Resolves the calling operator from a bearer token.
+   * Responds and returns null on failure, so callers can `if (!admin) return;`.
+   */
+  async function authenticateAdmin(req: Request, res: Response): Promise<AdminTokenPayload | null> {
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+
+    if (!token) {
+      res.status(401).json({ error: 'Unauthorized: sign in to the admin console.' });
+      return null;
+    }
+
+    const payload = verifyAdminToken(token);
+    if (!payload) {
+      res.status(401).json({ error: 'Session expired or invalid. Sign in again.' });
+      return null;
+    }
+
+    // A disabled account must lose access immediately, not at token expiry.
+    const user = await storage.getAdminUser(payload.sub);
+    if (!user || user.status !== 'active') {
+      res.status(401).json({ error: 'This admin account is no longer active.' });
+      return null;
+    }
+
+    return payload;
+  }
+
+  /**
+   * Creates the very first operator account.
+   *
+   * Open only while no admin exists, so it cannot be used to add accounts later.
+   * Every subsequent account is created by a signed-in operator.
+   */
+  app.post('/api/admin/bootstrap', async (req: Request, res: Response) => {
+    try {
+      if ((await storage.countAdminUsers()) > 0) {
+        return res.status(409).json({ error: 'An administrator already exists. Sign in instead.' });
+      }
+
+      const { email, password, name } = req.body || {};
+      if (!email || !password) {
+        return res.status(400).json({ error: 'email and password are required.' });
+      }
+
+      const weak = validatePasswordStrength(String(password));
+      if (weak) return res.status(400).json({ error: weak });
+
+      const user = await storage.createAdminUser({
+        email: String(email),
+        passwordHash: hashPassword(String(password)),
+        name,
+        role: 'owner',
+      });
+
+      return res.status(201).json({ user, token: issueAdminToken(user) });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/admin/login', async (req: Request, res: Response) => {
+    try {
+      const { email, password } = req.body || {};
+      if (!email || !password) {
+        return res.status(400).json({ error: 'email and password are required.' });
+      }
+
+      const user = await storage.getAdminUserByEmail(String(email));
+
+      // Same response whether the account is missing, disabled or the password
+      // is wrong, so this cannot be used to enumerate accounts.
+      const ok = user && user.status === 'active' && verifyPassword(String(password), user.passwordHash);
+      if (!ok) {
+        return res.status(401).json({ error: 'Incorrect email or password.' });
+      }
+
+      await storage.recordAdminLogin(user!.id);
+      const { passwordHash, ...safe } = user!;
+      return res.json({ user: safe, token: issueAdminToken(safe) });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/admin/me', async (req: Request, res: Response) => {
+    const admin = await authenticateAdmin(req, res);
+    if (!admin) return;
+
+    const user = await storage.getAdminUser(admin.sub);
+    return res.json({ user, needsBootstrap: false });
+  });
+
+  /** Whether the console still needs its first account created. */
+  app.get('/api/admin/status', async (_req: Request, res: Response) => {
+    try {
+      return res.json({ needsBootstrap: (await storage.countAdminUsers()) === 0 });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/admin/overview', async (req: Request, res: Response) => {
+    const admin = await authenticateAdmin(req, res);
+    if (!admin) return;
+
+    try {
+      return res.json({ overview: await storage.getAdminOverview() });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/admin/shops', async (req: Request, res: Response) => {
+    const admin = await authenticateAdmin(req, res);
+    if (!admin) return;
+
+    try {
+      const limit = Math.min(Number(req.query.limit) || 200, 500);
+      return res.json({ shops: await storage.listAdminShopSummaries(limit) });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /** Change a shop's tier, commission or status (PRD 41). */
+  app.patch('/api/admin/shops/:shopId/plan', async (req: Request, res: Response) => {
+    const admin = await authenticateAdmin(req, res);
+    if (!admin) return;
+
+    if (!canWrite(admin.role)) {
+      return res.status(403).json({ error: 'Your role is read-only.' });
+    }
+
+    try {
+      const { planTier, commissionBps, planStatus } = req.body || {};
+
+      if (planTier && !['free', 'starter', 'pro'].includes(planTier)) {
+        return res.status(400).json({ error: `Unknown plan tier '${planTier}'.` });
+      }
+      if (planStatus && !['active', 'suspended', 'cancelled'].includes(planStatus)) {
+        return res.status(400).json({ error: `Unknown plan status '${planStatus}'.` });
+      }
+      if (commissionBps !== undefined) {
+        const bps = Number(commissionBps);
+        // Guard against a typo silently charging shops 100%.
+        if (!Number.isInteger(bps) || bps < 0 || bps > 5000) {
+          return res.status(400).json({ error: 'commissionBps must be an integer between 0 and 5000 (0-50%).' });
+        }
+      }
+
+      const plan = await storage.updateShopPlan(req.params.shopId, {
+        planTier, commissionBps: commissionBps !== undefined ? Number(commissionBps) : undefined, planStatus,
+      });
+      if (!plan) return res.status(404).json({ error: 'Shop not found.' });
+
+      return res.json({ plan });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   /**
    * Jobs waiting on a human decision (PRD 12).
    */
@@ -325,7 +496,10 @@ export function createApp(
    * Sweep for jobs abandoned by a dead or disconnected agent (PRD 12, 13).
    * Runs automatically on a timer; exposed so it can also be triggered manually.
    */
-  app.post('/api/admin/reclaim-stale-jobs', async (_req: Request, res: Response) => {
+  app.post('/api/admin/reclaim-stale-jobs', async (req: Request, res: Response) => {
+    const admin = await authenticateAdmin(req, res);
+    if (!admin) return;
+
     try {
       const result = await storage.reclaimStaleJobs();
       return res.json({

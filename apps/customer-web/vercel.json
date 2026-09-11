@@ -2,9 +2,25 @@
   "cleanUrls": true,
   "trailingSlash": false,
   "rewrites": [
-    { "source": "/register", "destination": "/register.html" },
-    { "source": "/registration", "destination": "/register.html" },
-    { "source": "/dashboard", "destination": "/dashboard.html" },
-    { "source": "/p/:printerId", "destination": "/index.html" }
+    {
+      "source": "/admin",
+      "destination": "/admin.html"
+    },
+    {
+      "source": "/register",
+      "destination": "/register.html"
+    },
+    {
+      "source": "/registration",
+      "destination": "/register.html"
+    },
+    {
+      "source": "/dashboard",
+      "destination": "/dashboard.html"
+    },
+    {
+      "source": "/p/:printerId",
+      "destination": "/index.html"
+    }
   ]
 }

@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Operator console: never index, never follow. -->
+  <meta name="robots" content="noindex, nofollow">
+  <title>Platform Admin — PrintOk</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <div class="container container--wide">
+
+      <!-- SIGN IN -->
+      <section id="adminAuthView" class="admin-auth-view">
+        <div class="card card--elevated admin-auth-card">
+          <div class="card-header" style="padding: 0 0 12px 0;">
+            <div>
+              <h1 class="card-title">PrintOk Platform Admin</h1>
+              <p class="meta-text" id="adminAuthSubtitle">Sign in to view the shop network.</p>
+            </div>
+          </div>
+
+          <form id="formAdminAuth" autocomplete="on">
+            <div class="form-group">
+              <label class="form-label" for="adminEmail">Email</label>
+              <input type="email" id="adminEmail" class="form-input" required autocomplete="username">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="adminPassword">Password</label>
+              <input type="password" id="adminPassword" class="form-input" required
+                     autocomplete="current-password" minlength="8">
+            </div>
+            <div class="form-group" id="adminNameGroup" hidden>
+              <label class="form-label" for="adminName">Your name</label>
+              <input type="text" id="adminName" class="form-input" autocomplete="name">
+            </div>
+
+            <div id="adminAuthError" class="alert alert-danger" hidden role="alert"></div>
+
+            <button type="submit" class="btn btn-primary btn-block" id="btnAdminAuth">Sign In</button>
+          </form>
+        </div>
+      </section>
+
+      <!-- CONSOLE -->
+      <section id="adminConsoleView" hidden>
+        <header class="admin-topbar">
+          <div>
+            <h1 class="card-title">Platform Admin</h1>
+            <p class="meta-text" id="adminWhoami">—</p>
+          </div>
+          <div class="admin-topbar-actions">
+            <button class="btn btn-outline btn-sm" id="btnAdminRefresh" type="button">↻ Refresh</button>
+            <button class="btn btn-outline btn-sm" id="btnAdminSignOut" type="button">Sign Out</button>
+          </div>
+        </header>
+
+        <!-- Network overview -->
+        <div class="stat-grid" id="adminStatGrid" aria-live="polite">
+          <div class="stat-tile">
+            <div class="stat-label">Shops</div>
+            <div class="stat-value" id="statShops">—</div>
+            <div class="stat-sub" id="statShopsSub">&nbsp;</div>
+          </div>
+          <div class="stat-tile">
+            <div class="stat-label">Printers Online</div>
+            <div class="stat-value" id="statPrinters">—</div>
+            <div class="stat-sub" id="statPrintersSub">&nbsp;</div>
+          </div>
+          <div class="stat-tile">
+            <div class="stat-label">Jobs Today</div>
+            <div class="stat-value" id="statJobsToday">—</div>
+            <div class="stat-sub" id="statJobsSub">&nbsp;</div>
+          </div>
+          <div class="stat-tile">
+            <div class="stat-label">Gross Volume</div>
+            <div class="stat-value" id="statGross">—</div>
+            <div class="stat-sub">Paid jobs, all time</div>
+          </div>
+          <div class="stat-tile stat-tile--accent">
+            <div class="stat-label">Platform Commission</div>
+            <div class="stat-value" id="statCommission">—</div>
+            <div class="stat-sub">Earned across the network</div>
+          </div>
+          <div class="stat-tile" id="statActionTile">
+            <div class="stat-label">Needs Attention</div>
+            <div class="stat-value" id="statAction">—</div>
+            <div class="stat-sub">Jobs awaiting a human</div>
+          </div>
+        </div>
+
+        <!-- Shop network -->
+        <div class="card card--elevated" style="margin-top: 18px;">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Shop Network</h2>
+              <p class="meta-text">Every registered shop, its plan and its activity.</p>
+            </div>
+            <input type="search" id="adminShopFilter" class="form-input admin-filter"
+                   placeholder="Filter by name, email or ID" aria-label="Filter shops">
+          </div>
+
+          <div class="table-scroll">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th scope="col">Shop</th>
+                  <th scope="col">Plan</th>
+                  <th scope="col">Commission</th>
+                  <th scope="col">Printers</th>
+                  <th scope="col">Jobs (30d)</th>
+                  <th scope="col">Gross</th>
+                  <th scope="col">Our Cut</th>
+                  <th scope="col">Status</th>
+                </tr>
+              </thead>
+              <tbody id="adminShopRows">
+                <tr><td colspan="8" class="meta-text" style="padding:16px;">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+  <div id="toastStack" class="toast-stack" aria-live="polite"></div>
+  <script src="/admin.js"></script>
+</body>
+</html>
