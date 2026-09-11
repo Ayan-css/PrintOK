@@ -557,12 +557,24 @@ document.addEventListener('DOMContentLoaded', () => {
           showToast('warning', 'Nothing to Copy', 'Agent settings appear once a shop is connected.');
           return;
         }
+        // Mirrors GET /api/printers/:id/agent-config. Both the flat keys and the
+        // nested PrintOk section are emitted so pre-1.1.0 agents keep working.
         const settings = JSON.stringify({
           PrintOkApiUrl: API_BASE,
+          AgentApiKey: apiKey.textContent,
           ShopId: dashShopId,
           PrinterId: dashPrinterId,
-          AgentApiKey: apiKey.textContent,
+          PrinterName: '',
+          PollIntervalMs: 3000,
           HeartbeatIntervalSeconds: 30,
+          PrintOk: {
+            ApiBaseUrl: API_BASE,
+            ApiKey: apiKey.textContent,
+            ShopId: dashShopId,
+            PrinterId: dashPrinterId,
+            PollIntervalMs: 3000,
+            HeartbeatIntervalSeconds: 30,
+          },
         }, null, 2);
 
         const ok = await copyToClipboard(settings);

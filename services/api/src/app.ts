@@ -173,12 +173,33 @@ export function createApp(
         return res.status(404).json({ error: 'Printer not found.' });
       }
 
+      const apiBaseUrl = process.env.API_BASE_URL || 'https://prinok-api.onrender.com';
+
+      // The agent resolves flat keys first and falls back to the nested PrintOk
+      // section, so emit both: agents released before v1.1.0 only read the nested
+      // shape and would otherwise silently fall back to localhost defaults.
       const config = {
-        PrintOkApiUrl: process.env.API_BASE_URL || 'https://prinok-api.onrender.com',
+        PrintOkApiUrl: apiBaseUrl,
+        AgentApiKey: printer.apiKey,
         ShopId: printer.shopId,
         PrinterId: printer.id,
-        AgentApiKey: printer.apiKey,
-        HeartbeatIntervalSeconds: 30
+        PrinterName: '',
+        PollIntervalMs: 3000,
+        HeartbeatIntervalSeconds: 30,
+        PrintOk: {
+          ApiBaseUrl: apiBaseUrl,
+          ApiKey: printer.apiKey,
+          ShopId: printer.shopId,
+          PrinterId: printer.id,
+          PollIntervalMs: 3000,
+          HeartbeatIntervalSeconds: 30
+        },
+        Logging: {
+          LogLevel: {
+            Default: 'Information',
+            'Microsoft.Hosting.Lifetime': 'Information'
+          }
+        }
       };
 
       res.setHeader('Content-Type', 'application/json');
@@ -192,15 +213,20 @@ export function createApp(
   /**
    * Download Windows Print Agent Executable / Release Package
    */
-  app.get('/api/agent-installer', async (_req: Request, res: Response) => {
+  app.get('/api/agent-installer', async (req: Request, res: Response) => {
     try {
+      // ?format=zip returns the full bundle (executable + appsettings template +
+      // setup instructions); the default is the standalone self-contained .exe.
+      const wantsBundle = String(req.query.format || '').toLowerCase() === 'zip';
+
       const customUrl = process.env.AGENT_INSTALLER_URL;
-      if (customUrl) {
+      if (customUrl && !wantsBundle) {
         return res.redirect(customUrl);
       }
 
       const githubRepo = process.env.PRINT_AGENT_REPO || 'Ayan-css/PrintOK';
-      const releaseUrl = `https://github.com/${githubRepo}/releases/download/latest/WindowsPrintAgent.exe`;
+      const assetName = wantsBundle ? 'PrintAgent-win-x64.zip' : 'WindowsPrintAgent.exe';
+      const releaseUrl = `https://github.com/${githubRepo}/releases/download/latest/${assetName}`;
       return res.redirect(releaseUrl);
     } catch (err: any) {
       return res.status(500).json({ error: err.message });

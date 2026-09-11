@@ -266,6 +266,31 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(res.status, 302);
     const location = res.headers.get('location');
     assert.ok(location && location.includes('github.com'));
+
+    const zipRes = await fetch(`${baseUrl}/api/agent-installer?format=zip`, { redirect: 'manual' });
+    assert.strictEqual(zipRes.status, 302);
+    const zipLocation = zipRes.headers.get('location');
+    assert.ok(zipLocation && zipLocation.endsWith('PrintAgent-win-x64.zip'));
+  });
+
+  await t.test('11. Agent Config download uses keys the Windows agent actually binds', async () => {
+    const res = await fetch(`${baseUrl}/api/printers/${createdPrinterId}/agent-config`);
+    assert.strictEqual(res.status, 200);
+
+    const config = (await res.json()) as any;
+
+    // The agent resolves the flat keys first...
+    assert.ok(config.PrintOkApiUrl, 'PrintOkApiUrl must be present');
+    assert.ok(config.AgentApiKey, 'AgentApiKey must be present');
+    assert.strictEqual(config.PrinterId, createdPrinterId);
+
+    // ...and falls back to the nested PrintOk section, which agents released
+    // before v1.1.0 read exclusively. Dropping either shape silently sends the
+    // agent back to its localhost defaults, so pin both.
+    assert.ok(config.PrintOk, 'nested PrintOk section must be present');
+    assert.strictEqual(config.PrintOk.ApiBaseUrl, config.PrintOkApiUrl);
+    assert.strictEqual(config.PrintOk.ApiKey, config.AgentApiKey);
+    assert.strictEqual(config.PrintOk.PrinterId, createdPrinterId);
   });
 
   server.close();

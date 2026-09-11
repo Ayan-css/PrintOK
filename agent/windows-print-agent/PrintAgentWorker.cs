@@ -1,7 +1,6 @@
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text.Json;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PrintOk.WindowsPrintAgent.Models;
@@ -13,6 +12,7 @@ public class PrintAgentWorker : BackgroundService
     private readonly ILogger<PrintAgentWorker> _logger;
     private readonly HttpClient _httpClient;
     private readonly IPrinterSpooler _spooler;
+    private readonly AgentSettings _settings;
     private readonly string _apiKey;
     private readonly int _pollIntervalMs;
 
@@ -20,13 +20,14 @@ public class PrintAgentWorker : BackgroundService
         ILogger<PrintAgentWorker> logger,
         IHttpClientFactory httpClientFactory,
         IPrinterSpooler spooler,
-        IConfiguration configuration)
+        AgentSettings settings)
     {
         _logger = logger;
         _httpClient = httpClientFactory.CreateClient("PrintOkApi");
         _spooler = spooler;
-        _apiKey = configuration["PrintOk:ApiKey"] ?? "prn_key_demo";
-        _pollIntervalMs = configuration.GetValue<int>("PrintOk:PollIntervalMs", 3000);
+        _settings = settings;
+        _apiKey = settings.ApiKey;
+        _pollIntervalMs = settings.PollIntervalMs;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -75,13 +76,18 @@ public class PrintAgentWorker : BackgroundService
                 {
                     _logger.LogDebug("Heartbeat telemetry successfully sent to Cloud API.");
                 }
+                else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+                {
+                    _logger.LogError(
+                        "Cloud API rejected the agent API key. Re-download appsettings.json from the PrintOk dashboard.");
+                }
             }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
                 _logger.LogWarning("Heartbeat send failed: {Message}", ex.Message);
             }
 
-            await Task.Delay(30000, cancellationToken);
+            await Task.Delay(_settings.HeartbeatIntervalMs, cancellationToken);
         }
     }
 
@@ -89,8 +95,7 @@ public class PrintAgentWorker : BackgroundService
     private async Task ConnectAndListenWebSocketAsync(CancellationToken cancellationToken)
     {
         int backoffMs = 1000;
-        var baseUri = _httpClient.BaseAddress?.ToString() ?? "http://localhost:4000";
-        var wsUri = baseUri.Replace("http://", "ws://").Replace("https://", "wss://").TrimEnd('/') + $"/ws/agent?apiKey={_apiKey}";
+        var wsUri = _settings.BuildWebSocketUri();
 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -98,7 +103,7 @@ public class PrintAgentWorker : BackgroundService
             {
                 using var ws = new System.Net.WebSockets.ClientWebSocket();
                 _logger.LogInformation("Connecting WebSocket push channel to {Uri}...", wsUri);
-                await ws.ConnectAsync(new Uri(wsUri), cancellationToken);
+                await ws.ConnectAsync(wsUri, cancellationToken);
                 _logger.LogInformation("WebSocket push channel connected.");
                 backoffMs = 1000; // Reset backoff on successful connection
 
@@ -116,7 +121,14 @@ public class PrintAgentWorker : BackgroundService
                     if (messageJson.Contains("JOB_QUEUED"))
                     {
                         _logger.LogInformation("Received real-time JOB_QUEUED push notification! Triggering immediate job processing...");
-                        await PollAndProcessJobsAsync(cancellationToken);
+                        try
+                        {
+                            await PollAndProcessJobsAsync(cancellationToken);
+                        }
+                        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+                        {
+                            _logger.LogError(ex, "Push-triggered job processing failed; the polling loop will retry.");
+                        }
                     }
                 }
             }
@@ -137,7 +149,15 @@ public class PrintAgentWorker : BackgroundService
         using var response = await _httpClient.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            _logger.LogWarning("Poll request returned non-success status code: {Code}", response.StatusCode);
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                _logger.LogError(
+                    "Cloud API rejected the agent API key while polling for jobs. Re-download appsettings.json from the PrintOk dashboard.");
+            }
+            else
+            {
+                _logger.LogWarning("Poll request returned non-success status code: {Code}", response.StatusCode);
+            }
             return;
         }
 
@@ -162,20 +182,12 @@ public class PrintAgentWorker : BackgroundService
         // 1. Report Status: Downloading -> Printing
         await UpdateJobStatusAsync(job.Id, "Printing", cancellationToken: cancellationToken);
 
-        string tempFilePath = Path.Combine(Path.GetTempPath(), $"printok_{job.Id}_{job.FileName}");
+        string safeFileName = string.Concat(job.FileName.Split(Path.GetInvalidFileNameChars()));
+        string tempFilePath = Path.Combine(Path.GetTempPath(), $"printok_{job.Id}_{safeFileName}");
         try
         {
             // 2. Decode temporary payload (base64 data URI for MVP)
-            byte[] fileBytes;
-            if (job.FileUrl.StartsWith("data:application/pdf;base64,"))
-            {
-                string base64Data = job.FileUrl["data:application/pdf;base64,".Length..];
-                fileBytes = Convert.FromBase64String(base64Data);
-            }
-            else
-            {
-                fileBytes = await _httpClient.GetByteArrayAsync(job.FileUrl, cancellationToken);
-            }
+            byte[] fileBytes = await LoadJobPayloadAsync(job, cancellationToken);
 
             // 3. Verify SHA-256 Checksum
             string computedChecksum = ComputeSha256(fileBytes);
@@ -223,6 +235,27 @@ public class PrintAgentWorker : BackgroundService
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Job payloads arrive either inline as a base64 data URI (local storage mode) or as
+    /// a presigned object-storage URL (S3 mode). The media type varies by document, so
+    /// match the data URI shape generically rather than assuming application/pdf.
+    /// </summary>
+    private async Task<byte[]> LoadJobPayloadAsync(PrintJob job, CancellationToken cancellationToken)
+    {
+        if (job.FileUrl.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        {
+            int separator = job.FileUrl.IndexOf("base64,", StringComparison.OrdinalIgnoreCase);
+            if (separator < 0)
+            {
+                throw new InvalidOperationException("Job payload is a data URI but is not base64 encoded.");
+            }
+
+            return Convert.FromBase64String(job.FileUrl[(separator + "base64,".Length)..]);
+        }
+
+        return await _httpClient.GetByteArrayAsync(job.FileUrl, cancellationToken);
     }
 
     private async Task UpdateJobStatusAsync(string jobId, string printState, string? errorMessage = null, CancellationToken cancellationToken = default)

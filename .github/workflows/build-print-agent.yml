@@ -28,20 +28,56 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore agent/windows-print-agent/WindowsPrintAgent.csproj
 
-      - name: Publish Windows Print Agent executable
-        run: |
-          dotnet publish agent/windows-print-agent/WindowsPrintAgent.csproj -c Release -r win-x64 --self-contained false -o bin/publish
+      - name: Publish self-contained single-file agent
+        # Self-contained so a shop PC can run the agent without installing the
+        # .NET runtime, and single-file so the .exe asset works on its own rather
+        # than needing its sibling DLLs.
+        run: >
+          dotnet publish agent/windows-print-agent/WindowsPrintAgent.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:EnableCompressionInSingleFile=true
+          -o bin/publish
 
-      - name: Zip Agent Binary
-        shell: powershell
+      - name: Verify published executable is standalone
+        shell: pwsh
         run: |
-          Compress-Archive -Path bin/publish/* -DestinationPath PrintAgent-win-x64.zip
+          $exe = 'bin/publish/WindowsPrintAgent.exe'
+          if (-not (Test-Path $exe)) { throw "Publish did not produce $exe" }
+          $sizeMb = [math]::Round((Get-Item $exe).Length / 1MB, 2)
+          Write-Host "WindowsPrintAgent.exe is $sizeMb MB"
+          # A framework-dependent apphost stub is ~0.15 MB; a self-contained
+          # single-file build is tens of MB. Fail loudly if we shipped the stub.
+          if ((Get-Item $exe).Length -lt 20MB) {
+            throw "WindowsPrintAgent.exe is only $sizeMb MB - it is not self-contained and will not run on a shop PC."
+          }
+          if (-not (Test-Path 'bin/publish/appsettings.json')) {
+            throw "appsettings.json template missing from publish output"
+          }
+
+      - name: Stage release bundle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path bundle | Out-Null
+          Copy-Item bin/publish/WindowsPrintAgent.exe bundle/
+          Copy-Item bin/publish/appsettings.json bundle/
+          Copy-Item agent/windows-print-agent/INSTALL.md bundle/README.txt
+          Compress-Archive -Path bundle/* -DestinationPath PrintAgent-win-x64.zip -Force
 
       - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
           name: PrintOk Windows Agent (Latest Release)
+          body: |
+            Self-contained Windows print agent for PrintOk shops. No .NET runtime install required.
+
+            - `PrintAgent-win-x64.zip` — recommended. Executable, `appsettings.json` template and setup instructions.
+            - `WindowsPrintAgent.exe` — standalone executable. Needs an `appsettings.json` beside it, or `--AgentApiKey=<key> --PrintOkApiUrl=<url>` on the command line.
+
+            Download your pre-filled `appsettings.json` from the PrintOk dashboard under **QR Poster & Agent**.
           draft: false
           prerelease: false
           files: |

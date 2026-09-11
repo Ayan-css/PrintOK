@@ -6,6 +6,24 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>PrintOk.WindowsPrintAgent</RootNamespace>
     <UserSecretsId>dotnet-WindowsPrintAgent-12345</UserSecretsId>
+    <Product>PrintOk Windows Print Agent</Product>
+    <Company>PrintOk</Company>
+    <Version>1.1.0</Version>
+  </PropertyGroup>
+
+  <!-- Published as a self-contained single file so a shop PC can run the agent
+       without installing the .NET runtime first. appsettings.json is deliberately
+       left beside the executable (not embedded) so merchants can drop in the
+       config they download from the dashboard. -->
+  <PropertyGroup>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DebugType>none</DebugType>
   </PropertyGroup>
 
   <ItemGroup>
