@@ -1290,13 +1290,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Without this, re-picking the same file fires no change event.
       if (fileInput) fileInput.value = '';
-      if (previewObjectUrl) {
-        URL.revokeObjectURL(previewObjectUrl);
-        previewObjectUrl = null;
-      }
-
-      const previewViewport = document.querySelector('.preview-viewport');
-      if (previewViewport) previewViewport.innerHTML = '';
+      DocumentPreview.reset();
 
       if (fileInfoBox) fileInfoBox.hidden = true;
       if (documentPreviewBox) documentPreviewBox.hidden = true;
@@ -1333,26 +1327,21 @@ document.addEventListener('DOMContentLoaded', () => {
       const arrayBuffer = await file.arrayBuffer();
       const bytes = new Uint8Array(arrayBuffer);
 
-      const previewViewport = document.querySelector('.preview-viewport');
-      if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
-      previewObjectUrl = URL.createObjectURL(file);
-      const blobUrl = previewObjectUrl;
 
+      // Render the real document rather than handing it to the browser's PDF
+      // plugin, which many mobile browsers do not have. Also lets the preview
+      // reflect the settings chosen below it.
       if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
         detectedTotalPages = detectPdfPages(bytes);
-        if (previewViewport) {
-          previewViewport.innerHTML = `<object data="${escapeHtml(blobUrl)}#toolbar=0&navpanes=0&page=1" type="application/pdf" style="width:100%; height:260px; border:none; border-radius:4px;"></object>`;
-        }
-      } else if (file.type.startsWith('image/')) {
-        detectedTotalPages = 1;
-        if (previewViewport) {
-          previewViewport.innerHTML = `<img src="${escapeHtml(blobUrl)}" alt="Preview of ${escapeHtml(file.name)}" style="max-width:100%; max-height:260px; object-fit:contain; border-radius:4px;">`;
-        }
       } else {
         detectedTotalPages = 1;
-        if (previewViewport) {
-          previewViewport.innerHTML = `<div class="preview-fallback"><div class="fallback-icon" aria-hidden="true">📄</div><div>${escapeHtml(file.name)}</div><div class="empty-sub">No inline preview for this format. Page count is confirmed by the shop before printing.</div></div>`;
-        }
+      }
+
+      await DocumentPreview.load(file);
+
+      // pdf.js is authoritative on page count when it managed to parse the file.
+      if (DocumentPreview.kind === 'pdf' && DocumentPreview.totalPages > 0) {
+        detectedTotalPages = DocumentPreview.totalPages;
       }
 
       if (infoFileMeta) {
@@ -1362,13 +1351,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const allPagesCountBadge = document.getElementById('allPagesCountBadge');
       if (allPagesCountBadge) allPagesCountBadge.textContent = String(detectedTotalPages);
 
-      const previewPageBadge = document.getElementById('previewPageBadge');
-      if (previewPageBadge) {
-        previewPageBadge.textContent = detectedTotalPages === 1 ? '1 page' : `${detectedTotalPages} pages`;
-      }
-
       pageCount = detectedTotalPages;
       updateCustomerPrice();
+      DocumentPreview.refresh();
 
       // Only enable checkout once the base64 payload is actually ready.
       try {
@@ -1521,6 +1506,8 @@ document.addEventListener('DOMContentLoaded', () => {
      * shop-configured rates, A3 multiplier and bulk discount all included.
      */
     function updateCustomerPrice() {
+      // Keep the preview in step with colour, duplex, copies and page range.
+      DocumentPreview.refresh();
       const cfg = shopPricing || {
         bwSinglePerPageCents: 200,
         bwDuplexPerPageCents: 150,
@@ -1570,6 +1557,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     rerenderPrice = updateCustomerPrice;
+
+    const btnPrevPage = document.getElementById('btnPrevPage');
+    const btnNextPage = document.getElementById('btnNextPage');
+    if (btnPrevPage) btnPrevPage.addEventListener('click', () => DocumentPreview.goTo(DocumentPreview.page - 1));
+    if (btnNextPage) btnNextPage.addEventListener('click', () => DocumentPreview.goTo(DocumentPreview.page + 1));
 
     // Payment submissions
     const btnPayCash = document.getElementById('btnPayCash');
@@ -1747,6 +1739,231 @@ document.addEventListener('DOMContentLoaded', () => {
   // ============================================================
   //  CLIENT-SIDE PDF PAGE COUNTER & RANGE PARSER HELPERS
   // ============================================================
+  /* =========================================================================
+   * Document preview
+   *
+   * The preview box existed in the markup but nothing ever drew into it, so a
+   * customer saw an empty panel. It now renders the real document and reflects
+   * the settings chosen underneath it: greyscale when B&W is selected, and the
+   * page range that will actually print. What you see is what comes out.
+   * ========================================================================= */
+
+  const DocumentPreview = {
+    pdf: null,
+    objectUrl: null,
+    page: 1,
+    totalPages: 1,
+    kind: 'none',   // pdf | image | unsupported | none
+
+    els() {
+      return {
+        box: document.getElementById('documentPreviewBox'),
+        img: document.getElementById('previewImg'),
+        canvas: document.getElementById('previewCanvas'),
+        fallback: document.getElementById('previewFallback'),
+        fallbackText: document.getElementById('previewFallbackText'),
+        badge: document.getElementById('previewPageBadge'),
+        nav: document.getElementById('previewNav'),
+        navLabel: document.getElementById('previewNavLabel'),
+        note: document.getElementById('previewNote'),
+      };
+    },
+
+    /** Releases the previous file's resources before loading another. */
+    reset() {
+      if (this.objectUrl) {
+        URL.revokeObjectURL(this.objectUrl);
+        this.objectUrl = null;
+      }
+      this.pdf = null;
+      this.page = 1;
+      this.totalPages = 1;
+      this.kind = 'none';
+
+      const { box, img, canvas, fallback, nav } = this.els();
+      if (img) { img.hidden = true; img.removeAttribute('src'); }
+      if (canvas) canvas.hidden = true;
+      if (fallback) fallback.hidden = false;
+      if (nav) nav.hidden = true;
+      if (box) box.hidden = true;
+    },
+
+    async load(file) {
+      this.reset();
+      const { box, fallbackText } = this.els();
+      if (box) box.hidden = false;
+      if (fallbackText) fallbackText.textContent = 'Loading preview…';
+
+      const name = (file.name || '').toLowerCase();
+
+      try {
+        if (/\.(png|jpe?g|webp|gif|bmp)$/.test(name)) {
+          await this.loadImage(file);
+        } else if (name.endsWith('.pdf')) {
+          await this.loadPdf(file);
+        } else {
+          // Office formats cannot be rendered in the browser without shipping a
+          // converter. Say so plainly rather than showing a blank box.
+          this.kind = 'unsupported';
+          if (fallbackText) {
+            fallbackText.textContent =
+              'Preview is not available for this file type, but it will print normally.';
+          }
+        }
+      } catch (err) {
+        this.kind = 'unsupported';
+        if (fallbackText) {
+          fallbackText.textContent = 'Could not render a preview. The file will still print.';
+        }
+      }
+
+      this.refresh();
+    },
+
+    async loadImage(file) {
+      const { img, fallback } = this.els();
+      this.objectUrl = URL.createObjectURL(file);
+      this.kind = 'image';
+      this.totalPages = 1;
+
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+        img.src = this.objectUrl;
+      });
+
+      img.hidden = false;
+      if (fallback) fallback.hidden = true;
+    },
+
+    async loadPdf(file) {
+      if (typeof window.pdfjsLib === 'undefined') {
+        throw new Error('pdf.js unavailable');
+      }
+
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+      const buffer = await file.arrayBuffer();
+      this.pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
+      this.kind = 'pdf';
+      this.totalPages = this.pdf.numPages;
+      this.page = 1;
+
+      await this.renderPdfPage();
+    },
+
+    async renderPdfPage() {
+      if (!this.pdf) return;
+
+      const { canvas, fallback } = this.els();
+      const page = await this.pdf.getPage(this.page);
+
+      // Fit the viewport width, capped so a huge page does not blow up memory.
+      const viewportWidth = Math.min(canvas.parentElement?.clientWidth || 320, 640);
+      const base = page.getViewport({ scale: 1 });
+      const scale = Math.min(viewportWidth / base.width, 2);
+      const viewport = page.getViewport({ scale });
+
+      canvas.width = Math.floor(viewport.width);
+      canvas.height = Math.floor(viewport.height);
+
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+
+      canvas.hidden = false;
+      if (fallback) fallback.hidden = true;
+    },
+
+    async goTo(pageNumber) {
+      if (this.kind !== 'pdf') return;
+      const next = Math.min(Math.max(1, pageNumber), this.totalPages);
+      if (next === this.page) return;
+      this.page = next;
+      await this.renderPdfPage();
+      this.refresh();
+    },
+
+    /** Parses "1-3, 5" into the set of pages that will print. */
+    selectedPages() {
+      if (pageRangeMode !== 'custom' || !customPageRange.trim()) {
+        return null; // all pages
+      }
+
+      const pages = new Set();
+      for (const part of customPageRange.split(',')) {
+        const piece = part.trim();
+        if (!piece) continue;
+
+        const range = piece.match(/^(\d+)\s*-\s*(\d+)$/);
+        if (range) {
+          const from = Number(range[1]);
+          const to = Number(range[2]);
+          for (let i = Math.min(from, to); i <= Math.max(from, to); i++) pages.add(i);
+        } else if (/^\d+$/.test(piece)) {
+          pages.add(Number(piece));
+        }
+      }
+      return pages.size ? pages : null;
+    },
+
+    /** Re-applies whatever the customer has selected below the preview. */
+    refresh() {
+      const { box, img, canvas, badge, nav, navLabel, note } = this.els();
+      if (!box || box.hidden) return;
+
+      // Black and white is shown as black and white, so the choice is visible
+      // rather than something the customer discovers at the counter.
+      const filter = isColor ? 'none' : 'grayscale(100%)';
+      if (img) img.style.filter = filter;
+      if (canvas) canvas.style.filter = filter;
+
+      const selected = this.selectedPages();
+      const printing = selected ? selected.size : this.totalPages;
+
+      if (badge) {
+        badge.textContent = this.kind === 'pdf'
+          ? `Page ${this.page} of ${this.totalPages}`
+          : `${this.totalPages} page${this.totalPages === 1 ? '' : 's'}`;
+      }
+
+      if (nav) nav.hidden = !(this.kind === 'pdf' && this.totalPages > 1);
+      if (navLabel) navLabel.textContent = `${this.page} / ${this.totalPages}`;
+
+      const prev = document.getElementById('btnPrevPage');
+      const next = document.getElementById('btnNextPage');
+      if (prev) prev.disabled = this.page <= 1;
+      if (next) next.disabled = this.page >= this.totalPages;
+
+      if (note) {
+        const bits = [];
+        bits.push(isColor ? 'Colour' : 'Black & white');
+        bits.push(isDuplex ? 'both sides' : 'one side');
+        if (selected) {
+          bits.push(`pages ${customPageRange.trim()} (${printing} of ${this.totalPages})`);
+        }
+        if (copies > 1) bits.push(`${copies} copies`);
+
+        let text = bits.join(' · ');
+
+        // Warn when the typed range does not exist in the document.
+        if (selected && [...selected].some((n) => n > this.totalPages)) {
+          text += ' — some selected pages are beyond the end of this document';
+          note.classList.add('preview-note--warn');
+        } else {
+          note.classList.remove('preview-note--warn');
+        }
+
+        // Dim pages that will not print, so the exclusion is visible.
+        const excluded = selected && this.kind === 'pdf' && !selected.has(this.page);
+        if (img) img.classList.toggle('preview--excluded', Boolean(excluded));
+        if (canvas) canvas.classList.toggle('preview--excluded', Boolean(excluded));
+        if (excluded) text += ' — this page will not be printed';
+
+        note.textContent = text;
+      }
+    },
+  };
+
   function detectPdfPages(uint8Array) {
     try {
       const str = new TextDecoder('latin1').decode(uint8Array);

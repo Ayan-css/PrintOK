@@ -17,6 +17,8 @@
 
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/styles.css">
+  <!-- pdf.js renders the real page the customer is about to print. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <!-- Razorpay Checkout. Without this the payment popup can never open. -->
   <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 </head>
@@ -154,13 +156,25 @@
               <span id="previewPageBadge" class="badge badge-neutral">Page 1</span>
             </div>
             <div class="preview-viewport">
-              <img id="previewImg" src="" alt="Document Preview" hidden>
+              <img id="previewImg" src="" alt="Preview of the document you are printing" hidden>
               <canvas id="previewCanvas" hidden></canvas>
               <div id="previewFallback" class="preview-fallback">
                 <div class="fallback-icon">📄</div>
-                <div id="previewFallbackText">PDF Document Loaded</div>
+                <div id="previewFallbackText">Loading preview…</div>
               </div>
             </div>
+
+            <!-- Page navigation, shown only for multi-page documents -->
+            <div class="preview-nav" id="previewNav" hidden>
+              <button type="button" class="btn btn-outline btn-sm" id="btnPrevPage"
+                      aria-label="Previous page">‹</button>
+              <span class="preview-nav-label" id="previewNavLabel" aria-live="polite">1 / 1</span>
+              <button type="button" class="btn btn-outline btn-sm" id="btnNextPage"
+                      aria-label="Next page">›</button>
+            </div>
+
+            <!-- Reflects the settings chosen below, so what you see is what prints -->
+            <p class="preview-note meta-text" id="previewNote"></p>
           </div>
         </div>
 

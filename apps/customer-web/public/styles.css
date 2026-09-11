@@ -3347,3 +3347,43 @@ body::before {
 
 .merchant-auth-card { width: 100%; max-width: 420px; padding: 28px 26px; }
 .merchant-auth-card a { color: var(--color-primary); font-weight: 600; }
+
+/* Document preview — reflects the print settings chosen below it */
+
+.preview-viewport img,
+.preview-viewport canvas {
+  max-width: 100%;
+  max-height: 300px;
+  object-fit: contain;
+  border-radius: 4px;
+  /* Colour/greyscale changes should read as a deliberate switch. */
+  transition: filter 180ms ease, opacity 180ms ease;
+}
+
+/* A page outside the selected range still shows, but reads as excluded. */
+.preview--excluded { opacity: 0.35; }
+
+.preview-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.preview-nav-label {
+  font-weight: 700;
+  font-size: 0.85rem;
+  min-width: 56px;
+  text-align: center;
+}
+
+.preview-nav .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.preview-note {
+  margin-top: 8px;
+  text-align: center;
+  line-height: 1.45;
+}
+
+.preview-note--warn { color: var(--color-danger); font-weight: 600; }
