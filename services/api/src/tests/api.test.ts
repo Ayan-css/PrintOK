@@ -1138,6 +1138,35 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.ok(body.shop.name);
   });
 
+  await t.test('30. Everything the landing page boot calls actually exists', async () => {
+    // landing.js runs as one IIFE: the DOMContentLoaded handler calls each
+    // wiring function in turn, so a single undefined name throws a
+    // ReferenceError that abandons every step after it. That is not a visible
+    // failure — the page still renders, it just quietly stops doing things.
+    //
+    // It has happened: a refactor dropped four animation functions while
+    // leaving their calls in place, which killed the hero animations and, with
+    // them, the contact form handler further down the same list.
+    const landing = fs.readFileSync(
+      path.join(__dirname, '../../../../apps/customer-web/public/landing.js'), 'utf8'
+    );
+
+    const boot = landing.match(/DOMContentLoaded[\s\S]*?\{([\s\S]*?)\n  \}\);/);
+    assert.ok(boot, 'could not find the DOMContentLoaded handler in landing.js');
+
+    const called = [...boot[1].matchAll(/^\s*([A-Za-z_$][\w$]*)\(\);/gm)].map((m) => m[1]);
+    assert.ok(called.length >= 4, `expected the boot sequence to call several functions, saw ${called.length}`);
+
+    for (const name of called) {
+      assert.match(
+        landing,
+        new RegExp(`function\\s+${name}\\s*\\(|(?:const|let|var)\\s+${name}\\s*=`),
+        `landing.js boot calls ${name}(), but nothing in the file defines it — ` +
+        'every step after it will be skipped at runtime'
+      );
+    }
+  });
+
   server.close();
 });
 
