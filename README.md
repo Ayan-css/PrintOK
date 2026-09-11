@@ -8,7 +8,7 @@ it automatically through a background agent. No new hardware, no counter queue.
 [`docs/prd-status.md`](docs/prd-status.md) for a section-by-section assessment
 against the PRD.
 
-> ⚠️ **Nothing has physically printed through this system yet.** The agent is
+> **Nothing has physically printed through this system yet.** The agent is
 > code-complete and CI-built, but has never run on a real Windows PC against a
 > real printer. Treat everything in the agent path as unverified.
 
@@ -92,7 +92,7 @@ docker compose up -d postgres # local database
 npm run build
 ```
 
-> ⚠️ Point `DATABASE_URL` at **localhost** for development. Migrations run on
+> **Important:** point `DATABASE_URL` at **localhost** for development. Migrations run on
 > application boot, and the API refuses to migrate a non-local database unless
 > `NODE_ENV=production` — a guard that exists because a local run once came close
 > to migrating production.
