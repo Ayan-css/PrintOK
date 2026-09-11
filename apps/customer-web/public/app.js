@@ -179,13 +179,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // ============================================================
   //  0. GLOBAL NAV — point "Customer View" at this browser's real shop
   // ============================================================
-  (function wireGlobalNav() {
-    const ctx = ShopContext.read();
-    if (!ctx.printerId) return;
-    const navLink = document.getElementById('navCustomerLink');
-    if (navLink) navLink.href = `/?printer=${encodeURIComponent(ctx.printerId)}`;
-  })();
-
   // ============================================================
   //  1. SHOP REGISTRATION DRIVER (/register, /registration, register.html)
   // ============================================================
@@ -879,10 +872,10 @@ document.addEventListener('DOMContentLoaded', () => {
           const qrImg = document.getElementById('dashQrImg');
           if (qrImg && printer.qrCodeDataUrl) qrImg.src = printer.qrCodeDataUrl;
 
+          // Deliberate merchant action: preview this printer's customer page.
+          // Not a standing route from the customer app into the dashboard.
           const customerLink = document.getElementById('btnCustomerLink');
           if (customerLink) customerLink.href = `/?printer=${encodeURIComponent(printer.id)}`;
-          const navLink = document.getElementById('navCustomerLink');
-          if (navLink) navLink.href = `/?printer=${encodeURIComponent(printer.id)}`;
 
           const exeLink = document.getElementById('btnDownloadAgentExe');
           if (exeLink) exeLink.href = `${API_BASE}/api/agent-installer`;
