@@ -6,6 +6,18 @@ export interface RazorpayOrderResult {
   currency: string;
   keyId: string;
   isSimulated: boolean;
+  /** Set when the order carries a Route split to the shop's linked account. */
+  transferAmountCents?: number;
+  serviceFeeCents?: number;
+}
+
+/** A Route split attached to an order at creation time. */
+export interface OrderTransfer {
+  account: string;
+  amount: number;
+  currency: 'INR';
+  notes?: Record<string, string>;
+  on_hold?: boolean;
 }
 
 export class RazorpayService {
@@ -23,17 +35,30 @@ export class RazorpayService {
    * Create a Razorpay Order for a print job.
    * Uses real Razorpay API if keys are provided, else falls back to mock order for dev.
    */
-  public async createOrder(jobId: string, amountInCents: number): Promise<RazorpayOrderResult> {
+  /**
+   * Creates a Razorpay order.
+   *
+   * When `transfer` is supplied the order carries a Route instruction, so
+   * Razorpay settles the shop's share to its own linked account at capture and
+   * PrintOk retains only the service fee. Without it, the whole amount lands in
+   * the platform account and the shop must be paid out separately.
+   */
+  public async createOrder(
+    jobId: string,
+    amountInCents: number,
+    transfer?: OrderTransfer
+  ): Promise<RazorpayOrderResult> {
     if (this.keyId && this.keySecret) {
       try {
         const Razorpay = require('razorpay');
         const instance = new Razorpay({ key_id: this.keyId, key_secret: this.keySecret });
-        
+
         const order = await instance.orders.create({
           amount: amountInCents, // Razorpay takes amount in smallest currency unit (paise/cents)
           currency: 'INR',
           receipt: `rcpt_${jobId}`,
           notes: { jobId },
+          ...(transfer ? { transfers: [transfer] } : {}),
         });
 
         return {
@@ -42,6 +67,12 @@ export class RazorpayService {
           currency: order.currency,
           keyId: this.keyId,
           isSimulated: false,
+          ...(transfer
+            ? {
+                transferAmountCents: transfer.amount,
+                serviceFeeCents: amountInCents - transfer.amount,
+              }
+            : {}),
         };
       } catch (err: any) {
         // A simulated order in production would show the customer a checkout

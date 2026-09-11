@@ -7,6 +7,7 @@ import { generateQrCodeDataUrl } from './qr';
 import { AgentWebSocketServer } from './ws';
 import { processDocument } from './documentProcessor';
 import { RazorpayService } from './razorpayService';
+import { RazorpayRouteService } from './razorpayRoute';
 import { parsePrintState } from './jobStateMachine';
 import { classifyFailure } from './jobRecovery';
 import { PLAN_CATALOGUE, PLAN_TIERS, getPlan, PAYMENT_GATEWAY_FEE_BPS, PAYMENT_GATEWAY_LABEL } from '@printok/shared-types';
@@ -106,6 +107,7 @@ export function createApp(
 ) {
   const app = express();
   const razorpayService = new RazorpayService();
+  const routeService = new RazorpayRouteService();
 
   app.use(cors());
   app.use(express.json({
@@ -572,6 +574,107 @@ export function createApp(
         results,
         succeeded: results.filter((r) => r.ok).length,
         refused: results.filter((r) => !r.ok).length,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Link a shop to Razorpay Route so its share settles automatically.
+   *
+   * Creating the account is only the first step: Razorpay still requires the
+   * shop to complete KYC before any transfer will settle, which is why the
+   * status is surfaced rather than assumed.
+   */
+  app.post('/api/shops/:shopId/razorpay-account', async (req: Request, res: Response) => {
+    try {
+      const { shopId } = req.params;
+      const shop = await storage.getShop(shopId);
+      if (!shop) return res.status(404).json({ error: 'Shop not found.' });
+
+      if (shop.razorpayAccountId) {
+        // Already linked; report live status rather than creating a duplicate.
+        const status = await routeService.getLinkedAccount(shop.razorpayAccountId);
+        if (status.ok && status.status) {
+          await storage.updateShopRazorpayAccount(shopId, {
+            accountId: shop.razorpayAccountId,
+            status: status.status === 'activated' ? 'activated' : 'needs_kyc',
+          });
+        }
+        return res.json({
+          accountId: shop.razorpayAccountId,
+          status: status.status || shop.razorpayAccountStatus,
+          alreadyLinked: true,
+        });
+      }
+
+      const { phone, businessType, contactName, address } = req.body || {};
+
+      const result = await routeService.createLinkedAccount({
+        shopId,
+        shopName: shop.name,
+        ownerEmail: shop.ownerEmail,
+        phone,
+        businessType,
+        contactName,
+        address,
+      });
+
+      if (!result.ok) {
+        await storage.updateShopRazorpayAccount(shopId, {
+          status: 'not_linked',
+          error: result.error,
+        });
+        return res.status(result.routeUnavailable ? 503 : 400).json({
+          error: result.error,
+          routeUnavailable: result.routeUnavailable === true,
+        });
+      }
+
+      await storage.updateShopRazorpayAccount(shopId, {
+        accountId: result.accountId,
+        status: result.status === 'activated' ? 'activated' : 'needs_kyc',
+        error: null,
+      });
+
+      return res.status(201).json({
+        accountId: result.accountId,
+        status: result.status,
+        message:
+          'Linked account created. Razorpay will ask for KYC documents before payouts can settle.',
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /** Current Route status for a shop, refreshed from Razorpay when linked. */
+  app.get('/api/shops/:shopId/razorpay-account', async (req: Request, res: Response) => {
+    try {
+      const shop = await storage.getShop(req.params.shopId);
+      if (!shop) return res.status(404).json({ error: 'Shop not found.' });
+
+      if (!shop.razorpayAccountId) {
+        return res.json({
+          status: 'not_linked',
+          routeEnabled: routeService.isEnabled,
+          error: shop.razorpayAccountError,
+        });
+      }
+
+      const live = await routeService.getLinkedAccount(shop.razorpayAccountId);
+      if (live.ok && live.status) {
+        await storage.updateShopRazorpayAccount(req.params.shopId, {
+          accountId: shop.razorpayAccountId,
+          status: live.status === 'activated' ? 'activated' : 'needs_kyc',
+        });
+      }
+
+      return res.json({
+        accountId: shop.razorpayAccountId,
+        status: live.status || shop.razorpayAccountStatus,
+        routeEnabled: routeService.isEnabled,
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -1102,7 +1205,31 @@ export function createApp(
         return res.status(409).json({ error: 'This job has already been paid for.' });
       }
 
-      const orderResult = await razorpayService.createOrder(jobId, job.totalPriceInCents);
+      // Split to the shop's own Razorpay account where Route is available, so
+      // the money settles to the shop directly instead of pooling with us.
+      // Falls back to the single-account flow when it is not.
+      let transfer;
+      let serviceFeeCents;
+
+      if (routeService.isEnabled) {
+        const shop = await storage.getShop(job.shopId);
+        const plan = await storage.getShopPlan(job.shopId);
+
+        if (shop?.razorpayAccountId && shop.razorpayAccountStatus === 'activated' && plan) {
+          const built = routeService.buildTransfer(
+            shop.razorpayAccountId, job.totalPriceInCents, plan.commissionBps, job.id
+          );
+          transfer = built.transfer;
+          serviceFeeCents = built.serviceFeeCents;
+        }
+      }
+
+      const orderResult = await razorpayService.createOrder(jobId, job.totalPriceInCents, transfer);
+
+      if (transfer && serviceFeeCents !== undefined) {
+        await storage.recordJobSettlement(job.id, transfer.amount, serviceFeeCents);
+      }
+
       return res.json(orderResult);
     } catch (err: any) {
       return res.status(500).json({ error: err.message });

@@ -104,6 +104,12 @@ export interface Shop {
   bankAccountNumber?: string;
   bankIfsc?: string;
   payoutStatus?: string;
+  /** Razorpay Route linked account, when the shop settles automatically. */
+  razorpayAccountId?: string;
+  /** not_linked | created | needs_kyc | activated | suspended */
+  razorpayAccountStatus?: string;
+  razorpayLinkedAt?: string;
+  razorpayAccountError?: string;
   createdAt: string;
 }
 
@@ -205,6 +211,11 @@ export interface PrintJob {
   printedAt?: string;
   completedAt?: string;
   documentDeletedAt?: string;
+
+  /** Razorpay Route settlement for this job, when split at payment time. */
+  transferId?: string;
+  transferAmountCents?: number;
+  serviceFeeCents?: number;
 
   createdAt: string;
   updatedAt: string;

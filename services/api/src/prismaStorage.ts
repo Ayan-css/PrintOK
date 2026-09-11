@@ -950,6 +950,29 @@ export class PrismaStorage implements IStorageProvider {
     });
   }
 
+  public async updateShopRazorpayAccount(shopId: string, update: {
+    accountId?: string; status: string; error?: string | null;
+  }): Promise<void> {
+    await this.prisma.shop.updateMany({
+      where: { id: shopId },
+      data: {
+        ...(update.accountId ? { razorpayAccountId: update.accountId } : {}),
+        razorpayAccountStatus: update.status,
+        razorpayAccountError: update.error ?? null,
+        ...(update.status === 'activated' ? { razorpayLinkedAt: new Date() } : {}),
+      },
+    });
+  }
+
+  public async recordJobSettlement(
+    jobId: string, transferAmountCents: number, serviceFeeCents: number
+  ): Promise<void> {
+    await this.prisma.printJob.updateMany({
+      where: { id: jobId },
+      data: { transferAmountCents, serviceFeeCents },
+    });
+  }
+
   public async createContactEnquiry(input: CreateContactEnquiryInput): Promise<ContactEnquiryRecord> {
     const enquiry = await this.prisma.contactEnquiry.create({
       data: {
@@ -1236,6 +1259,10 @@ export class PrismaStorage implements IStorageProvider {
     id: string; name: string; ownerEmail: string; upiId: string | null;
     bankAccountNumber: string | null; bankIfsc: string | null;
     payoutStatus: string; createdAt: Date;
+    razorpayAccountId?: string | null;
+    razorpayAccountStatus?: string | null;
+    razorpayLinkedAt?: Date | null;
+    razorpayAccountError?: string | null;
   }): Shop {
     return {
       id: s.id,
@@ -1245,6 +1272,12 @@ export class PrismaStorage implements IStorageProvider {
       bankAccountNumber: s.bankAccountNumber ?? undefined,
       bankIfsc: s.bankIfsc ?? undefined,
       payoutStatus: s.payoutStatus,
+      // Without these the Route split silently never fires, because the caller
+      // checks razorpayAccountId before attaching a transfer.
+      razorpayAccountId: s.razorpayAccountId ?? undefined,
+      razorpayAccountStatus: s.razorpayAccountStatus ?? 'not_linked',
+      razorpayLinkedAt: s.razorpayLinkedAt?.toISOString(),
+      razorpayAccountError: s.razorpayAccountError ?? undefined,
       createdAt: s.createdAt.toISOString(),
     };
   }

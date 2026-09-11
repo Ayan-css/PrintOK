@@ -901,6 +901,53 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.ok(tiny.netCents >= 0);
   });
 
+  await t.test('26. Route splits the order and never silently pretends to', async () => {
+    const { RazorpayRouteService } = await import('../razorpayRoute');
+    const route = new RazorpayRouteService();
+
+    // Route stays off until Razorpay enables it AND we opt in, so the platform
+    // cannot believe a split happened when it did not.
+    assert.strictEqual(route.isEnabled, false, 'Route is off without explicit opt-in');
+
+    const attempt = await route.createLinkedAccount({
+      shopId: 'shop_x', shopName: 'X', ownerEmail: 'x@y.com', phone: '9876543210',
+    });
+    assert.strictEqual(attempt.ok, false);
+    assert.strictEqual(attempt.routeUnavailable, true);
+
+    // ₹100 on Business (2%): the shop receives ₹98, PrintOk retains ₹2.
+    const { transfer, serviceFeeCents } = route.buildTransfer('acc_test', 10000, 200, 'job_1');
+    assert.strictEqual(transfer.account, 'acc_test');
+    assert.strictEqual(transfer.amount, 9800);
+    assert.strictEqual(serviceFeeCents, 200);
+    assert.strictEqual(transfer.amount + serviceFeeCents, 10000, 'the split must account for every paisa');
+
+    // A transfer can never exceed the order, even at the highest fee.
+    const maxFee = route.buildTransfer('acc_test', 100, 5000, 'job_2');
+    assert.ok(maxFee.transfer.amount >= 0);
+    assert.strictEqual(maxFee.transfer.amount + maxFee.serviceFeeCents, 100);
+  });
+
+  await t.test('27. Enterprise service fee does not cover the gateway fee', async () => {
+    const { RazorpayRouteService } = await import('../razorpayRoute');
+    const route = new RazorpayRouteService();
+
+    // Razorpay charges the platform ~2.36%. On tiers below that, the service
+    // fee does not cover it and PrintOk subsidises the transaction. This is a
+    // deliberate commercial choice, pinned here so it cannot change unnoticed.
+    const business = route.estimatePlatformMargin(10000, 200);   // 2.0%
+    const enterprise = route.estimatePlatformMargin(10000, 50);  // 0.5%
+
+    assert.ok(business.marginCents < 0,
+      'Business at 2% is below the 2.36% gateway fee');
+    assert.ok(enterprise.marginCents < business.marginCents,
+      'Enterprise at 0.5% loses more per order than Business');
+
+    // Start at 8% is comfortably profitable.
+    const start = route.estimatePlatformMargin(10000, 800);
+    assert.ok(start.marginCents > 0);
+  });
+
   await t.test('13. An unknown device token is rejected', async () => {
     const res = await fetch(`${baseUrl}/api/agent/jobs/pending`, {
       headers: { 'x-agent-device-token': 'dvt_deadbeef' },

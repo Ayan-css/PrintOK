@@ -287,6 +287,13 @@ export interface IStorageProvider {
   archiveShop(shopId: string, actor: string, reason?: string): Promise<ShopRemovalResult>;
   restoreShop(shopId: string): Promise<ShopRemovalResult>;
   recordAdminAudit(entry: Omit<AdminAuditEntry, 'id' | 'createdAt'>): Promise<void>;
+  /** Records a shop's Razorpay Route linkage state. */
+  updateShopRazorpayAccount(shopId: string, update: {
+    accountId?: string; status: string; error?: string | null;
+  }): Promise<void>;
+  /** Stores what was split to the shop and retained by PrintOk for one job. */
+  recordJobSettlement(jobId: string, transferAmountCents: number, serviceFeeCents: number): Promise<void>;
+
   createContactEnquiry(input: CreateContactEnquiryInput): Promise<ContactEnquiryRecord>;
   listContactEnquiries(status?: string, limit?: number): Promise<ContactEnquiryRecord[]>;
   updateContactEnquiryStatus(
@@ -850,6 +857,31 @@ export class MemoryStorage implements IStorageProvider {
     if (plan) this.shopPlans.set(shopId, { ...plan, planStatus: 'active' });
 
     return { shopId, ok: true, action: 'restored' };
+  }
+
+  public async updateShopRazorpayAccount(shopId: string, update: {
+    accountId?: string; status: string; error?: string | null;
+  }): Promise<void> {
+    const shop = this.shops.get(shopId);
+    if (!shop) return;
+
+    if (update.accountId) shop.razorpayAccountId = update.accountId;
+    shop.razorpayAccountStatus = update.status;
+    shop.razorpayAccountError = update.error ?? undefined;
+    if (update.status === 'activated' && !shop.razorpayLinkedAt) {
+      shop.razorpayLinkedAt = new Date().toISOString();
+    }
+    this.shops.set(shopId, shop);
+  }
+
+  public async recordJobSettlement(
+    jobId: string, transferAmountCents: number, serviceFeeCents: number
+  ): Promise<void> {
+    const job = this.printJobs.get(jobId);
+    if (!job) return;
+    job.transferAmountCents = transferAmountCents;
+    job.serviceFeeCents = serviceFeeCents;
+    this.printJobs.set(jobId, job);
   }
 
   public async createContactEnquiry(input: CreateContactEnquiryInput): Promise<ContactEnquiryRecord> {
