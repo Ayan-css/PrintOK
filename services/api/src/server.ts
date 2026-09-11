@@ -2,10 +2,15 @@ import http from 'http';
 import { createApp } from './app';
 import { MemoryStorage, IStorageProvider } from './storage';
 import { AgentWebSocketServer } from './ws';
+import { runMigrations } from './migrate';
 
 const PORT = process.env.PORT || 4000;
 
 async function startServer() {
+  // Migrate before anything touches the database. A failure here must stop the
+  // boot rather than let the API serve against a mismatched schema.
+  await runMigrations();
+
   let storage: IStorageProvider;
 
   // Auto-detect: use Prisma + PostgreSQL when DATABASE_URL is configured,

@@ -25,7 +25,21 @@ public sealed class AgentSettings
     public int PollIntervalMs { get; init; }
     public int HeartbeatIntervalMs { get; init; }
 
-    public bool IsConfigured => !string.IsNullOrWhiteSpace(ApiKey) && ApiKey != PlaceholderApiKey;
+    /// <summary>One-time pairing code, supplied via --PairingCode=... on first run.</summary>
+    public string? PairingCode { get; init; }
+
+    /// <summary>Device-scoped token loaded from the credential store after pairing.</summary>
+    public string? DeviceToken { get; set; }
+    public string? DeviceId { get; set; }
+
+    /// <summary>
+    /// A device token is preferred; the shared printer key remains supported for
+    /// installs that predate pairing.
+    /// </summary>
+    public bool HasDeviceToken => !string.IsNullOrWhiteSpace(DeviceToken);
+
+    public bool IsConfigured =>
+        HasDeviceToken || (!string.IsNullOrWhiteSpace(ApiKey) && ApiKey != PlaceholderApiKey);
 
     public const string PlaceholderApiKey = "PASTE_YOUR_AGENT_API_KEY_HERE";
 
@@ -43,18 +57,23 @@ public sealed class AgentSettings
             PrinterId = ReadString(config, "PrinterId", "PrintOk:PrinterId"),
             PrinterName = ReadString(config, "PrinterName", "PrintOk:PrinterName"),
             PollIntervalMs = ReadInt(config, 3000, "PollIntervalMs", "PrintOk:PollIntervalMs"),
-            HeartbeatIntervalMs = heartbeatSeconds * 1000
+            HeartbeatIntervalMs = heartbeatSeconds * 1000,
+            PairingCode = ReadString(config, "PairingCode", "PrintOk:PairingCode")
         };
     }
 
     /// <summary>Derives the WebSocket push endpoint from the HTTP base address.</summary>
     public Uri BuildWebSocketUri()
     {
+        string query = HasDeviceToken
+            ? $"deviceToken={Uri.EscapeDataString(DeviceToken!)}"
+            : $"apiKey={Uri.EscapeDataString(ApiKey)}";
+
         var builder = new UriBuilder(ApiBaseUrl)
         {
             Scheme = ApiBaseUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? "wss" : "ws",
             Path = "/ws/agent",
-            Query = $"apiKey={Uri.EscapeDataString(ApiKey)}"
+            Query = query
         };
 
         // UriBuilder re-adds the default HTTP port when swapping to ws/wss; drop it.

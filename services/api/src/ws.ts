@@ -2,6 +2,7 @@ import { Server } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { IStorageProvider } from './storage';
 import { AgentWsMessage, JobQueuedEvent, PrintJob } from '@printok/shared-types';
+import { hashDeviceToken } from './agentAuth';
 
 export class AgentWebSocketServer {
   private wss: WebSocketServer;
@@ -14,20 +15,32 @@ export class AgentWebSocketServer {
 
     this.wss.on('connection', async (ws: WebSocket, req) => {
       const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+
+      // Device-scoped token first; the shared printer key remains accepted for
+      // agents installed before pairing existed (PRD 7.2).
+      const deviceToken =
+        url.searchParams.get('deviceToken') || (req.headers['x-agent-device-token'] as string);
       const apiKey = url.searchParams.get('apiKey') || (req.headers['x-agent-api-key'] as string);
 
-      if (!apiKey) {
-        const errPayload: AgentWsMessage = { type: 'AUTH_ERROR', payload: 'Missing API key' };
+      if (!deviceToken && !apiKey) {
+        const errPayload: AgentWsMessage = { type: 'AUTH_ERROR', payload: 'Missing credentials' };
         ws.send(JSON.stringify(errPayload));
-        ws.close(4001, 'Unauthorized: Missing API Key');
+        ws.close(4001, 'Unauthorized: Missing Credentials');
         return;
       }
 
-      const printer = await this.storage.getPrinterByApiKey(apiKey);
+      let printer;
+      if (deviceToken) {
+        const device = await this.storage.getActiveDeviceByTokenHash(hashDeviceToken(deviceToken));
+        printer = device ? await this.storage.getPrinter(device.printerId) : undefined;
+      } else {
+        printer = await this.storage.getPrinterByApiKey(apiKey);
+      }
+
       if (!printer) {
-        const errPayload: AgentWsMessage = { type: 'AUTH_ERROR', payload: 'Invalid API key' };
+        const errPayload: AgentWsMessage = { type: 'AUTH_ERROR', payload: 'Invalid credentials' };
         ws.send(JSON.stringify(errPayload));
-        ws.close(4001, 'Unauthorized: Invalid API Key');
+        ws.close(4001, 'Unauthorized: Invalid Credentials');
         return;
       }
 

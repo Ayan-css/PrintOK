@@ -288,6 +288,92 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.ok(zipLocation && zipLocation.endsWith('PrintAgent-win-x64.zip'));
   });
 
+  await t.test('12. Agent pairing issues a device-scoped token that can be revoked', async () => {
+    // 1. Merchant generates a short-lived pairing code.
+    const codeRes = await fetch(`${baseUrl}/api/printers/${createdPrinterId}/pairing-code`, {
+      method: 'POST',
+    });
+    assert.strictEqual(codeRes.status, 201);
+    const { code } = (await codeRes.json()) as any;
+    assert.match(code, /^[A-Z2-9]{4}-[A-Z2-9]{4}$/, 'code must be human-transcribable');
+
+    // 2. The shop PC exchanges it for its own token.
+    const pairRes = await fetch(`${baseUrl}/api/agent/pair`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pairingCode: code.toLowerCase(),   // normalisation must accept this
+        deviceName: 'SHOP-PC-01',
+        osVersion: 'Windows 11',
+        agentVersion: '1.2.0',
+      }),
+    });
+    assert.strictEqual(pairRes.status, 201);
+    const paired = (await pairRes.json()) as any;
+    assert.ok(paired.deviceToken.startsWith('dvt_'));
+    assert.ok(paired.deviceId.startsWith('dev_'));
+    assert.strictEqual(paired.printerId, createdPrinterId);
+
+    const deviceHeaders = { 'x-agent-device-token': paired.deviceToken };
+
+    // 3. The token authenticates agent endpoints.
+    const beat = await fetch(`${baseUrl}/api/agent/heartbeat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...deviceHeaders },
+      body: JSON.stringify({ paperStatus: 'OK' }),
+    });
+    assert.strictEqual(beat.status, 200);
+
+    // 4. A pairing code is single use.
+    const replay = await fetch(`${baseUrl}/api/agent/pair`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pairingCode: code }),
+    });
+    assert.strictEqual(replay.status, 401, 'a used pairing code must not pair a second machine');
+
+    // 5. Revoking one device must not affect the printer's other credentials.
+    const revoke = await fetch(
+      `${baseUrl}/api/printers/${createdPrinterId}/devices/${paired.deviceId}/revoke`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'Shop PC replaced' }),
+      }
+    );
+    assert.strictEqual(revoke.status, 200);
+
+    const afterRevoke = await fetch(`${baseUrl}/api/agent/heartbeat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...deviceHeaders },
+      body: JSON.stringify({ paperStatus: 'OK' }),
+    });
+    assert.strictEqual(afterRevoke.status, 401, 'a revoked device must lose access immediately');
+
+    // The legacy printer key still works, so revocation is genuinely scoped.
+    const legacyStillWorks = await fetch(`${baseUrl}/api/agent/heartbeat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-agent-api-key': agentApiKey },
+      body: JSON.stringify({ paperStatus: 'OK' }),
+    });
+    assert.strictEqual(legacyStillWorks.status, 200);
+
+    // 6. Everything above is auditable.
+    const auditRes = await fetch(`${baseUrl}/api/printers/${createdPrinterId}/security-events`);
+    const { events } = (await auditRes.json()) as any;
+    const types = events.map((e: any) => e.type);
+    assert.ok(types.includes('PAIRED'), 'pairing must be audited');
+    assert.ok(types.includes('REVOKED'), 'revocation must be audited');
+    assert.ok(types.includes('LEGACY_KEY_USED'), 'shared-key use must be flagged');
+  });
+
+  await t.test('13. An unknown device token is rejected', async () => {
+    const res = await fetch(`${baseUrl}/api/agent/jobs/pending`, {
+      headers: { 'x-agent-device-token': 'dvt_deadbeef' },
+    });
+    assert.strictEqual(res.status, 401);
+  });
+
   await t.test('11. Agent Config download uses keys the Windows agent actually binds', async () => {
     const res = await fetch(`${baseUrl}/api/printers/${createdPrinterId}/agent-config`);
     assert.strictEqual(res.status, 200);

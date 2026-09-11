@@ -221,6 +221,73 @@ test('PrismaStorage (PostgreSQL) integration', async (t) => {
     }
   });
 
+  await t.test('device pairing is single-use and revocation is scoped', async () => {
+    const code = 'TEST-' + suffix.slice(-4).toUpperCase();
+    await storage.createPairingCode(printer.id, code, new Date(Date.now() + 60_000));
+
+    const claimed = await storage.consumePairingCode(code, 'dev_one');
+    assert.ok(claimed, 'a fresh code must be claimable');
+    assert.strictEqual(claimed!.printerId, printer.id);
+
+    // A second machine racing on the same code must lose.
+    const reclaim = await storage.consumePairingCode(code, 'dev_two');
+    assert.strictEqual(reclaim, undefined, 'a pairing code must be single use');
+
+    const device = await storage.createAgentDevice({
+      printerId: printer.id,
+      deviceId: 'dev_one',
+      tokenHash: 'hash_one',
+      tokenExpiresAt: new Date(Date.now() + 86_400_000),
+      deviceName: 'SHOP-PC',
+    });
+    assert.strictEqual(device.status, 'active');
+
+    const resolved = await storage.getActiveDeviceByTokenHash('hash_one');
+    assert.strictEqual(resolved?.id, 'dev_one');
+
+    await storage.revokeAgentDevice('dev_one', 'replaced');
+    const afterRevoke = await storage.getActiveDeviceByTokenHash('hash_one');
+    assert.strictEqual(afterRevoke, undefined, 'a revoked token must stop resolving');
+
+    // The printer's own key is untouched, so other installs keep working.
+    const stillThere = await storage.getPrinterByApiKey(printer.apiKey);
+    assert.strictEqual(stillThere?.id, printer.id);
+  });
+
+  await t.test('an expired pairing code cannot be claimed', async () => {
+    const code = 'EXPD-' + suffix.slice(-4).toUpperCase();
+    await storage.createPairingCode(printer.id, code, new Date(Date.now() - 1000));
+
+    const claimed = await storage.consumePairingCode(code, 'dev_late');
+    assert.strictEqual(claimed, undefined, 'an expired code must be refused');
+  });
+
+  await t.test('an expired device token stops authenticating', async () => {
+    await storage.createAgentDevice({
+      printerId: printer.id,
+      deviceId: 'dev_expired',
+      tokenHash: 'hash_expired',
+      tokenExpiresAt: new Date(Date.now() - 1000),
+    });
+
+    const resolved = await storage.getActiveDeviceByTokenHash('hash_expired');
+    assert.strictEqual(resolved, undefined, 'an expired token must not authenticate');
+  });
+
+  await t.test('security events are auditable per printer', async () => {
+    await storage.recordSecurityEvent({
+      printerId: printer.id,
+      deviceId: 'dev_one',
+      type: 'AUTH_REJECTED',
+      severity: 'warning',
+      detail: { reason: 'test' },
+    });
+
+    const events = await storage.listSecurityEvents(printer.id, 10);
+    assert.ok(events.length > 0);
+    assert.ok(events.some((e) => e.type === 'AUTH_REJECTED'));
+  });
+
   await t.test('shop stats aggregate from the database', async () => {
     const stats = await storage.getShopStats(shop.id);
     assert.strictEqual(stats.shopId, shop.id);

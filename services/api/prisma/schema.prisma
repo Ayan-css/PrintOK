@@ -72,6 +72,7 @@ model Printer {
 
   jobs          PrintJob[]
   telemetry     PrinterTelemetry?
+  devices       AgentDevice[]
 
   @@index([shopId])
 }
@@ -211,4 +212,68 @@ model IdempotencyRecord {
 
   @@index([scope, createdAt])
   @@index([expiresAt])
+}
+
+/// A paired Windows agent install (PRD 7.1, 7.2).
+///
+/// Credentials are device-scoped rather than shared: previously every agent
+/// authenticated with the printer's own API key, so one compromised shop PC
+/// could not be revoked without re-keying the printer and breaking every other
+/// install. Only the SHA-256 of the token is stored — the plaintext is shown
+/// once at pairing and never again.
+model AgentDevice {
+  id             String    @id
+  printerId      String
+  printer        Printer   @relation(fields: [printerId], references: [id], onDelete: Cascade)
+
+  deviceName     String?
+  osVersion      String?
+  agentVersion   String?
+
+  tokenHash      String    @unique
+  tokenIssuedAt  DateTime  @default(now())
+  tokenExpiresAt DateTime?
+
+  /// active | revoked
+  status         String    @default("active")
+  revokedAt      DateTime?
+  revokedReason  String?
+
+  lastSeenAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt @default(now())
+
+  @@index([printerId, status])
+  @@index([lastSeenAt])
+}
+
+/// Short-lived, single-use code that a merchant hands to a shop PC to pair it.
+/// Bound to one printer and expired aggressively so a leaked code is near
+/// worthless (PRD 7.1).
+model AgentPairingCode {
+  code      String   @id
+  printerId String
+  expiresAt DateTime
+  usedAt    DateTime?
+  usedByDeviceId String?
+  createdAt DateTime @default(now())
+
+  @@index([printerId, expiresAt])
+}
+
+/// Auditable agent security events (PRD 7.2). Kept separate from JobEvent
+/// because these are not necessarily tied to a job.
+model AgentSecurityEvent {
+  id        String   @id @default(uuid())
+  printerId String?
+  deviceId  String?
+  /// PAIRED | PAIRING_REJECTED | AUTH_REJECTED | LEGACY_KEY_USED | REVOKED | REPLAY_REJECTED
+  type      String
+  /// info | warning | critical
+  severity  String   @default("info")
+  detail    Json?
+  createdAt DateTime @default(now())
+
+  @@index([printerId, createdAt])
+  @@index([type, createdAt])
 }

@@ -8,14 +8,35 @@ It is self-contained: you do **not** need to install .NET first.
 Unzip `PrintAgent-win-x64.zip` somewhere permanent, e.g. `C:\PrintOk\`.
 You should have `WindowsPrintAgent.exe` and `appsettings.json` side by side.
 
-## 2. Get your settings file
+## 2. Pair this PC (recommended)
+
+Pairing gives this machine its own credential, so you can revoke one PC from the
+dashboard without disturbing any of your other machines.
 
 1. Open your PrintOk dashboard and go to the **QR Poster & Agent** tab.
-2. Click **Download appsettings.json**.
-3. Replace the `appsettings.json` from the zip with the downloaded one, keeping it
-   in the same folder as `WindowsPrintAgent.exe`.
+2. Click **Pair New Agent** to get a code like `K7MP-3QRT`. It is single use and
+   expires in 15 minutes.
+3. Run the agent once with the code:
 
-The downloaded file already contains your shop's API key, printer ID and cloud URL.
+```
+WindowsPrintAgent.exe --PairingCode=K7MP-3QRT
+```
+
+The agent stores its device token encrypted with Windows DPAPI under your user
+account, in `%LOCALAPPDATA%\PrintOk\credentials.dat`. The token is never written
+to `appsettings.json`, so sharing that file or a screenshot of it is harmless.
+
+From then on, just run `WindowsPrintAgent.exe` with no arguments.
+
+> The credential is tied to the Windows user account that paired. If you later run
+> the agent as a different user, pair again.
+
+### Alternative: settings file (legacy)
+
+Installs that predate pairing can still use a shared key. Click **Download
+appsettings.json** on the dashboard and place it next to `WindowsPrintAgent.exe`.
+This key is shared by every agent on that printer and cannot be revoked
+individually, so prefer pairing.
 
 ## 3. Choose the printer (optional)
 
@@ -32,7 +53,8 @@ Windows Settings → Printers & scanners:
 Double-click `WindowsPrintAgent.exe`. A console window opens and should log:
 
 ```
-Cloud API: https://prinok-api.onrender.com | Printer: prn_xxxxxxxx
+PrintOk Windows Print Agent 1.2.0
+Cloud API: https://prinok-api.onrender.com | Printer: prn_xxxxxxxx | Auth: device token (dev_xxxxxxxx)
 PrintOk Windows Print Agent started. Polling interval: 3000ms
 WebSocket push channel connected.
 ```
@@ -57,12 +79,18 @@ Press `Win+R`, type `shell:startup`, and drop a shortcut to
 
 ## Troubleshooting
 
-**"No agent API key configured" and the agent exits**
-`appsettings.json` is missing, is not in the same folder as the `.exe`, or still
-contains the placeholder key. Re-download it from the dashboard.
+**"This agent is not paired and has no API key"**
+Run it once with a pairing code: `WindowsPrintAgent.exe --PairingCode=XXXX-XXXX`.
+If you are using the legacy settings file instead, check that `appsettings.json`
+sits in the same folder as the `.exe` and no longer contains the placeholder key.
 
-**"Cloud API rejected the agent API key"**
-The key no longer matches this printer. Re-download `appsettings.json`.
+**"Cloud API rejected this device's token"**
+The device was revoked from the dashboard, or the token expired. Generate a new
+pairing code and pair again.
+
+**"Stored credentials could not be decrypted"**
+The agent is running as a different Windows user than the one that paired. Pair
+again under the account that will run the agent.
 
 **Dashboard shows the agent offline**
 Check the console window is still open, and that the PC can reach the cloud URL

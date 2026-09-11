@@ -7,6 +7,7 @@ import {
 } from '@printok/shared-types';
 import {
   IStorageProvider, CreateJobOptions, TransitionMeta, StateChangeResult, StoredIdempotencyRecord,
+  AgentDeviceRecord, AgentSecurityEventRecord, PairingCodeRecord,
 } from './storage';
 import { S3StorageService } from './s3Storage';
 import { calculateJobPriceBreakdown, DEFAULT_PRICING_CONFIG } from './pricing';
@@ -452,6 +453,148 @@ export class PrismaStorage implements IStorageProvider {
       create: { key: record.key, ...data },
       update: data,
     });
+  }
+
+  // --------------------------------------- agent device identity & pairing ---
+
+  public async createPairingCode(printerId: string, code: string, expiresAt: Date): Promise<PairingCodeRecord> {
+    const record = await this.prisma.agentPairingCode.create({
+      data: { code, printerId, expiresAt },
+    });
+    return {
+      code: record.code,
+      printerId: record.printerId,
+      expiresAt: record.expiresAt.toISOString(),
+    };
+  }
+
+  public async consumePairingCode(code: string, deviceId: string): Promise<PairingCodeRecord | undefined> {
+    // Conditional update: the code is claimed only if it is still unused and
+    // unexpired, so two machines racing on the same code cannot both pair.
+    const claimed = await this.prisma.agentPairingCode.updateMany({
+      where: { code, usedAt: null, expiresAt: { gt: new Date() } },
+      data: { usedAt: new Date(), usedByDeviceId: deviceId },
+    });
+
+    if (claimed.count === 0) return undefined;
+
+    const record = await this.prisma.agentPairingCode.findUnique({ where: { code } });
+    if (!record) return undefined;
+
+    return {
+      code: record.code,
+      printerId: record.printerId,
+      expiresAt: record.expiresAt.toISOString(),
+      usedAt: record.usedAt?.toISOString(),
+    };
+  }
+
+  public async createAgentDevice(input: {
+    printerId: string; deviceId: string; tokenHash: string; tokenExpiresAt: Date;
+    deviceName?: string; osVersion?: string; agentVersion?: string;
+  }): Promise<AgentDeviceRecord> {
+    const device = await this.prisma.agentDevice.create({
+      data: {
+        id: input.deviceId,
+        printerId: input.printerId,
+        tokenHash: input.tokenHash,
+        tokenExpiresAt: input.tokenExpiresAt,
+        deviceName: input.deviceName,
+        osVersion: input.osVersion,
+        agentVersion: input.agentVersion,
+      },
+    });
+    return this.mapDevice(device);
+  }
+
+  public async getActiveDeviceByTokenHash(tokenHash: string): Promise<AgentDeviceRecord | undefined> {
+    const device = await this.prisma.agentDevice.findUnique({ where: { tokenHash } });
+    if (!device || device.status !== 'active') return undefined;
+    if (device.tokenExpiresAt && device.tokenExpiresAt.getTime() < Date.now()) return undefined;
+    return this.mapDevice(device);
+  }
+
+  public async getAgentDevice(deviceId: string): Promise<AgentDeviceRecord | undefined> {
+    const device = await this.prisma.agentDevice.findUnique({ where: { id: deviceId } });
+    return device ? this.mapDevice(device) : undefined;
+  }
+
+  public async listAgentDevices(printerId: string): Promise<AgentDeviceRecord[]> {
+    const devices = await this.prisma.agentDevice.findMany({
+      where: { printerId },
+      orderBy: { createdAt: 'desc' },
+    });
+    return devices.map((d) => this.mapDevice(d));
+  }
+
+  public async revokeAgentDevice(deviceId: string, reason?: string): Promise<AgentDeviceRecord | undefined> {
+    const existing = await this.prisma.agentDevice.findUnique({ where: { id: deviceId } });
+    if (!existing) return undefined;
+
+    const device = await this.prisma.agentDevice.update({
+      where: { id: deviceId },
+      data: { status: 'revoked', revokedAt: new Date(), revokedReason: reason },
+    });
+
+    return this.mapDevice(device);
+  }
+
+  public async touchAgentDevice(deviceId: string, agentVersion?: string): Promise<void> {
+    await this.prisma.agentDevice.updateMany({
+      where: { id: deviceId },
+      data: { lastSeenAt: new Date(), ...(agentVersion ? { agentVersion } : {}) },
+    });
+  }
+
+  public async recordSecurityEvent(event: Omit<AgentSecurityEventRecord, 'id' | 'createdAt'>): Promise<void> {
+    await this.prisma.agentSecurityEvent.create({
+      data: {
+        printerId: event.printerId,
+        deviceId: event.deviceId,
+        type: event.type,
+        severity: event.severity,
+        detail: (event.detail || {}) as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  public async listSecurityEvents(printerId: string, limit = 100): Promise<AgentSecurityEventRecord[]> {
+    const events = await this.prisma.agentSecurityEvent.findMany({
+      where: { printerId },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+
+    return events.map((e) => ({
+      id: e.id,
+      printerId: e.printerId ?? undefined,
+      deviceId: e.deviceId ?? undefined,
+      type: e.type,
+      severity: e.severity as AgentSecurityEventRecord['severity'],
+      detail: (e.detail as Record<string, unknown>) ?? undefined,
+      createdAt: e.createdAt.toISOString(),
+    }));
+  }
+
+  private mapDevice(d: {
+    id: string; printerId: string; deviceName: string | null; osVersion: string | null;
+    agentVersion: string | null; status: string; tokenIssuedAt: Date; tokenExpiresAt: Date | null;
+    revokedAt: Date | null; revokedReason: string | null; lastSeenAt: Date | null; createdAt: Date;
+  }): AgentDeviceRecord {
+    return {
+      id: d.id,
+      printerId: d.printerId,
+      deviceName: d.deviceName ?? undefined,
+      osVersion: d.osVersion ?? undefined,
+      agentVersion: d.agentVersion ?? undefined,
+      status: d.status as AgentDeviceRecord['status'],
+      tokenIssuedAt: d.tokenIssuedAt.toISOString(),
+      tokenExpiresAt: d.tokenExpiresAt?.toISOString(),
+      revokedAt: d.revokedAt?.toISOString(),
+      revokedReason: d.revokedReason ?? undefined,
+      lastSeenAt: d.lastSeenAt?.toISOString(),
+      createdAt: d.createdAt.toISOString(),
+    };
   }
 
   // ------------------------------------------------------------ telemetry ---

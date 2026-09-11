@@ -8,7 +8,7 @@
     <UserSecretsId>dotnet-WindowsPrintAgent-12345</UserSecretsId>
     <Product>PrintOk Windows Print Agent</Product>
     <Company>PrintOk</Company>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
   </PropertyGroup>
 
   <!-- Published as a self-contained single file so a shop PC can run the agent
@@ -29,6 +29,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.0" />
+    <!-- DPAPI, for encrypting the device token at rest on Windows (PRD 7.2). -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>
 
 </Project>

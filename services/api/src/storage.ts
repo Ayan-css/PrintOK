@@ -33,6 +33,40 @@ export type StateChangeResult =
   | { ok: false; code: 'NOT_FOUND'; reason: string }
   | { ok: false; code: 'ILLEGAL_TRANSITION'; reason: string; job: PrintJob };
 
+/** A paired agent install (PRD 7.1). */
+export interface AgentDeviceRecord {
+  id: string;
+  printerId: string;
+  deviceName?: string;
+  osVersion?: string;
+  agentVersion?: string;
+  status: 'active' | 'revoked';
+  tokenIssuedAt: string;
+  tokenExpiresAt?: string;
+  revokedAt?: string;
+  revokedReason?: string;
+  lastSeenAt?: string;
+  createdAt: string;
+}
+
+/** Auditable agent security event (PRD 7.2). */
+export interface AgentSecurityEventRecord {
+  id: string;
+  printerId?: string;
+  deviceId?: string;
+  type: string;
+  severity: 'info' | 'warning' | 'critical';
+  detail?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface PairingCodeRecord {
+  code: string;
+  printerId: string;
+  expiresAt: string;
+  usedAt?: string;
+}
+
 /** Stored response of a previously executed idempotent request (PRD 11). */
 export interface StoredIdempotencyRecord {
   key: string;
@@ -77,6 +111,28 @@ export interface IStorageProvider {
   getIdempotencyRecord(key: string): Promise<StoredIdempotencyRecord | undefined>;
   saveIdempotencyRecord(record: StoredIdempotencyRecord): Promise<void>;
 
+  // --- Agent device identity & pairing (PRD 7.1, 7.2) ---
+  createPairingCode(printerId: string, code: string, expiresAt: Date): Promise<PairingCodeRecord>;
+  /** Atomically consumes a pairing code. Returns undefined if unknown, expired or already used. */
+  consumePairingCode(code: string, deviceId: string): Promise<PairingCodeRecord | undefined>;
+  createAgentDevice(input: {
+    printerId: string;
+    deviceId: string;
+    tokenHash: string;
+    tokenExpiresAt: Date;
+    deviceName?: string;
+    osVersion?: string;
+    agentVersion?: string;
+  }): Promise<AgentDeviceRecord>;
+  /** Resolves an active, unexpired device by its token hash. */
+  getActiveDeviceByTokenHash(tokenHash: string): Promise<AgentDeviceRecord | undefined>;
+  getAgentDevice(deviceId: string): Promise<AgentDeviceRecord | undefined>;
+  listAgentDevices(printerId: string): Promise<AgentDeviceRecord[]>;
+  revokeAgentDevice(deviceId: string, reason?: string): Promise<AgentDeviceRecord | undefined>;
+  touchAgentDevice(deviceId: string, agentVersion?: string): Promise<void>;
+  recordSecurityEvent(event: Omit<AgentSecurityEventRecord, 'id' | 'createdAt'>): Promise<void>;
+  listSecurityEvents(printerId: string, limit?: number): Promise<AgentSecurityEventRecord[]>;
+
   recordHeartbeat(printerId: string, paperStatus?: string, deviceId?: string, agentVersion?: string): Promise<PrinterTelemetry>;
   getPrinterTelemetry(printerId: string): Promise<PrinterTelemetry>;
   getShopPricing(shopId: string): Promise<MerchantPricingConfig>;
@@ -93,6 +149,9 @@ export class MemoryStorage implements IStorageProvider {
   private dailyTokenCounters = new Map<string, { dateStr: string; counter: number }>();
   private jobEvents = new Map<string, JobEvent[]>();
   private idempotencyRecords = new Map<string, StoredIdempotencyRecord>();
+  private agentDevices = new Map<string, AgentDeviceRecord & { tokenHash: string }>();
+  private pairingCodes = new Map<string, PairingCodeRecord>();
+  private securityEvents: AgentSecurityEventRecord[] = [];
   private s3Service = new S3StorageService();
 
   /** Appends to the job's lifecycle trail. Never overwrites earlier entries. */
@@ -480,6 +539,96 @@ export class MemoryStorage implements IStorageProvider {
     const updated: MerchantPricingConfig = { ...current, ...config };
     this.shopPricings.set(shopId, updated);
     return updated;
+  }
+
+  // --- Agent device identity & pairing (PRD 7.1, 7.2) ---
+
+  public async createPairingCode(printerId: string, code: string, expiresAt: Date): Promise<PairingCodeRecord> {
+    const record: PairingCodeRecord = { code, printerId, expiresAt: expiresAt.toISOString() };
+    this.pairingCodes.set(code, record);
+    return record;
+  }
+
+  public async consumePairingCode(code: string, deviceId: string): Promise<PairingCodeRecord | undefined> {
+    const record = this.pairingCodes.get(code);
+    if (!record) return undefined;
+    // Single use, and useless once expired.
+    if (record.usedAt) return undefined;
+    if (new Date(record.expiresAt).getTime() < Date.now()) return undefined;
+
+    record.usedAt = new Date().toISOString();
+    this.pairingCodes.set(code, record);
+    return record;
+  }
+
+  public async createAgentDevice(input: {
+    printerId: string; deviceId: string; tokenHash: string; tokenExpiresAt: Date;
+    deviceName?: string; osVersion?: string; agentVersion?: string;
+  }): Promise<AgentDeviceRecord> {
+    const nowIso = new Date().toISOString();
+    const record: AgentDeviceRecord & { tokenHash: string } = {
+      id: input.deviceId,
+      printerId: input.printerId,
+      deviceName: input.deviceName,
+      osVersion: input.osVersion,
+      agentVersion: input.agentVersion,
+      status: 'active',
+      tokenHash: input.tokenHash,
+      tokenIssuedAt: nowIso,
+      tokenExpiresAt: input.tokenExpiresAt.toISOString(),
+      createdAt: nowIso,
+    };
+    this.agentDevices.set(input.deviceId, record);
+    return record;
+  }
+
+  public async getActiveDeviceByTokenHash(tokenHash: string): Promise<AgentDeviceRecord | undefined> {
+    for (const device of this.agentDevices.values()) {
+      if (device.tokenHash !== tokenHash) continue;
+      if (device.status !== 'active') return undefined;
+      if (device.tokenExpiresAt && new Date(device.tokenExpiresAt).getTime() < Date.now()) return undefined;
+      return device;
+    }
+    return undefined;
+  }
+
+  public async getAgentDevice(deviceId: string): Promise<AgentDeviceRecord | undefined> {
+    return this.agentDevices.get(deviceId);
+  }
+
+  public async listAgentDevices(printerId: string): Promise<AgentDeviceRecord[]> {
+    return [...this.agentDevices.values()].filter((d) => d.printerId === printerId);
+  }
+
+  public async revokeAgentDevice(deviceId: string, reason?: string): Promise<AgentDeviceRecord | undefined> {
+    const device = this.agentDevices.get(deviceId);
+    if (!device) return undefined;
+
+    device.status = 'revoked';
+    device.revokedAt = new Date().toISOString();
+    device.revokedReason = reason;
+    this.agentDevices.set(deviceId, device);
+    return device;
+  }
+
+  public async touchAgentDevice(deviceId: string, agentVersion?: string): Promise<void> {
+    const device = this.agentDevices.get(deviceId);
+    if (!device) return;
+    device.lastSeenAt = new Date().toISOString();
+    if (agentVersion) device.agentVersion = agentVersion;
+    this.agentDevices.set(deviceId, device);
+  }
+
+  public async recordSecurityEvent(event: Omit<AgentSecurityEventRecord, 'id' | 'createdAt'>): Promise<void> {
+    this.securityEvents.push({
+      ...event,
+      id: `sec_${crypto.randomBytes(8).toString('hex')}`,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  public async listSecurityEvents(printerId: string, limit = 100): Promise<AgentSecurityEventRecord[]> {
+    return this.securityEvents.filter((e) => e.printerId === printerId).slice(-limit).reverse();
   }
 
   public async getShopStats(shopId: string): Promise<MerchantStats> {

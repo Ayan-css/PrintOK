@@ -69,7 +69,7 @@ public class PrintAgentWorker : BackgroundService
                 {
                     Content = JsonContent.Create(new { paperStatus = "OK" })
                 };
-                request.Headers.Add("x-agent-api-key", _apiKey);
+                ApplyAuthHeaders(request);
 
                 using var response = await _httpClient.SendAsync(request, cancellationToken);
                 if (response.IsSuccessStatusCode)
@@ -79,7 +79,9 @@ public class PrintAgentWorker : BackgroundService
                 else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
                 {
                     _logger.LogError(
-                        "Cloud API rejected the agent API key. Re-download appsettings.json from the PrintOk dashboard.");
+                        _settings.HasDeviceToken
+                            ? "Cloud API rejected this device's token. It may have been revoked from the dashboard. Re-pair with a new pairing code."
+                            : "Cloud API rejected the agent API key. Re-download appsettings.json from the PrintOk dashboard.");
                 }
             }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
@@ -144,7 +146,7 @@ public class PrintAgentWorker : BackgroundService
     public async Task PollAndProcessJobsAsync(CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/agent/jobs/pending");
-        request.Headers.Add("x-agent-api-key", _apiKey);
+        ApplyAuthHeaders(request);
 
         using var response = await _httpClient.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
@@ -152,7 +154,9 @@ public class PrintAgentWorker : BackgroundService
             if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
             {
                 _logger.LogError(
-                    "Cloud API rejected the agent API key while polling for jobs. Re-download appsettings.json from the PrintOk dashboard.");
+                    _settings.HasDeviceToken
+                        ? "Cloud API rejected this device's token while polling. It may have been revoked; re-pair this agent."
+                        : "Cloud API rejected the agent API key while polling for jobs. Re-download appsettings.json from the PrintOk dashboard.");
             }
             else
             {
@@ -265,12 +269,35 @@ public class PrintAgentWorker : BackgroundService
         {
             Content = JsonContent.Create(dto)
         };
-        request.Headers.Add("x-agent-api-key", _apiKey);
+        ApplyAuthHeaders(request);
 
         using var response = await _httpClient.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             _logger.LogWarning("Failed to update status for job '{JobId}' to {State}. Status Code: {Code}", jobId, printState, response.StatusCode);
+        }
+    }
+
+    /// <summary>
+    /// Presents the device-scoped token when this machine is paired, falling back
+    /// to the printer's shared key for installs that predate pairing (PRD 7.2).
+    /// </summary>
+    private void ApplyAuthHeaders(HttpRequestMessage request)
+    {
+        if (_settings.HasDeviceToken)
+        {
+            request.Headers.Add("x-agent-device-token", _settings.DeviceToken);
+        }
+        else
+        {
+            request.Headers.Add("x-agent-api-key", _apiKey);
+        }
+
+        request.Headers.Add("x-agent-version", AgentVersion.Current);
+
+        if (!string.IsNullOrWhiteSpace(_settings.DeviceId))
+        {
+            request.Headers.Add("x-agent-device-id", _settings.DeviceId);
         }
     }
 

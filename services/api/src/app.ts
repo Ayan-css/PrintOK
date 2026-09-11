@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
@@ -7,6 +8,10 @@ import { AgentWebSocketServer } from './ws';
 import { processDocument } from './documentProcessor';
 import { RazorpayService } from './razorpayService';
 import { parsePrintState } from './jobStateMachine';
+import {
+  generatePairingCode, normalizePairingCode, hashDeviceToken, issueDeviceToken,
+  PAIRING_CODE_TTL_MS, AgentIdentity,
+} from './agentAuth';
 import {
   RegisterShopDto,
   RegisterShopResponse,
@@ -18,6 +23,76 @@ import {
   PrintState,
   PaymentState,
 } from '@printok/shared-types';
+
+/** Process start time, so /health shows how long this instance has been up. */
+const BOOT_TIME = new Date().toISOString();
+
+/**
+ * Resolves the calling agent (PRD 7.2).
+ *
+ * Prefers a device-scoped token, which identifies one machine and can be
+ * revoked on its own. Falls back to the printer's shared API key so that agents
+ * installed before pairing existed keep working; each such call is recorded as
+ * a security event so the migration is observable.
+ *
+ * Responds and returns null on failure, so callers can `if (!identity) return;`.
+ */
+async function authenticateAgent(
+  storage: IStorageProvider,
+  req: Request,
+  res: Response
+): Promise<AgentIdentity | null> {
+  const deviceToken = req.headers['x-agent-device-token'] as string | undefined;
+
+  if (deviceToken) {
+    const device = await storage.getActiveDeviceByTokenHash(hashDeviceToken(deviceToken));
+    if (!device) {
+      await storage.recordSecurityEvent({
+        type: 'AUTH_REJECTED',
+        severity: 'warning',
+        detail: { reason: 'Unknown, expired or revoked device token.' },
+      });
+      res.status(401).json({ error: 'Unauthorized: device token is not valid. Re-pair this agent.' });
+      return null;
+    }
+
+    const printer = await storage.getPrinter(device.printerId);
+    if (!printer) {
+      res.status(401).json({ error: 'Unauthorized: device is not bound to a live printer.' });
+      return null;
+    }
+
+    await storage.touchAgentDevice(device.id, req.headers['x-agent-version'] as string | undefined);
+    return { printerId: printer.id, shopId: printer.shopId, deviceId: device.id, method: 'device-token' };
+  }
+
+  const apiKey = req.headers['x-agent-api-key'] as string | undefined;
+  if (!apiKey) {
+    res.status(401).json({ error: 'Unauthorized: missing x-agent-device-token or x-agent-api-key header.' });
+    return null;
+  }
+
+  const printer = await storage.getPrinterByApiKey(apiKey);
+  if (!printer) {
+    await storage.recordSecurityEvent({
+      type: 'AUTH_REJECTED',
+      severity: 'warning',
+      detail: { reason: 'Invalid printer API key.' },
+    });
+    res.status(401).json({ error: 'Unauthorized: Invalid Agent API Key.' });
+    return null;
+  }
+
+  // Shared-key auth is deprecated: it cannot identify or revoke one machine.
+  await storage.recordSecurityEvent({
+    printerId: printer.id,
+    type: 'LEGACY_KEY_USED',
+    severity: 'info',
+    detail: { path: req.path },
+  });
+
+  return { printerId: printer.id, shopId: printer.shopId, method: 'legacy-printer-key' };
+}
 
 export function createApp(
   storage: IStorageProvider = new MemoryStorage(),
@@ -41,9 +116,19 @@ export function createApp(
   app.use('/api/print-jobs', apiLimiter);
   app.use('/api/shops/register', apiLimiter);
 
-  // Health Check Endpoint
+  // Health Check Endpoint.
+  // Reports the running build so a deploy can actually be verified from outside;
+  // a static 200 cannot distinguish a new release from the previous one.
   app.get('/health', (req: Request, res: Response) => {
-    res.json({ status: 'ok', service: 'PrintOk API', timestamp: new Date().toISOString() });
+    res.json({
+      status: 'ok',
+      service: 'PrintOk API',
+      version: process.env.npm_package_version || 'unknown',
+      // Render exposes the deployed commit; other hosts may not.
+      commit: (process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || 'unknown').slice(0, 7),
+      startedAt: BOOT_TIME,
+      timestamp: new Date().toISOString(),
+    });
   });
 
   /**
@@ -212,6 +297,142 @@ export function createApp(
   });
 
   /**
+   * Issue a short-lived pairing code for a printer (PRD 7.1).
+   * The shop owner reads this off the dashboard and enters it on the shop PC.
+   */
+  app.post('/api/printers/:printerId/pairing-code', async (req: Request, res: Response) => {
+    try {
+      const { printerId } = req.params;
+      const printer = await storage.getPrinter(printerId);
+      if (!printer) {
+        return res.status(404).json({ error: 'Printer not found.' });
+      }
+
+      const code = generatePairingCode();
+      const expiresAt = new Date(Date.now() + PAIRING_CODE_TTL_MS);
+      await storage.createPairingCode(printerId, code, expiresAt);
+
+      return res.status(201).json({
+        code,
+        printerId,
+        expiresAt: expiresAt.toISOString(),
+        expiresInSeconds: Math.round(PAIRING_CODE_TTL_MS / 1000),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Pair an agent install and issue its device-scoped token (PRD 7.1, 7.2).
+   * The token is returned exactly once; only its hash is stored.
+   */
+  app.post('/api/agent/pair', async (req: Request, res: Response) => {
+    try {
+      const { pairingCode, deviceName, osVersion, agentVersion } = req.body || {};
+      if (!pairingCode) {
+        return res.status(400).json({ error: 'pairingCode is required.' });
+      }
+
+      const normalized = normalizePairingCode(String(pairingCode));
+      const deviceId = `dev_${crypto.randomBytes(8).toString('hex')}`;
+
+      const claimed = await storage.consumePairingCode(normalized, deviceId);
+      if (!claimed) {
+        await storage.recordSecurityEvent({
+          type: 'PAIRING_REJECTED',
+          severity: 'warning',
+          detail: { reason: 'Unknown, expired or already-used pairing code.' },
+        });
+        // Deliberately vague: do not reveal which of the three it was.
+        return res.status(401).json({ error: 'Pairing code is invalid or has expired. Generate a new one.' });
+      }
+
+      const printer = await storage.getPrinter(claimed.printerId);
+      if (!printer) {
+        return res.status(404).json({ error: 'Printer not found.' });
+      }
+
+      const issued = issueDeviceToken();
+      await storage.createAgentDevice({
+        printerId: claimed.printerId,
+        deviceId,
+        tokenHash: issued.tokenHash,
+        tokenExpiresAt: issued.expiresAt,
+        deviceName,
+        osVersion,
+        agentVersion,
+      });
+
+      await storage.recordSecurityEvent({
+        printerId: claimed.printerId,
+        deviceId,
+        type: 'PAIRED',
+        severity: 'info',
+        detail: { deviceName, osVersion, agentVersion },
+      });
+
+      return res.status(201).json({
+        deviceId,
+        // Shown once. The server keeps only the hash and cannot return it again.
+        deviceToken: issued.token,
+        tokenExpiresAt: issued.expiresAt.toISOString(),
+        printerId: printer.id,
+        shopId: printer.shopId,
+        apiBaseUrl: process.env.API_BASE_URL || 'https://prinok-api.onrender.com',
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /** Paired agent installs for a printer (PRD 7.1). */
+  app.get('/api/printers/:printerId/devices', async (req: Request, res: Response) => {
+    try {
+      const devices = await storage.listAgentDevices(req.params.printerId);
+      return res.json({ devices });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /** Revoke one agent install without re-keying the printer (PRD 7.2). */
+  app.post('/api/printers/:printerId/devices/:deviceId/revoke', async (req: Request, res: Response) => {
+    try {
+      const { printerId, deviceId } = req.params;
+      const device = await storage.getAgentDevice(deviceId);
+      if (!device || device.printerId !== printerId) {
+        return res.status(404).json({ error: 'Device not found for this printer.' });
+      }
+
+      const revoked = await storage.revokeAgentDevice(deviceId, req.body?.reason);
+
+      await storage.recordSecurityEvent({
+        printerId,
+        deviceId,
+        type: 'REVOKED',
+        severity: 'warning',
+        detail: { reason: req.body?.reason || 'unspecified' },
+      });
+
+      return res.json({ device: revoked });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /** Agent security audit trail for a printer (PRD 7.2). */
+  app.get('/api/printers/:printerId/security-events', async (req: Request, res: Response) => {
+    try {
+      const limit = Math.min(Number(req.query.limit) || 50, 200);
+      const events = await storage.listSecurityEvents(req.params.printerId, limit);
+      return res.json({ events });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
    * Download Windows Print Agent Executable / Release Package
    */
   app.get('/api/agent-installer', async (req: Request, res: Response) => {
@@ -291,15 +512,9 @@ export function createApp(
    */
   app.post('/api/agent/heartbeat', async (req: Request, res: Response) => {
     try {
-      const apiKey = req.headers['x-agent-api-key'] as string;
-      if (!apiKey) {
-        return res.status(401).json({ error: 'Unauthorized: Missing x-agent-api-key header.' });
-      }
-
-      const printer = await storage.getPrinterByApiKey(apiKey);
-      if (!printer) {
-        return res.status(401).json({ error: 'Unauthorized: Invalid Agent API Key.' });
-      }
+      const identity = await authenticateAgent(storage, req, res);
+      if (!identity) return;
+      const printer = { id: identity.printerId, shopId: identity.shopId };
 
       const { paperStatus } = req.body || {};
       const telemetry = await storage.recordHeartbeat(printer.id, paperStatus || 'OK');
@@ -424,20 +639,14 @@ export function createApp(
    */
   app.get('/api/agent/jobs/pending', async (req: Request, res: Response) => {
     try {
-      const apiKey = req.headers['x-agent-api-key'] as string;
-      if (!apiKey) {
-        return res.status(401).json({ error: 'Unauthorized: Missing x-agent-api-key header.' });
-      }
-
-      const printer = await storage.getPrinterByApiKey(apiKey);
-      if (!printer) {
-        return res.status(401).json({ error: 'Unauthorized: Invalid Agent API Key.' });
-      }
+      const identity = await authenticateAgent(storage, req, res);
+      if (!identity) return;
+      const printer = { id: identity.printerId, shopId: identity.shopId };
 
       // Claim each job for the calling device before handing it over. The job
       // moves Queued -> Assigned, so a second agent polling concurrently is told
       // the job is taken rather than printing it a second time (PRD 11).
-      const deviceId = (req.headers['x-agent-device-id'] as string) || printer.id;
+      const deviceId = identity.deviceId || (req.headers['x-agent-device-id'] as string) || printer.id;
       const pendingJobs = await storage.getPendingJobsForPrinter(printer.id);
 
       const claimedJobs = [];
@@ -460,19 +669,13 @@ export function createApp(
    */
   app.post('/api/agent/jobs/:id/status', async (req: Request, res: Response) => {
     try {
-      const apiKey = req.headers['x-agent-api-key'] as string;
-      if (!apiKey) {
-        return res.status(401).json({ error: 'Unauthorized: Missing x-agent-api-key header.' });
-      }
-
-      const printer = await storage.getPrinterByApiKey(apiKey);
-      if (!printer) {
-        return res.status(401).json({ error: 'Unauthorized: Invalid Agent API Key.' });
-      }
+      const identity = await authenticateAgent(storage, req, res);
+      if (!identity) return;
+      const printer = { id: identity.printerId, shopId: identity.shopId };
 
       const { id } = req.params;
       const { printState, errorMessage } = req.body as AgentUpdateStatusDto;
-      const deviceId = (req.headers['x-agent-device-id'] as string) || printer.id;
+      const deviceId = identity.deviceId || (req.headers['x-agent-device-id'] as string) || printer.id;
 
       const requestedState = parsePrintState(String(printState));
       if (!requestedState) {
