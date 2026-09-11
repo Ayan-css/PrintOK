@@ -1,3 +1,14 @@
+// PrintOk production data model.
+//
+// Shaped by PRD sections 9 (job orchestration), 10 (payment/print state),
+// 11 (idempotency) and 16 (shop pricing controls). The guiding rules:
+//   * a job carries immutable snapshots of the config and price it was created
+//     with, so replaying history never depends on mutable shop settings;
+//   * payment state and print state are independent columns, never derived
+//     from one another;
+//   * every state change is appended to JobEvent rather than only mutating the
+//     job row, so support and reconciliation have a durable trail.
+
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
@@ -8,45 +19,196 @@ generator client {
 }
 
 model Shop {
-  id                String    @id
+  id                String       @id
   name              String
   ownerEmail        String
   upiId             String?
   bankAccountNumber String?
   bankIfsc          String?
-  payoutStatus      String    @default("active")
-  createdAt         DateTime  @default(now())
+  payoutStatus      String       @default("active")
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt @default(now())
+
   printers          Printer[]
+  jobs              PrintJob[]
+  pricing           ShopPricing?
+
+  @@index([ownerEmail])
+}
+
+/// Per-shop rate card. Previously computed from hardcoded constants, which made
+/// the merchant "Rates Matrix" a no-op on the Postgres path. Rates are stored in
+/// paise (integer cents) to keep money arithmetic exact.
+model ShopPricing {
+  shopId                 String   @id
+  shop                   Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  bwSinglePerPageCents   Int      @default(200)
+  bwDuplexPerPageCents   Int      @default(150)
+  colorSinglePerPageCents Int     @default(1000)
+  colorDuplexPerPageCents Int     @default(800)
+
+  a3Multiplier           Float    @default(2.0)
+  bulkDiscountThreshold  Int      @default(50)
+  bulkDiscountPercent    Int      @default(10)
+  enableSeparatorPage    Boolean  @default(false)
+  separatorMinPages      Int      @default(5)
+
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt @default(now())
 }
 
 model Printer {
-  id            String     @id
+  id            String            @id
   shopId        String
-  shop          Shop       @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shop          Shop              @relation(fields: [shopId], references: [id], onDelete: Cascade)
   printerName   String
   qrTargetUrl   String
   qrCodeDataUrl String
-  apiKey        String     @unique
-  status        String     @default("online")
-  createdAt     DateTime   @default(now())
+  apiKey        String            @unique
+  status        String            @default("online")
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt @default(now())
+
   jobs          PrintJob[]
+  telemetry     PrinterTelemetry?
+
+  @@index([shopId])
+}
+
+/// Agent liveness. Previously held in a process-local Map, so it was lost on every
+/// API restart and wrong behind more than one instance.
+model PrinterTelemetry {
+  printerId     String   @id
+  printer       Printer  @relation(fields: [printerId], references: [id], onDelete: Cascade)
+
+  lastHeartbeat DateTime
+  paperStatus   String   @default("OK")
+  agentVersion  String?
+  deviceId      String?
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt @default(now())
+
+  @@index([lastHeartbeat])
 }
 
 model PrintJob {
   id                String   @id
+
+  /// Customer-facing order reference. Distinct from the internal job id so an
+  /// order can later fan out to multiple jobs without changing customer links.
+  orderId           String   @unique
+
+  shopId            String
+  shop              Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
   printerId         String
   printer           Printer  @relation(fields: [printerId], references: [id], onDelete: Cascade)
+
+  /// Agent device that claimed the job. Null until assignment.
+  deviceId          String?
+
+  /// Counter shown to the customer at the counter, e.g. "001".
+  tokenNumber       String?
+
+  // ---- Document reference ----
   fileName          String
   s3Key             String?
   fileUrl           String
   fileChecksum      String
+  fileSizeBytes     Int      @default(0)
+
+  // ---- Immutable print configuration snapshot ----
   pageCount         Int
   copies            Int
   isColor           Boolean
+  isDuplex          Boolean  @default(false)
+  paperSize         String   @default("A4")
+  pageRange         String?
+  /// Frozen copy of the above as submitted, for audit and dispute resolution.
+  printConfig       Json?
+
+  // ---- Immutable price snapshot ----
   totalPriceInCents Int
+  /// The rate card and computed breakdown used at creation time, so a later
+  /// change to ShopPricing can never alter what the customer was quoted.
+  priceSnapshot     Json?
+
+  // ---- Payment ----
   paymentState      String
+  paymentProvider   String?
+  paymentRef        String?
+
+  // ---- Print lifecycle ----
   printState        String
+
+  // ---- Idempotency (PRD 11) ----
+  /// Client-supplied key deduplicating repeated submissions of the same order.
+  idempotencyKey    String?  @unique
+
+  // ---- Retry metadata ----
+  attemptCount      Int      @default(0)
+  maxAttempts       Int      @default(3)
+  lastAttemptAt     DateTime?
+
+  // ---- Failure classification (PRD 12) ----
   errorMessage      String?
+  failureCategory   String?
+
+  // ---- Lifecycle timestamps ----
+  queuedAt          DateTime?
+  assignedAt        DateTime?
+  printedAt         DateTime?
+  completedAt       DateTime?
+  /// Set when the stored document bytes were removed (PRD 15).
+  documentDeletedAt DateTime?
+
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+
+  events            JobEvent[]
+
+  @@index([printerId, printState])
+  @@index([shopId, createdAt])
+  @@index([printState, createdAt])
+  @@index([paymentRef])
+}
+
+/// Append-only lifecycle trail (PRD 9 and 22). One row per meaningful transition
+/// or side effect; never updated or deleted alongside normal job mutation.
+model JobEvent {
+  id         String   @id @default(uuid())
+  jobId      String
+  job        PrintJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  /// e.g. JOB_CREATED, PAYMENT_CONFIRMED, ASSIGNED, PRINT_FAILED.
+  type       String
+  fromState  String?
+  toState    String?
+  /// Who caused it: customer, agent:<deviceId>, shop:<userId>, system, webhook.
+  actor      String?
+  detail     Json?
+
+  createdAt  DateTime @default(now())
+
+  @@index([jobId, createdAt])
+  @@index([type, createdAt])
+}
+
+/// Request-level idempotency for money-moving and print-causing endpoints
+/// (PRD 11). A replayed request with a matching key and payload returns the
+/// stored response instead of executing again.
+model IdempotencyRecord {
+  key          String   @id
+  /// Endpoint scope, so the same key on different operations cannot collide.
+  scope        String
+  /// Hash of the request payload, to detect a key reused with different content.
+  requestHash  String
+  statusCode   Int
+  responseBody Json?
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+
+  @@index([scope, createdAt])
+  @@index([expiresAt])
 }

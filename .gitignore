@@ -39,6 +39,11 @@ downloads/
 *.dump
 *.sql
 
+# Prisma migrations are source code, not database dumps. Without this negation
+# the *.sql rule above silently excludes them and `prisma migrate deploy` finds
+# nothing to apply in production.
+!**/prisma/migrations/**/*.sql
+
 # Graphify Knowledge Graph Artifacts
 graphify-out/
 .claude/

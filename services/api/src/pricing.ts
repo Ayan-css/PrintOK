@@ -1,4 +1,4 @@
-import { MerchantPricingConfig } from '@printok/shared-types';
+import { MerchantPricingConfig, PriceSnapshot } from '@printok/shared-types';
 
 export const DEFAULT_PRICING_CONFIG: MerchantPricingConfig = {
   bwSinglePerPageCents: 200,    // ₹2.00
@@ -58,3 +58,55 @@ export function calculateJobPrice(
   return subtotal;
 }
 
+
+/**
+ * Computes the price and returns the full derivation alongside it (PRD 9).
+ *
+ * The snapshot is stored on the job so that a later edit to the shop's rate card
+ * can never restate what a past customer was quoted, and so disputes can be
+ * settled from the record rather than by recomputing against current rates.
+ */
+export function calculateJobPriceBreakdown(
+  pages: number,
+  copies: number = 1,
+  isColor: boolean = false,
+  isDuplex: boolean = false,
+  paperSize: string = 'A4',
+  pricingConfig: MerchantPricingConfig = DEFAULT_PRICING_CONFIG
+): PriceSnapshot {
+  const safePages = Math.max(1, pages);
+  const safeCopies = Math.max(1, copies);
+
+  const baseRate = isColor
+    ? (isDuplex ? pricingConfig.colorDuplexPerPageCents : pricingConfig.colorSinglePerPageCents)
+    : (isDuplex ? pricingConfig.bwDuplexPerPageCents : pricingConfig.bwSinglePerPageCents);
+
+  const paperSizeMultiplier = paperSize === 'A3' ? (pricingConfig.a3Multiplier || 2.0) : 1;
+  const perPageRateCents = paperSize === 'A3'
+    ? Math.round(baseRate * paperSizeMultiplier)
+    : baseRate;
+
+  const billableSheets = safePages * safeCopies;
+  const subtotalCents = billableSheets * perPageRateCents;
+
+  const threshold = pricingConfig.bulkDiscountThreshold || 50;
+  const qualifiesForBulk = threshold > 0 && billableSheets >= threshold;
+  const bulkDiscountPercent = qualifiesForBulk ? (pricingConfig.bulkDiscountPercent ?? 10) : 0;
+  const totalPriceInCents = qualifiesForBulk
+    ? Math.round(subtotalCents * ((100 - bulkDiscountPercent) / 100))
+    : subtotalCents;
+
+  return {
+    perPageRateCents,
+    pages: safePages,
+    copies: safeCopies,
+    billableSheets,
+    subtotalCents,
+    bulkDiscountPercent,
+    bulkDiscountCents: subtotalCents - totalPriceInCents,
+    paperSizeMultiplier,
+    totalPriceInCents,
+    rateCard: { ...pricingConfig },
+    calculatedAt: new Date().toISOString(),
+  };
+}

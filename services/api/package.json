@@ -6,7 +6,10 @@
     "build": "npm --prefix ../../packages/shared-types run build 2>/dev/null || true; prisma generate && tsc",
     "start": "node dist/server.js",
     "dev": "tsc -w",
-    "test": "node --test dist/tests/api.test.js"
+    "test": "node --test dist/tests/api.test.js",
+    "test:db": "bash scripts/setup-test-db.sh && node --test dist/tests/prismaStorage.test.js",
+    "test:all": "npm run test && npm run test:db",
+    "migrate:deploy": "prisma migrate deploy"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.500.0",

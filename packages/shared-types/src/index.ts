@@ -13,6 +13,7 @@ export enum PaymentState {
   Cancelled = 'Cancelled',
   RefundPending = 'RefundPending',
   Refunded = 'Refunded',
+  PartiallyRefunded = 'PartiallyRefunded',
 }
 
 /**
@@ -22,13 +23,74 @@ export enum PrintState {
   Created = 'Created',
   AwaitingPayment = 'AwaitingPayment',
   Queued = 'Queued',
+  /// Claimed by a specific agent device; no other device may pick it up.
+  Assigned = 'Assigned',
   Downloading = 'Downloading',
   Printing = 'Printing',
   Printed = 'Printed',
+  /// Physically printed and waiting at the counter for the customer.
+  ReadyForCollection = 'ReadyForCollection',
   Completed = 'Completed',
   Failed = 'Failed',
   Cancelled = 'Cancelled',
   RequiresShopAction = 'RequiresShopAction',
+  /// Held for human decision before any money moves (PRD 12, 17).
+  RefundReview = 'RefundReview',
+}
+
+/**
+ * Failure classification (PRD 12). Determines who can resolve a stuck job.
+ */
+export enum FailureCategory {
+  CustomerResolvable = 'CustomerResolvable',
+  ShopResolvable = 'ShopResolvable',
+  PlatformResolvable = 'PlatformResolvable',
+  SafetyCritical = 'SafetyCritical',
+}
+
+/**
+ * Immutable record of how a job's price was derived (PRD 9).
+ * Frozen at creation so later rate-card edits cannot restate a past quote.
+ */
+export interface PriceSnapshot {
+  perPageRateCents: number;
+  pages: number;
+  copies: number;
+  billableSheets: number;
+  subtotalCents: number;
+  bulkDiscountPercent: number;
+  bulkDiscountCents: number;
+  paperSizeMultiplier: number;
+  totalPriceInCents: number;
+  rateCard: MerchantPricingConfig;
+  calculatedAt: string;
+}
+
+/**
+ * Immutable copy of the print configuration as submitted (PRD 9).
+ */
+export interface PrintConfigSnapshot {
+  pageCount: number;
+  copies: number;
+  isColor: boolean;
+  isDuplex: boolean;
+  paperSize: string;
+  pageRange?: string;
+}
+
+/**
+ * Append-only job lifecycle entry (PRD 9, 22).
+ */
+export interface JobEvent {
+  id: string;
+  jobId: string;
+  type: string;
+  fromState?: string;
+  toState?: string;
+  /** customer | agent:<deviceId> | shop:<userId> | system | webhook */
+  actor?: string;
+  detail?: Record<string, unknown>;
+  createdAt: string;
 }
 
 /**
@@ -92,20 +154,58 @@ export interface MerchantStats {
  */
 export interface PrintJob {
   id: string;
+  /** Customer-facing order reference, stable across job retries. */
+  orderId: string;
+  shopId: string;
   printerId: string;
+  /** Agent device that claimed the job; unset until assignment. */
+  deviceId?: string;
   tokenNumber?: string;
+
+  // Document reference
   fileName: string;
   fileUrl: string;
   fileChecksum: string;
+  fileSizeBytes?: number;
+
+  // Print configuration
   pageCount: number;
   copies: number;
   isColor: boolean;
   isDuplex?: boolean;
   paperSize?: string;
+  pageRange?: string;
+  printConfig?: PrintConfigSnapshot;
+
+  // Price
   totalPriceInCents: number;
+  priceSnapshot?: PriceSnapshot;
+
+  // Payment
   paymentState: PaymentState;
+  paymentProvider?: string;
+  paymentRef?: string;
+
+  // Print lifecycle
   printState: PrintState;
+
+  // Idempotency & retries (PRD 11)
+  idempotencyKey?: string;
+  attemptCount?: number;
+  maxAttempts?: number;
+  lastAttemptAt?: string;
+
+  // Failure handling (PRD 12)
   errorMessage?: string;
+  failureCategory?: FailureCategory;
+
+  // Lifecycle timestamps
+  queuedAt?: string;
+  assignedAt?: string;
+  printedAt?: string;
+  completedAt?: string;
+  documentDeletedAt?: string;
+
   createdAt: string;
   updatedAt: string;
 }

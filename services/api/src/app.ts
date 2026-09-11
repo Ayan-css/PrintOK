@@ -6,6 +6,7 @@ import { generateQrCodeDataUrl } from './qr';
 import { AgentWebSocketServer } from './ws';
 import { processDocument } from './documentProcessor';
 import { RazorpayService } from './razorpayService';
+import { parsePrintState } from './jobStateMachine';
 import {
   RegisterShopDto,
   RegisterShopResponse,
@@ -314,10 +315,12 @@ export function createApp(
   app.post('/api/print-jobs/:id/manual-override', async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const job = await storage.confirmPaymentAndQueueJob(id);
-      if (!job) {
-        return res.status(404).json({ error: 'Print job not found.' });
+      const result = await storage.confirmPaymentAndQueueJob(id, { actor: 'shop' });
+      if (!result.ok) {
+        const status = result.code === 'NOT_FOUND' ? 404 : 409;
+        return res.status(status).json({ error: result.reason });
       }
+      const job = result.job;
 
       if (wsServer) {
         wsServer.notifyJobQueued(job);
@@ -379,10 +382,15 @@ export function createApp(
         return res.json({ success: true, message: 'Payment already processed.', job });
       }
 
-      const updatedJob = await storage.confirmPaymentAndQueueJob(jobId);
-      if (!updatedJob) {
-        return res.status(500).json({ error: 'Failed to update job status.' });
+      const paymentResult = await storage.confirmPaymentAndQueueJob(jobId, {
+        actor: 'webhook',
+        detail: { paymentRef: (req.body?.payload?.payment?.entity?.id) || undefined },
+      });
+      if (!paymentResult.ok) {
+        const status = paymentResult.code === 'NOT_FOUND' ? 404 : 409;
+        return res.status(status).json({ error: paymentResult.reason });
       }
+      const updatedJob = paymentResult.job;
 
       // Instant push notification over WebSocket
       if (wsServer) {
@@ -426,13 +434,21 @@ export function createApp(
         return res.status(401).json({ error: 'Unauthorized: Invalid Agent API Key.' });
       }
 
+      // Claim each job for the calling device before handing it over. The job
+      // moves Queued -> Assigned, so a second agent polling concurrently is told
+      // the job is taken rather than printing it a second time (PRD 11).
+      const deviceId = (req.headers['x-agent-device-id'] as string) || printer.id;
       const pendingJobs = await storage.getPendingJobsForPrinter(printer.id);
 
+      const claimedJobs = [];
       for (const job of pendingJobs) {
-        await storage.updateJobPrintState(job.id, PrintState.Downloading);
+        const claim = await storage.assignJobToDevice(job.id, deviceId);
+        if (claim.ok) {
+          claimedJobs.push(claim.job);
+        }
       }
 
-      const response: AgentPollResponse = { jobs: pendingJobs };
+      const response: AgentPollResponse = { jobs: claimedJobs };
       return res.json(response);
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -456,13 +472,28 @@ export function createApp(
 
       const { id } = req.params;
       const { printState, errorMessage } = req.body as AgentUpdateStatusDto;
+      const deviceId = (req.headers['x-agent-device-id'] as string) || printer.id;
 
-      const updatedJob = await storage.updateJobPrintState(id, printState, errorMessage);
-      if (!updatedJob) {
-        return res.status(404).json({ error: 'Print job not found.' });
+      const requestedState = parsePrintState(String(printState));
+      if (!requestedState) {
+        return res.status(400).json({ error: `Unknown print state '${printState}'.` });
       }
 
-      return res.json({ job: updatedJob });
+      const result = await storage.updateJobPrintState(id, requestedState, errorMessage, {
+        actor: `agent:${deviceId}`,
+        deviceId,
+      });
+
+      if (!result.ok) {
+        if (result.code === 'NOT_FOUND') {
+          return res.status(404).json({ error: result.reason });
+        }
+        // The job moved on underneath the agent (cancelled, or already terminal).
+        // 409 tells the agent to stop rather than retry the same report forever.
+        return res.status(409).json({ error: result.reason, job: result.job });
+      }
+
+      return res.json({ job: result.job });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }

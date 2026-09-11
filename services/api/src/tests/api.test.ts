@@ -77,28 +77,43 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(data.jobs.length, 1);
     assert.strictEqual(data.jobs[0].id, createdJobId);
 
-    // Verify job transitioned to Downloading
+    // Polling claims the job for the calling device rather than just flipping it
+    // to Downloading, so a second agent cannot pick up the same work.
     const checkRes = await fetch(`${baseUrl}/api/print-jobs/${createdJobId}`);
     const checkData = (await checkRes.json()) as any;
-    assert.strictEqual(checkData.job.printState, PrintState.Downloading);
+    assert.strictEqual(checkData.job.printState, PrintState.Assigned);
+    assert.ok(checkData.job.deviceId, 'claimed job must record the owning device');
+
+    // A second poll must not hand the same job out again.
+    const secondPoll = await fetch(`${baseUrl}/api/agent/jobs/pending`, {
+      headers: { 'x-agent-api-key': agentApiKey },
+    });
+    const secondData = (await secondPoll.json()) as any;
+    assert.strictEqual(secondData.jobs.length, 0, 'an assigned job must not be re-issued');
   });
 
   await t.test('4. Windows Agent Updates Job Status to Printed and Completed', async () => {
-    const res = await fetch(`${baseUrl}/api/agent/jobs/${createdJobId}/status`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-agent-api-key': agentApiKey,
-      },
-      body: JSON.stringify({
-        jobId: createdJobId,
-        printState: PrintState.Completed,
-      }),
-    });
+    const report = (printState: PrintState) =>
+      fetch(`${baseUrl}/api/agent/jobs/${createdJobId}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-agent-api-key': agentApiKey },
+        body: JSON.stringify({ jobId: createdJobId, printState }),
+      });
 
+    // Mirrors the real agent sequence: report Printing, spool, then Completed.
+    const printingRes = await report(PrintState.Printing);
+    assert.strictEqual(printingRes.status, 200);
+
+    const res = await report(PrintState.Completed);
     assert.strictEqual(res.status, 200);
     const data = (await res.json()) as any;
     assert.strictEqual(data.job.printState, PrintState.Completed);
+    assert.ok(data.job.completedAt, 'completedAt must be stamped');
+
+    // Completed is terminal: a replayed or late report must be refused, not
+    // silently accepted as a second print (PRD 11).
+    const replay = await report(PrintState.Printing);
+    assert.strictEqual(replay.status, 409);
   });
 
   await t.test('5. Payment Webhook confirms pending job & triggers queue state', async () => {
