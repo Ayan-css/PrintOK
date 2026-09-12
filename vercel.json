@@ -43,6 +43,10 @@
       "destination": "/apps/customer-web/public/refund.html"
     },
     {
+      "source": "/404",
+      "destination": "/apps/customer-web/public/404.html"
+    },
+    {
       "source": "/(.*\\..*)",
       "destination": "/apps/customer-web/public/$1"
     }

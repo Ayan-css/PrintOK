@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<!--
+  Vercel serves this file for any path that matches no route, and it resolves it
+  from the deployment's output root — which for this project is the repository
+  root. That is why it sits here rather than beside the other pages in
+  apps/customer-web/public/. It pulls its stylesheet from there via the
+  catch-all rewrite in vercel.json, so there is no duplicated CSS.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="That PrintOk page could not be found.">
+  <meta name="theme-color" content="#0d0d0d">
+  <meta name="robots" content="noindex">
+  <title>Page not found — PrintOk</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="bg-paper">
+  <div class="app-wrapper">
+    <div class="page-container">
+
+      <main class="notfound">
+        <p class="notfound-code" aria-hidden="true">404</p>
+        <h1>This page didn't print</h1>
+        <p class="notfound-lede">
+          The link is wrong, or whatever used to be here has moved.
+        </p>
+
+        <div class="notfound-actions">
+          <a href="/" class="btn btn-primary">Back to PrintOk</a>
+          <a href="/register" class="btn btn-outline">List your shop</a>
+        </div>
+
+        <!--
+          A customer who scanned a poster and landed here has a physical QR in
+          front of them and no idea what to do next, so say it plainly rather
+          than leaving them on a dead end.
+        -->
+        <div class="notfound-help">
+          <h2>Scanned a QR code at a shop?</h2>
+          <p>
+            That poster's code may be out of date. Ask the shop to show you its current QR code
+            from its PrintOk dashboard — or pay at the counter as usual.
+          </p>
+        </div>
+
+        <nav class="notfound-links" aria-label="Useful pages">
+          <a href="/#how">How it works</a>
+          <a href="/#pricing">Pricing</a>
+          <a href="/dashboard">Shop login</a>
+          <a href="/#contact">Contact us</a>
+        </nav>
+      </main>
+
+      <footer class="landing-footer">
+        <div>
+          <strong>🖨️ PrintOk</strong>
+          <p class="meta-text">Hardware-free printing for neighbourhood shops.</p>
+        </div>
+        <nav class="landing-footer-links" aria-label="Footer">
+          <a href="/privacy">Privacy</a>
+          <a href="/terms">Terms</a>
+          <a href="/refund">Refunds</a>
+        </nav>
+      </footer>
+
+    </div>
+  </div>
+</body>
+</html>
