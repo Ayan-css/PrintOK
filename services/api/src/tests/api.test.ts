@@ -1281,6 +1281,36 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.notStrictEqual(res.status, 500, 'a forwarded request must not error');
   });
 
+  await t.test('34. Production never falls back to the public webhook secret', async () => {
+    // The development fallback is a literal in a public repository. If
+    // production used it, anyone could read it, sign their own
+    // "payment.captured" webhook and mark any job paid — free printing for
+    // whoever noticed. Production must fail closed instead.
+    const { RazorpayService } = await import('../razorpayService');
+
+    const realEnv = process.env.NODE_ENV;
+    const realSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+
+    try {
+      delete process.env.RAZORPAY_WEBHOOK_SECRET;
+      process.env.NODE_ENV = 'production';
+
+      const service = new RazorpayService();
+      const forged = JSON.stringify({ payload: { payment: { entity: { notes: { jobId: 'x' } } } } });
+      const signature = crypto
+        .createHmac('sha256', 'printok_webhook_secret_dev')
+        .update(forged)
+        .digest('hex');
+
+      assert.strictEqual(service.verifyWebhookSignature(forged, signature), false,
+        'a webhook signed with the public dev secret must not verify in production');
+    } finally {
+      process.env.NODE_ENV = realEnv;
+      if (realSecret === undefined) delete process.env.RAZORPAY_WEBHOOK_SECRET;
+      else process.env.RAZORPAY_WEBHOOK_SECRET = realSecret;
+    }
+  });
+
   server.close();
 });
 

@@ -64,7 +64,30 @@ export class RazorpayService {
   constructor() {
     this.keyId = process.env.RAZORPAY_KEY_ID || '';
     this.keySecret = process.env.RAZORPAY_KEY_SECRET || '';
-    this.webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || 'printok_webhook_secret_dev';
+    // The development fallback below is a literal in a public repository, so
+    // anyone can read it. Falling back to it in production would let a stranger
+    // sign their own "payment captured" webhook and mark any job paid — free
+    // printing for whoever noticed. Production therefore gets no fallback: the
+    // secret stays empty and verifyWebhookSignature rejects everything, which
+    // fails closed rather than open.
+    //
+    // Deliberately not a boot failure. The browser confirmation path is signed
+    // with the API key secret and keeps working, so a missing webhook secret
+    // costs the backstop rather than the whole service.
+    const configuredWebhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+
+    if (configuredWebhookSecret) {
+      this.webhookSecret = configuredWebhookSecret;
+    } else if (process.env.NODE_ENV === 'production') {
+      this.webhookSecret = '';
+      console.error(
+        '[Razorpay Service] RAZORPAY_WEBHOOK_SECRET is not set. Every payment webhook will be ' +
+        'rejected, so a customer who closes the page after paying will have their job left unpaid. ' +
+        'Set it to the secret of the webhook configured for THIS Razorpay mode.'
+      );
+    } else {
+      this.webhookSecret = 'printok_webhook_secret_dev';
+    }
   }
 
   /**
