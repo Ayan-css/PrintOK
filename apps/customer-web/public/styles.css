@@ -3804,3 +3804,15 @@ body::before {
   color: var(--color-warning-text);
   padding: 0 4px;
 }
+
+/* Declining refuses a customer's job and refunds them, so it reads as the
+   destructive action it is — without competing with the primary button beside
+   it, which is the one a shop presses all day. */
+.btn-decline {
+  border-color: var(--color-danger);
+  color: var(--color-danger-text);
+}
+.btn-decline:hover:not(:disabled) {
+  background: var(--color-danger);
+  color: var(--color-text-on-dark);
+}

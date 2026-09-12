@@ -1130,6 +1130,103 @@ export function createApp(
   });
 
   /**
+   * The shop refuses a job, refunding the customer in full.
+   *
+   * A shop has to be able to say no — the paper is the wrong size, the printer
+   * is broken, the document is something it will not print. Doing that while
+   * the customer has already paid means sending the money back, so the two are
+   * one action rather than a cancellation the shop must remember to refund.
+   *
+   * The refund is issued only after the job has been moved to RefundPending, so
+   * a job is never recorded as refunded before Razorpay has accepted it, and a
+   * refund that fails leaves a state that says so rather than one that lies.
+   */
+  app.post('/api/shops/:shopId/jobs/:jobId/decline', async (req: Request, res: Response) => {
+    const { shopId, jobId } = req.params;
+
+    const merchant = await authenticateMerchant(req, res, { shopId });
+    if (!merchant) return;
+
+    try {
+      const reason = String((req.body || {}).reason || '').trim();
+      if (!reason) {
+        return res.status(400).json({
+          error: 'A reason is required. The customer is told why their job was refused.',
+        });
+      }
+
+      const job = await storage.getPrintJob(jobId);
+      if (!job) return res.status(404).json({ error: 'Print job not found.' });
+
+      // Scoped to the shop in the URL, which the session is already checked
+      // against — so one shop cannot decline another's work.
+      if (job.shopId !== shopId) {
+        return res.status(404).json({ error: 'Print job not found.' });
+      }
+
+      // Paper and toner are already spent once it has printed. Refusing then is
+      // a refund decision for a human, not a button.
+      if ([PrintState.Printed, PrintState.ReadyForCollection, PrintState.Completed].includes(job.printState)) {
+        return res.status(409).json({
+          error: 'This job has already printed and cannot be declined. Issue a refund manually if it was wrong.',
+        });
+      }
+
+      const declined = await storage.declineJob(jobId, reason, {
+        actor: `shop:${merchant.sub}`,
+        detail: { declinedBy: merchant.email },
+      });
+
+      if (!declined.ok) {
+        const status = declined.code === 'NOT_FOUND' ? 404 : 409;
+        return res.status(status).json({ error: declined.reason });
+      }
+
+      // Nothing was taken, so there is nothing to send back.
+      if (declined.job.paymentState !== PaymentState.RefundPending) {
+        return res.json({
+          success: true,
+          job: declined.job,
+          refund: { issued: false, reason: 'No payment had been taken for this job.' },
+        });
+      }
+
+      const refund = await razorpayService.refundPayment(
+        String(job.paymentRef || ''),
+        job.totalPriceInCents,
+        { jobId: job.id, shopId: job.shopId, reason }
+      );
+
+      if (!refund.ok) {
+        // The job stays in RefundPending: the shop's decision stands, and the
+        // money is visibly still owed rather than quietly forgotten.
+        return res.status(202).json({
+          success: true,
+          job: declined.job,
+          refund: { issued: false, error: refund.error },
+          message:
+            'The job was declined, but the refund could not be issued automatically. ' +
+            'It must be refunded from the Razorpay dashboard.',
+        });
+      }
+
+      const recorded = await storage.recordJobRefund(
+        jobId,
+        { refundId: refund.refundId, amountInCents: refund.amountInCents },
+        { actor: `shop:${merchant.sub}` }
+      );
+
+      return res.json({
+        success: true,
+        job: recorded.ok ? recorded.job : declined.job,
+        refund: { issued: true, refundId: refund.refundId, amountInCents: refund.amountInCents },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
    * Jobs waiting on a human decision (PRD 12).
    */
   app.get('/api/shops/:shopId/jobs/requires-action', async (req: Request, res: Response) => {

@@ -1380,6 +1380,109 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
       'payment.captured must still confirm the payment');
   });
 
+  await t.test('36. A shop can decline a job, and the customer is refunded', async () => {
+    const reg = await fetch(`${baseUrl}/api/shops/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopName: 'Decline Test Shop', ownerEmail: 'decline@example.com', printerName: 'HP',
+      }),
+    });
+    const { shop: dShop, printer: dPrinter } = (await reg.json()) as any;
+
+    const claim = await fetch(`${baseUrl}/api/merchant/claim`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopId: dShop.id, ownerEmail: 'decline@example.com', password: 'DeclineOwner88xy',
+      }),
+    });
+    const { token: dToken } = (await claim.json()) as any;
+    const auth = { 'Content-Type': 'application/json', Authorization: `Bearer ${dToken}` };
+
+    const makeJob = async () => {
+      const res = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          printerId: dPrinter.id,
+          fileName: 'refuse-me.pdf',
+          fileBase64: Buffer.from('%PDF-1.4 one page').toString('base64'),
+          copies: 1, isColor: false, isDuplex: false,
+        }),
+      });
+      return ((await res.json()) as any).job;
+    };
+
+    // --- an unpaid job: declining stops it, with nothing to refund ---
+    const unpaid = await makeJob();
+    const unpaidRes = await fetch(`${baseUrl}/api/shops/${dShop.id}/jobs/${unpaid.id}/decline`, {
+      method: 'POST', headers: auth, body: JSON.stringify({ reason: 'Printer is out of toner.' }),
+    });
+    assert.strictEqual(unpaidRes.status, 200);
+    const unpaidBody = (await unpaidRes.json()) as any;
+    assert.strictEqual(unpaidBody.job.printState, PrintState.Cancelled);
+    assert.strictEqual(unpaidBody.refund.issued, false, 'nothing was paid, so nothing is refunded');
+    assert.strictEqual(unpaidBody.job.declineReason, 'Printer is out of toner.');
+
+    // --- a reason is required: the customer is told why ---
+    const noReason = await fetch(`${baseUrl}/api/shops/${dShop.id}/jobs/${unpaid.id}/decline`, {
+      method: 'POST', headers: auth, body: JSON.stringify({}),
+    });
+    assert.strictEqual(noReason.status, 400);
+
+    // --- another shop must not be able to decline this shop's job ---
+    const other = await fetch(`${baseUrl}/api/merchant/signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopName: 'Nosy Prints', ownerEmail: 'nosy@example.com',
+        printerName: 'HP', password: 'NosyOwner77xy',
+      }),
+    });
+    const { token: nosyToken } = (await other.json()) as any;
+    const victim = await makeJob();
+    const cross = await fetch(`${baseUrl}/api/shops/${dShop.id}/jobs/${victim.id}/decline`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${nosyToken}` },
+      body: JSON.stringify({ reason: 'not mine to refuse' }),
+    });
+    assert.strictEqual(cross.status, 403, 'one shop must not decline another shop\'s job');
+
+    // --- a paid job: declining owes the customer money back ---
+    const paid = await makeJob();
+    const confirmRaw = JSON.stringify({
+      event: 'payment.captured',
+      payload: { payment: { entity: { id: 'pay_for_refund', notes: { jobId: paid.id } } } },
+    });
+    await fetch(`${baseUrl}/api/payments/webhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-razorpay-signature': signWebhook(confirmRaw) },
+      body: confirmRaw,
+    });
+
+    const paidCheck = await fetch(`${baseUrl}/api/print-jobs/${paid.id}`);
+    assert.strictEqual(((await paidCheck.json()) as any).job.paymentState, PaymentState.Paid);
+
+    const declined = await fetch(`${baseUrl}/api/shops/${dShop.id}/jobs/${paid.id}/decline`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ reason: 'We cannot print on that paper size.' }),
+    });
+
+    // Razorpay is not reachable in this suite, so the refund cannot complete.
+    // What matters is that the money is left visibly owed rather than the job
+    // being recorded as refunded when nothing moved.
+    assert.strictEqual(declined.status, 202,
+      'a refund that could not be issued must not report success');
+    const declinedBody = (await declined.json()) as any;
+    assert.strictEqual(declinedBody.job.printState, PrintState.Cancelled);
+    assert.strictEqual(declinedBody.job.paymentState, PaymentState.RefundPending,
+      'the refund is still owed and must say so');
+    assert.strictEqual(declinedBody.refund.issued, false);
+    assert.ok(declinedBody.job.refundId === undefined,
+      'no refund id may be recorded when no refund was made');
+  });
+
   server.close();
 });
 

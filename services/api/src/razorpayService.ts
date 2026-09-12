@@ -174,6 +174,48 @@ export class RazorpayService {
     };
   }
 
+  /**
+   * Refunds a captured payment in full.
+   *
+   * Used when a shop declines a job the customer has already paid for. The
+   * amount is always the full order: a shop refusing to print has given the
+   * customer nothing, so there is nothing to retain.
+   *
+   * Returns rather than throws, because the caller has already moved the job
+   * to RefundPending and must record the outcome either way — a thrown error
+   * would lose the distinction between "Razorpay refused" and "we never asked".
+   */
+  public async refundPayment(
+    paymentId: string,
+    amountInCents: number,
+    notes: Record<string, string> = {}
+  ): Promise<{ ok: true; refundId: string; amountInCents: number } | { ok: false; error: string }> {
+    if (!this.keyId || !this.keySecret) {
+      return { ok: false, error: 'Razorpay is not configured, so no refund can be issued.' };
+    }
+
+    if (!paymentId) {
+      return { ok: false, error: 'This job has no payment reference to refund against.' };
+    }
+
+    try {
+      const Razorpay = require('razorpay');
+      const instance = new Razorpay({ key_id: this.keyId, key_secret: this.keySecret });
+
+      const refund = await instance.payments.refund(paymentId, {
+        amount: amountInCents,
+        speed: 'normal',
+        notes,
+      });
+
+      return { ok: true, refundId: refund.id, amountInCents: refund.amount ?? amountInCents };
+    } catch (err: any) {
+      const reason = describeRazorpayError(err);
+      console.error(`[Razorpay Service] Refund of ${paymentId} failed:`, reason);
+      return { ok: false, error: reason };
+    }
+  }
+
   /** True when real Razorpay credentials are configured. */
   public get isLive(): boolean {
     return Boolean(this.keyId && this.keySecret);

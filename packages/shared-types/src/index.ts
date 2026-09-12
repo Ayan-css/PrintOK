@@ -212,6 +212,13 @@ export interface PrintJob {
   completedAt?: string;
   documentDeletedAt?: string;
 
+  /** Set when the shop declined the job, with the reason it gave. */
+  declineReason?: string;
+  /** Razorpay refund id (rfnd_...) once the money has been sent back. */
+  refundId?: string;
+  refundAmountCents?: number;
+  refundedAt?: string;
+
   /** Razorpay Route settlement for this job, when split at payment time. */
   transferId?: string;
   transferAmountCents?: number;

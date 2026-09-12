@@ -360,6 +360,102 @@ export class PrismaStorage implements IStorageProvider {
     return { ok: true, job: this.mapPrintJob(job) };
   }
 
+  public async declineJob(jobId: string, reason: string, meta: TransitionMeta = {}): Promise<StateChangeResult> {
+    const existing = await this.prisma.printJob.findUnique({ where: { id: jobId } });
+    if (!existing) return { ok: false, code: 'NOT_FOUND', reason: `Job '${jobId}' not found.` };
+
+    const from = existing.printState as PrintState;
+    const printCheck = canTransitionPrintState(from, PrintState.Cancelled);
+    if (!printCheck.allowed) {
+      return {
+        ok: false, code: 'ILLEGAL_TRANSITION', reason: printCheck.reason!,
+        job: this.mapPrintJob(existing),
+      };
+    }
+
+    // Paid jobs owe the customer money back; unpaid ones simply stop.
+    const wasPaid = existing.paymentState === PaymentState.Paid;
+    const nextPayment = wasPaid ? PaymentState.RefundPending : PaymentState.Cancelled;
+    const canMovePayment = canTransitionPaymentState(
+      existing.paymentState as PaymentState, nextPayment
+    ).allowed;
+
+    // Cancelled is a purgeable state: a declined job will never be printed, so
+    // the customer's document should not outlive the decision.
+    const purge = isDocumentPurgeable(PrintState.Cancelled) && !existing.documentDeletedAt;
+
+    const job = await this.prisma.printJob.update({
+      where: { id: jobId },
+      data: {
+        printState: PrintState.Cancelled,
+        declineReason: reason,
+        ...(canMovePayment ? { paymentState: nextPayment } : {}),
+        ...(purge ? { documentDeletedAt: new Date() } : {}),
+        events: {
+          create: {
+            type: 'JOB_DECLINED',
+            fromState: from,
+            toState: PrintState.Cancelled,
+            actor: meta.actor || 'shop',
+            detail: { ...(meta.detail || {}), reason, refundDue: wasPaid } as Prisma.InputJsonValue,
+          },
+        },
+      },
+    });
+
+    if (purge && existing.s3Key) {
+      try {
+        await this.s3Service.deleteDocument(existing.s3Key);
+        await this.recordEvent(jobId, 'DOCUMENT_PURGED', PrintState.Cancelled, PrintState.Cancelled, 'shop');
+      } catch (err: any) {
+        await this.recordEvent(jobId, 'DOCUMENT_PURGE_FAILED', PrintState.Cancelled, PrintState.Cancelled, 'shop', {
+          error: String(err?.message || err),
+          s3Key: existing.s3Key,
+        });
+      }
+    }
+
+    return { ok: true, job: this.mapPrintJob(job) };
+  }
+
+  public async recordJobRefund(
+    jobId: string,
+    refund: { refundId: string; amountInCents: number },
+    meta: TransitionMeta = {}
+  ): Promise<StateChangeResult> {
+    const existing = await this.prisma.printJob.findUnique({ where: { id: jobId } });
+    if (!existing) return { ok: false, code: 'NOT_FOUND', reason: `Job '${jobId}' not found.` };
+
+    const check = canTransitionPaymentState(existing.paymentState as PaymentState, PaymentState.Refunded);
+    if (!check.allowed) {
+      return {
+        ok: false, code: 'ILLEGAL_TRANSITION', reason: check.reason!,
+        job: this.mapPrintJob(existing),
+      };
+    }
+
+    const job = await this.prisma.printJob.update({
+      where: { id: jobId },
+      data: {
+        paymentState: PaymentState.Refunded,
+        refundId: refund.refundId,
+        refundAmountCents: refund.amountInCents,
+        refundedAt: new Date(),
+        events: {
+          create: {
+            type: 'PAYMENT_REFUNDED',
+            fromState: existing.printState,
+            toState: existing.printState,
+            actor: meta.actor || 'shop',
+            detail: { refundId: refund.refundId, amountInCents: refund.amountInCents } as Prisma.InputJsonValue,
+          },
+        },
+      },
+    });
+
+    return { ok: true, job: this.mapPrintJob(job) };
+  }
+
   public async assignJobToDevice(jobId: string, deviceId: string): Promise<StateChangeResult> {
     const existing = await this.prisma.printJob.findUnique({ where: { id: jobId } });
     if (!existing) return { ok: false, code: 'NOT_FOUND', reason: `Job '${jobId}' not found.` };
@@ -1394,6 +1490,11 @@ export class PrismaStorage implements IStorageProvider {
       paymentState: j.paymentState as PaymentState,
       paymentProvider: j.paymentProvider ?? undefined,
       paymentRef: j.paymentRef ?? undefined,
+
+      declineReason: j.declineReason ?? undefined,
+      refundId: j.refundId ?? undefined,
+      refundAmountCents: j.refundAmountCents ?? undefined,
+      refundedAt: j.refundedAt?.toISOString(),
 
       printState: j.printState as PrintState,
 

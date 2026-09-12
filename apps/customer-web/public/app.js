@@ -1246,6 +1246,7 @@ document.addEventListener('DOMContentLoaded', () => {
               <span class="queue-amount">${formatRupees(job.totalPriceInCents)}</span>
               <span class="badge ${badgeClass}">${escapeHtml(label)}</span>
               ${needsCash ? `<button type="button" class="btn btn-primary btn-sm" data-approve="${escapeHtml(job.id)}">✅ Cash Received</button>` : ''}
+              ${canDecline(job) ? `<button type="button" class="btn btn-outline btn-sm btn-decline" data-decline="${escapeHtml(job.id)}" data-paid="${job.paymentState === 'Paid' ? '1' : ''}">✖ Decline</button>` : ''}
             </div>
           </div>`;
       }).join('');
@@ -1253,6 +1254,75 @@ document.addEventListener('DOMContentLoaded', () => {
       list.querySelectorAll('[data-approve]').forEach(btn => {
         btn.addEventListener('click', () => approveCashJob(btn.getAttribute('data-approve'), btn));
       });
+
+      list.querySelectorAll('[data-decline]').forEach(btn => {
+        btn.addEventListener('click', () =>
+          declineJob(btn.getAttribute('data-decline'), btn.getAttribute('data-paid') === '1', btn));
+      });
+    }
+
+    /**
+     * A job can be refused until it has printed. After that the paper and toner
+     * are spent, so the decision is a refund for a human rather than a button.
+     */
+    function canDecline(job) {
+      return ['AwaitingPayment', 'Created', 'Queued', 'Assigned', 'Downloading', 'RequiresShopAction']
+        .includes(job.printState);
+    }
+
+    async function declineJob(jobId, wasPaid, btn) {
+      const warning = wasPaid
+        ? 'This customer has paid. Declining refunds them in full.'
+        : 'This job has not been paid for, so there is nothing to refund.';
+
+      const reason = window.prompt(
+        `${warning}\n\nWhy are you refusing it? The customer is shown this.`,
+        wasPaid ? 'We cannot print this job.' : ''
+      );
+      // Cancelled prompt: do nothing at all, rather than declining with no reason.
+      if (reason === null) return;
+
+      if (!reason.trim()) {
+        showToast('warning', 'A reason is needed', 'The customer is told why their job was refused.');
+        return;
+      }
+
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Declining...';
+
+      try {
+        const res = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/jobs/${encodeURIComponent(jobId)}/decline`, {
+          method: 'POST',
+          body: JSON.stringify({ reason: reason.trim() }),
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+          showToast('danger', 'Could not decline', data.error || 'The job was not declined.');
+          btn.disabled = false;
+          btn.textContent = original;
+          return;
+        }
+
+        if (data.refund && data.refund.issued) {
+          showToast('success', 'Declined and refunded',
+            `${formatRupees(data.refund.amountInCents)} has been sent back to the customer.`);
+        } else if (data.refund && data.refund.error) {
+          // 202: the decision stands but the money has not moved. Say so
+          // plainly — the shop still owes this customer a refund.
+          showToast('warning', 'Declined — refund not issued',
+            'Refund it from your Razorpay dashboard: ' + data.refund.error);
+        } else {
+          showToast('success', 'Job declined', 'Nothing had been paid, so there was nothing to refund.');
+        }
+
+        loadQueue();
+      } catch (err) {
+        showToast('danger', 'Network Error', err.message || 'Could not reach the API server.');
+        btn.disabled = false;
+        btn.textContent = original;
+      }
     }
 
     async function approveCashJob(jobId, btn) {

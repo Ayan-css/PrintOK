@@ -309,6 +309,23 @@ export interface IStorageProvider {
   /** Stores what was split to the shop and retained by PrintOk for one job. */
   recordJobSettlement(jobId: string, transferAmountCents: number, serviceFeeCents: number): Promise<void>;
 
+  /**
+   * The shop refuses a job it will not print.
+   *
+   * Cancels the print side and, where the customer has already paid, moves the
+   * payment to RefundPending. It does not move money — the caller issues the
+   * refund and then calls recordJobRefund, so a job is never recorded as
+   * refunded before Razorpay has actually accepted it.
+   */
+  declineJob(jobId: string, reason: string, meta?: TransitionMeta): Promise<StateChangeResult>;
+
+  /** Records a refund Razorpay has accepted. */
+  recordJobRefund(
+    jobId: string,
+    refund: { refundId: string; amountInCents: number },
+    meta?: TransitionMeta
+  ): Promise<StateChangeResult>;
+
   // --- Merchant accounts (PRD 20) ---
   createMerchantUser(input: {
     shopId: string; email: string; passwordHash: string;
@@ -574,6 +591,63 @@ export class MemoryStorage implements IStorageProvider {
     this.appendEvent(id, 'PAYMENT_CONFIRMED', previousPrintState, job.printState, {
       actor: meta.actor || 'webhook',
       detail: meta.detail,
+    });
+
+    return { ok: true, job };
+  }
+
+  public async declineJob(jobId: string, reason: string, meta: TransitionMeta = {}): Promise<StateChangeResult> {
+    const job = this.printJobs.get(jobId);
+    if (!job) return { ok: false, code: 'NOT_FOUND', reason: `Job '${jobId}' not found.` };
+
+    const printCheck = canTransitionPrintState(job.printState, PrintState.Cancelled);
+    if (!printCheck.allowed) {
+      return { ok: false, code: 'ILLEGAL_TRANSITION', reason: printCheck.reason!, job };
+    }
+
+    // Paid jobs owe the customer money back; unpaid ones simply stop.
+    const wasPaid = job.paymentState === PaymentState.Paid;
+    const nextPayment = wasPaid ? PaymentState.RefundPending : PaymentState.Cancelled;
+    const paymentCheck = canTransitionPaymentState(job.paymentState, nextPayment);
+
+    const from = job.printState;
+    job.printState = PrintState.Cancelled;
+    job.declineReason = reason;
+    if (paymentCheck.allowed) job.paymentState = nextPayment;
+    job.updatedAt = new Date().toISOString();
+    this.printJobs.set(jobId, job);
+
+    this.appendEvent(jobId, 'JOB_DECLINED', from, PrintState.Cancelled, {
+      actor: meta.actor || 'shop',
+      detail: { ...(meta.detail || {}), reason, refundDue: wasPaid },
+    });
+
+    return { ok: true, job };
+  }
+
+  public async recordJobRefund(
+    jobId: string,
+    refund: { refundId: string; amountInCents: number },
+    meta: TransitionMeta = {}
+  ): Promise<StateChangeResult> {
+    const job = this.printJobs.get(jobId);
+    if (!job) return { ok: false, code: 'NOT_FOUND', reason: `Job '${jobId}' not found.` };
+
+    const check = canTransitionPaymentState(job.paymentState, PaymentState.Refunded);
+    if (!check.allowed) {
+      return { ok: false, code: 'ILLEGAL_TRANSITION', reason: check.reason!, job };
+    }
+
+    job.paymentState = PaymentState.Refunded;
+    job.refundId = refund.refundId;
+    job.refundAmountCents = refund.amountInCents;
+    job.refundedAt = new Date().toISOString();
+    job.updatedAt = job.refundedAt;
+    this.printJobs.set(jobId, job);
+
+    this.appendEvent(jobId, 'PAYMENT_REFUNDED', job.printState, job.printState, {
+      actor: meta.actor || 'shop',
+      detail: { refundId: refund.refundId, amountInCents: refund.amountInCents },
     });
 
     return { ok: true, job };
