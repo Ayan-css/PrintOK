@@ -3794,3 +3794,13 @@ body::before {
 }
 .notfound-links a { color: var(--color-text-secondary); }
 .notfound-links a:hover { color: var(--color-primary-text); }
+
+/* Marks a legal placeholder that is not yet filled in. Deliberately loud: these
+   pages are publicly reachable, and a policy still carrying a bracketed
+   placeholder should be impossible to scroll past without noticing. */
+.legal-todo {
+  background: var(--color-warning-light);
+  border-bottom: 2px solid var(--color-warning);
+  color: var(--color-warning-text);
+  padding: 0 4px;
+}
