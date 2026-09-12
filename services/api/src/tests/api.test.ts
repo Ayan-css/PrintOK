@@ -1311,6 +1311,75 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     }
   });
 
+  await t.test('35. A failed payment webhook never marks a job paid', async () => {
+    // The handler ignored `event` entirely and confirmed any signed webhook
+    // carrying a job reference. `payment.failed` carries the same payment
+    // entity and the same notes as `payment.captured`, so subscribing to it —
+    // which production does — meant a declined card queued the job anyway:
+    // the customer collected their printout and nobody was charged.
+    const printerRes = await fetch(`${baseUrl}/api/shops/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopName: 'Webhook Event Shop', ownerEmail: 'wh@example.com', printerName: 'HP',
+      }),
+    });
+    const { printer: whPrinter } = (await printerRes.json()) as any;
+
+    const jobRes = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: whPrinter.id,
+        fileName: 'declined.pdf',
+        fileBase64: Buffer.from('%PDF-1.4 one page').toString('base64'),
+        copies: 1, isColor: false, isDuplex: false,
+      }),
+    });
+    const { job: whJob } = (await jobRes.json()) as any;
+    assert.strictEqual(whJob.paymentState, PaymentState.Pending);
+
+    const failedRaw = JSON.stringify({
+      event: 'payment.failed',
+      payload: { payment: { entity: { id: 'pay_declined', notes: { jobId: whJob.id } } } },
+    });
+
+    const failed = await fetch(`${baseUrl}/api/payments/webhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-razorpay-signature': signWebhook(failedRaw) },
+      body: failedRaw,
+    });
+
+    // 200, so Razorpay stops retrying an event that was understood.
+    assert.strictEqual(failed.status, 200, 'an understood event must be acknowledged');
+    const failedBody = (await failed.json()) as any;
+    assert.strictEqual(failedBody.ignored, 'payment.failed');
+
+    const afterFail = await fetch(`${baseUrl}/api/print-jobs/${whJob.id}`);
+    const { job: stillPending } = (await afterFail.json()) as any;
+    assert.strictEqual(stillPending.paymentState, PaymentState.Pending,
+      'a failed payment must leave the job unpaid');
+    assert.notStrictEqual(stillPending.printState, PrintState.Queued,
+      'a failed payment must never queue the job for printing');
+
+    // The captured event for the same job still works.
+    const capturedRaw = JSON.stringify({
+      event: 'payment.captured',
+      payload: { payment: { entity: { id: 'pay_ok', notes: { jobId: whJob.id } } } },
+    });
+    const captured = await fetch(`${baseUrl}/api/payments/webhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-razorpay-signature': signWebhook(capturedRaw) },
+      body: capturedRaw,
+    });
+    assert.strictEqual(captured.status, 200);
+
+    const afterCapture = await fetch(`${baseUrl}/api/print-jobs/${whJob.id}`);
+    const { job: paid } = (await afterCapture.json()) as any;
+    assert.strictEqual(paid.paymentState, PaymentState.Paid,
+      'payment.captured must still confirm the payment');
+  });
+
   server.close();
 });
 

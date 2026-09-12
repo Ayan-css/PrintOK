@@ -1561,6 +1561,13 @@ export function createApp(
   /**
    * Payment Webhook Endpoint (HMAC SHA256 Signature Verification)
    */
+  /**
+   * The only Razorpay events that mean the customer's money has actually been
+   * taken. Anything else — a failure, an authorization, a refund — must never
+   * queue a job for printing.
+   */
+  const PAYMENT_CONFIRMING_EVENTS = new Set(['payment.captured', 'order.paid']);
+
   app.post('/api/payments/webhook', async (req: Request, res: Response) => {
     try {
       // Razorpay sends its signature in a header and its job reference inside
@@ -1587,6 +1594,29 @@ export function createApp(
       const rawBody = (req as any).rawBody || JSON.stringify(body);
       if (!razorpayService.verifyWebhookSignature(rawBody, signature)) {
         return res.status(400).json({ error: 'Invalid HMAC payment webhook signature.' });
+      }
+
+      // Which event this is decides whether money actually arrived. Nothing
+      // checked it before: every signed webhook carrying a job reference was
+      // treated as a confirmation, and `payment.failed` carries the same
+      // payment entity and the same notes as `payment.captured`. With that
+      // event subscribed, a declined card marked the job paid and sent it to
+      // the printer — the customer got their document and nobody was charged.
+      //
+      // A webhook with no event is the legacy flat body, which only ever meant
+      // a confirmation; live Razorpay traffic always carries one.
+      const event: string | undefined = body?.event;
+
+      if (event && !PAYMENT_CONFIRMING_EVENTS.has(event)) {
+        // Answered 200 deliberately: a non-2xx makes Razorpay retry the same
+        // event for hours, and this one was understood — it just is not a
+        // payment.
+        console.log(`[Webhook] Ignoring '${event}' for job ${jobId}: not a payment confirmation.`);
+        return res.json({
+          success: true,
+          ignored: event,
+          message: 'Event acknowledged; it does not confirm a payment.',
+        });
       }
 
       const job = await storage.getPrintJob(jobId);
