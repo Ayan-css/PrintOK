@@ -2545,8 +2545,6 @@ body::before {
    Platform admin console
    --------------------------------------------------------------------------- */
 
-.container--wide { max-width: 1200px; }
-
 .admin-auth-view {
   display: flex;
   align-items: center;
@@ -3068,7 +3066,6 @@ body::before {
    rules add breathing room without removing anything.
    --------------------------------------------------------------------------- */
 
-.container--wide { padding-block: 28px 48px; }
 
 .admin-topbar {
   margin-bottom: 24px;
