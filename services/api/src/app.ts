@@ -120,6 +120,18 @@ export function createApp(
     verify: (req, _res, buf) => { (req as any).rawBody = buf.toString('utf8'); },
   }));
 
+  // Render terminates TLS at its own proxy and forwards the caller's address in
+  // X-Forwarded-For. Without this Express reports the proxy's address as req.ip,
+  // so every visitor shares one rate-limit bucket: 60 print jobs a minute for
+  // the whole platform, and five contact enquiries an hour for the entire
+  // internet. express-rate-limit detects the mismatch and logs
+  // ERR_ERL_UNEXPECTED_X_FORWARDED_FOR, which is what production was doing.
+  //
+  // Exactly one hop, never `true`: trusting the whole chain lets a caller add
+  // their own X-Forwarded-For and present a fresh address on every request,
+  // which would leave the limiter trivially bypassable.
+  app.set('trust proxy', 1);
+
   // Security: Public API Rate Limiter (Max 60 requests per minute per IP)
   const apiLimiter = rateLimit({
     windowMs: 60 * 1000,

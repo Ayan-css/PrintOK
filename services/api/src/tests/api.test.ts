@@ -1258,6 +1258,29 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.match(describeRazorpayError(new Error('socket hang up')), /socket hang up/);
   });
 
+  await t.test('33. The rate limiter sees the caller, not the proxy', async () => {
+    // Behind Render's proxy req.ip is the proxy unless Express is told to trust
+    // it, which put every visitor in one shared rate-limit bucket — 60 print
+    // jobs a minute for the whole platform, and five contact enquiries an hour
+    // for the entire internet. Production logged
+    // ERR_ERL_UNEXPECTED_X_FORWARDED_FOR for exactly this.
+    assert.strictEqual(app.get('trust proxy'), 1,
+      'Express must trust exactly one proxy hop');
+
+    // Never `true`: that trusts the whole X-Forwarded-For chain, so a caller
+    // can present a fresh address per request and bypass the limiter entirely.
+    assert.notStrictEqual(app.get('trust proxy'), true,
+      'trusting every hop makes the rate limiter bypassable');
+
+    // The limiter must read the forwarded address rather than the socket's.
+    const res = await fetch(`${baseUrl}/api/contact`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '203.0.113.9' },
+      body: JSON.stringify({ name: 'Proxy Test', email: 'proxy@example.com', message: 'Checking the forwarded address is used.' }),
+    });
+    assert.notStrictEqual(res.status, 500, 'a forwarded request must not error');
+  });
+
   server.close();
 });
 
