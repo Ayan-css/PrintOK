@@ -27,6 +27,35 @@ export interface OrderTransfer {
   on_hold?: boolean;
 }
 
+/**
+ * Turns a Razorpay SDK rejection into something a human can act on.
+ *
+ * The SDK rejects with `{ statusCode, error: { code, description, reason, … } }`
+ * and no `message`, so the obvious `err.message` is undefined. That is how a
+ * failed payment reached customers as "Razorpay order creation failed:
+ * undefined" — a message that named neither the cause nor anything to do about
+ * it, and left the server logs no better off.
+ */
+export function describeRazorpayError(err: any): string {
+  const detail = err?.error || err?.response?.error;
+  const description = detail?.description;
+  const code = detail?.code;
+  const status = err?.statusCode || err?.status;
+
+  if (description) {
+    const prefix = [status, code].filter(Boolean).join(' ');
+    return prefix ? `${description} (${prefix})` : description;
+  }
+
+  if (err?.message) return err.message;
+
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
 export class RazorpayService {
   private keyId: string;
   private keySecret: string;
@@ -90,12 +119,18 @@ export class RazorpayService {
             : {}),
         };
       } catch (err: any) {
+        const reason = describeRazorpayError(err);
+
+        // Always logged, whatever the environment: without this the only record
+        // of why a payment failed is whatever reached the customer's screen.
+        console.error('[Razorpay Service] Order creation failed:', reason);
+
         // A simulated order in production would show the customer a checkout
         // that can never take money, so fail loudly instead.
         if (process.env.NODE_ENV === 'production') {
-          throw new Error(`Razorpay order creation failed: ${err.message}`);
+          throw new Error(`Razorpay order creation failed: ${reason}`);
         }
-        console.warn('[Razorpay Service] Failed to create live order, falling back to simulated:', err.message);
+        console.warn('[Razorpay Service] Falling back to a simulated order.');
       }
     }
 

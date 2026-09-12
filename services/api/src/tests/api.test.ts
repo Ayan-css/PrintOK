@@ -1227,6 +1227,37 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.match(body.error, /counter/i, 'the refusal should point the customer at cash payment');
   });
 
+  await t.test('32. A Razorpay failure reports why, not "undefined"', async () => {
+    // The SDK rejects with { statusCode, error: { code, description } } and no
+    // `message`, so reading err.message gave undefined. Customers were shown
+    // "Razorpay order creation failed: undefined", which named neither the
+    // cause nor anything to do about it, and the logs said the same.
+    const { describeRazorpayError } = await import('../razorpayService');
+
+    // The two shapes that actually reach us, taken from live responses.
+    const rejected = {
+      statusCode: 400,
+      error: { code: 'BAD_REQUEST_ERROR', description: 'Order amount less than minimum amount allowed' },
+    };
+    assert.match(describeRazorpayError(rejected), /Order amount less than minimum amount allowed/);
+    assert.match(describeRazorpayError(rejected), /400/);
+
+    const badKeys = {
+      statusCode: 401,
+      error: { code: 'BAD_REQUEST_ERROR', description: 'Authentication failed' },
+    };
+    assert.match(describeRazorpayError(badKeys), /Authentication failed/);
+
+    // It must never produce the string that started this.
+    for (const shape of [rejected, badKeys, new Error('socket hang up'), {}, null]) {
+      assert.doesNotMatch(describeRazorpayError(shape), /undefined/,
+        `describeRazorpayError produced "undefined" for ${JSON.stringify(shape)}`);
+    }
+
+    // A plain Error still reports its own message.
+    assert.match(describeRazorpayError(new Error('socket hang up')), /socket hang up/);
+  });
+
   server.close();
 });
 
