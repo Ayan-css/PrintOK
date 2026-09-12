@@ -3621,6 +3621,28 @@ body::before {
    so a specific term can be found by scanning.
    ============================================================ */
 
+/* Long-form pages are read on a desktop as often as a phone, and inside the
+   540px .page-container they were a narrow ribbon down the middle of a large
+   screen. The customer upload flow and the signup wizard keep that width
+   deliberately — they are phone-shaped — so this is a variant, not a change to
+   the container itself.
+
+   width:100% still governs small screens, so nothing narrows on a phone. */
+.page-container.page-container--reading {
+  max-width: 1200px;
+}
+
+/* The measure grows with the page, so the type grows a little with it: at
+   1200px the same 15px text would run to a line length the eye loses its place
+   on coming back. */
+@media (min-width: 900px) {
+  .legal p,
+  .legal li {
+    font-size: 1rem;
+    line-height: 1.7;
+  }
+}
+
 .legal-nav {
   margin: 0 0 18px;
   font-family: var(--font-display);
@@ -3631,8 +3653,16 @@ body::before {
 .legal-nav a:hover { color: var(--color-primary-text); }
 
 .legal {
-  /* ~70 characters: past that, the eye loses the line on the way back. */
-  max-width: 68ch;
+  /* Fills its container; the container sets the width. */
+  max-width: 100%;
+  /* .page-container is a flex column, so this is a flex item and defaults to
+     min-width:auto — sized by its widest child. The fee tables scroll
+     horizontally on a phone via white-space:nowrap, and without this that
+     width propagated outward and pushed the whole card off the screen. */
+  min-width: 0;
+  /* Bracketed placeholders and long ids have no break opportunity, and one of
+     them is enough to widen the card on a narrow screen. */
+  overflow-wrap: anywhere;
   margin: 0 auto 48px;
   border: 3px solid var(--color-border);
   border-radius: 14px;
