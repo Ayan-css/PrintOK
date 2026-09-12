@@ -27,6 +27,18 @@
       "destination": "/apps/customer-web/public/print.html"
     },
     {
+      "source": "/privacy",
+      "destination": "/apps/customer-web/public/privacy.html"
+    },
+    {
+      "source": "/terms",
+      "destination": "/apps/customer-web/public/terms.html"
+    },
+    {
+      "source": "/refund",
+      "destination": "/apps/customer-web/public/refund.html"
+    },
+    {
       "source": "/(.*)",
       "destination": "/apps/customer-web/public/$1"
     }

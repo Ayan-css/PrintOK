@@ -3612,3 +3612,185 @@ body::before {
   --color-badge-muted-bg:   #33332c;
   --color-badge-muted-text: #c4c0b6;
 }
+
+/* ============================================================
+   LEGAL PAGES & 404
+   ------------------------------------------------------------
+   Long-form reading rather than marketing: a narrow measure, a
+   clear heading hierarchy, and generous spacing between clauses
+   so a specific term can be found by scanning.
+   ============================================================ */
+
+.legal-nav {
+  margin: 0 0 18px;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+.legal-nav a { color: var(--color-text-secondary); text-decoration: none; }
+.legal-nav a:hover { color: var(--color-primary-text); }
+
+.legal {
+  /* ~70 characters: past that, the eye loses the line on the way back. */
+  max-width: 68ch;
+  margin: 0 auto 48px;
+  border: 3px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface);
+  box-shadow: 5px 5px 0 var(--color-border);
+  padding: 32px clamp(18px, 4vw, 44px) 40px;
+}
+
+.legal h1 {
+  font-size: clamp(1.7rem, 4vw, 2.3rem);
+  line-height: 1.15;
+  margin: 0 0 10px;
+}
+
+.legal-meta {
+  margin: 0 0 26px;
+  color: var(--color-text-muted);
+  font-size: 0.88rem;
+}
+
+.legal h2 {
+  font-size: 1.18rem;
+  margin: 34px 0 10px;
+  padding-top: 16px;
+  border-top: 2px solid var(--color-border-muted);
+}
+.legal h2:first-of-type { border-top: 0; padding-top: 0; }
+
+.legal h3 {
+  font-size: 1rem;
+  margin: 22px 0 8px;
+  color: var(--color-text-primary);
+}
+
+.legal p,
+.legal li {
+  color: var(--color-text-secondary);
+  line-height: 1.65;
+  font-size: 0.95rem;
+}
+
+.legal p { margin: 0 0 12px; }
+.legal ul { margin: 0 0 14px; padding-left: 22px; }
+.legal li { margin-bottom: 7px; }
+.legal strong { color: var(--color-text-primary); }
+.legal a { color: var(--color-primary-text); font-weight: 600; }
+
+/* The summary that spares most readers the whole document. */
+.legal-callout {
+  border: 2px solid var(--color-primary);
+  border-left-width: 6px;
+  border-radius: var(--radius-md);
+  background: var(--color-primary-light);
+  padding: 14px 16px;
+  margin: 0 0 28px;
+}
+.legal-callout p { margin: 0; }
+
+.legal-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 6px 0 18px;
+  font-size: 0.88rem;
+}
+.legal-table th,
+.legal-table td {
+  border: 2px solid var(--color-border-muted);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+  color: var(--color-text-secondary);
+}
+.legal-table th {
+  background: var(--color-surface-muted);
+  color: var(--color-text-primary);
+  font-family: var(--font-display);
+  font-weight: 700;
+}
+
+/* Tables carry the fee figures and cannot reflow to one column without
+   losing which number belongs to which plan, so they scroll instead. */
+@media (max-width: 560px) {
+  .legal-table { display: block; overflow-x: auto; white-space: nowrap; }
+}
+
+.legal-address {
+  font-style: normal;
+  border: 2px solid var(--color-border-muted);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+  padding: 14px 16px;
+  margin: 0 0 14px;
+  line-height: 1.7;
+  color: var(--color-text-secondary);
+  font-size: 0.92rem;
+}
+
+/* --- 404 --- */
+
+.notfound {
+  max-width: 620px;
+  margin: 6vh auto 48px;
+  text-align: center;
+}
+
+.notfound-code {
+  font-family: var(--font-display);
+  font-size: clamp(4.5rem, 18vw, 9rem);
+  font-weight: 800;
+  line-height: 0.9;
+  margin: 0 0 6px;
+  color: var(--color-secondary);
+  /* Outlined rather than filled: at this size a solid block of yellow
+     overwhelms the message underneath it. */
+  -webkit-text-stroke: 3px var(--color-border);
+  paint-order: stroke fill;
+}
+
+.notfound h1 { font-size: clamp(1.5rem, 5vw, 2.1rem); margin: 0 0 10px; }
+
+.notfound-lede {
+  color: var(--color-text-secondary);
+  margin: 0 0 26px;
+  font-size: 1rem;
+}
+
+.notfound-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 34px;
+}
+.notfound-actions .btn { text-decoration: none; }
+
+.notfound-help {
+  border: 3px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface);
+  box-shadow: 4px 4px 0 var(--color-border);
+  padding: 18px 20px;
+  text-align: left;
+  margin-bottom: 26px;
+}
+.notfound-help h2 { font-size: 1rem; margin: 0 0 6px; }
+.notfound-help p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+
+.notfound-links {
+  display: flex;
+  gap: 8px 20px;
+  justify-content: center;
+  flex-wrap: wrap;
+  font-size: 0.9rem;
+}
+.notfound-links a { color: var(--color-text-secondary); }
+.notfound-links a:hover { color: var(--color-primary-text); }

@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="How PrintOk handles your documents and personal data, under India's DPDP Act 2023 and the GDPR.">
+  <meta name="theme-color" content="#0d0d0d">
+  <title>Privacy Policy — PrintOk</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="bg-paper">
+  <div class="app-wrapper">
+    <div class="page-container">
+
+      <nav class="legal-nav" aria-label="Breadcrumb">
+        <a href="/">← PrintOk</a>
+      </nav>
+
+      <article class="legal">
+        <h1>Privacy Policy</h1>
+        <p class="legal-meta">
+          Last updated: <strong>12 September 2026</strong> · Effective from the same date.
+        </p>
+
+        <div class="legal-callout" role="note">
+          <p>
+            <strong>The short version.</strong> If you are printing something: we never ask for your
+            name, email or phone number, and your document is deleted from our servers once the job
+            is finished. If you run a shop: we hold your account and payout details so we can pay
+            you and so you can sign in.
+          </p>
+        </div>
+
+        <h2>1. Who this is about</h2>
+        <p>
+          PrintOk is operated by <strong>[LEGAL ENTITY NAME]</strong>, [ENTITY TYPE — e.g. a sole
+          proprietorship / private limited company registered in India], with its registered office
+          at <strong>[REGISTERED ADDRESS]</strong>. In this policy "we", "us" and "PrintOk" mean
+          that entity.
+        </p>
+        <p>
+          We are the <strong>Data Fiduciary</strong> under India's Digital Personal Data Protection
+          Act, 2023 ("DPDP Act") for the personal data described below, and the
+          <strong>controller</strong> under the EU/UK General Data Protection Regulation ("GDPR")
+          where that law applies to you.
+        </p>
+        <p>
+          A print shop listed on PrintOk decides what it prints and for whom. For the documents a
+          customer sends to that shop, the shop is a separate controller of its own.
+        </p>
+
+        <h2>2. What we collect, and why</h2>
+
+        <h3>2.1 If you are printing a document</h3>
+        <p>
+          You do not create an account, and we do not ask who you are. For each print job we hold:
+        </p>
+        <ul>
+          <li><strong>The document you upload</strong>, until the job reaches a final state (see §4).</li>
+          <li>
+            <strong>Its file name, size, page count and a checksum</strong> — the page count is
+            verified on our servers so you are charged for what is actually there.
+          </li>
+          <li>
+            <strong>Your print settings</strong>: copies, colour, single or double sided, paper
+            size, page range.
+          </li>
+          <li>
+            <strong>The price and a payment reference</strong> returned by our payment gateway.
+          </li>
+          <li><strong>The token number</strong> you collect the printout with, and job timestamps.</li>
+        </ul>
+        <p>
+          <strong>We do not collect your name, email address, phone number or postal address</strong>,
+          and a print job record contains no field for them. If you pay by card or UPI, your contact
+          and payment details are collected by <strong>Razorpay</strong>, our payment gateway, under
+          their own privacy policy — they do not reach us. We never see or store your card number,
+          CVV, UPI PIN or bank credentials.
+        </p>
+        <p>
+          <em>Lawful basis:</em> performance of the contract to print your document (GDPR Art. 6(1)(b));
+          under the DPDP Act, the legitimate use of fulfilling the purpose for which you voluntarily
+          provided the document.
+        </p>
+
+        <h3>2.2 If you run a print shop</h3>
+        <ul>
+          <li><strong>Account details</strong>: your email address, and optionally your name and phone number.</li>
+          <li>
+            <strong>Your password</strong>, stored only as a salted cryptographic hash. We cannot
+            read it or recover it for you.
+          </li>
+          <li>
+            <strong>Shop details</strong>: shop name, owner email, and the payout details you enter —
+            UPI ID and/or bank account number and IFSC.
+          </li>
+          <li>
+            <strong>Your Razorpay linked-account identifier and its KYC status</strong>, where you have
+            enabled direct settlement.
+          </li>
+          <li><strong>Operational records</strong>: your rate card, job history, sign-in times, and the
+            connection status and telemetry of the PC running the print agent.</li>
+        </ul>
+        <p>
+          <em>Lawful basis:</em> performance of our contract with you, and our legitimate interest in
+          operating and securing the service.
+        </p>
+
+        <h3>2.3 If you contact us</h3>
+        <p>
+          The enquiry form stores your name, email address, message, and optionally your phone number
+          and shop name, so we can reply and keep a record of the conversation.
+        </p>
+
+        <h3>2.4 What we do not do</h3>
+        <p>
+          We do not use advertising trackers, we do not build advertising profiles, we do not sell
+          personal data, and we do not read the contents of your documents except as strictly needed
+          to count pages and send the file to the printer you chose.
+        </p>
+
+        <h2>3. Who we share it with</h2>
+        <p>We share personal data only with the processors we need to run the service:</p>
+        <table class="legal-table">
+          <thead>
+            <tr><th>Who</th><th>What they receive</th><th>Why</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Razorpay</strong> (India)</td>
+              <td>Payment amount, order reference, and the contact and payment details you give them directly</td>
+              <td>To take payment and, where enabled, settle the shop's share to the shop</td>
+            </tr>
+            <tr>
+              <td><strong>Supabase</strong> (database &amp; document storage)</td>
+              <td>Job records, account records, uploaded documents until deletion</td>
+              <td>To store the data the service runs on</td>
+            </tr>
+            <tr>
+              <td><strong>Render</strong> (application hosting)</td>
+              <td>Data in transit through the API, and server logs</td>
+              <td>To run the API</td>
+            </tr>
+            <tr>
+              <td><strong>Vercel</strong> (website hosting)</td>
+              <td>Standard web request data</td>
+              <td>To serve this website</td>
+            </tr>
+            <tr>
+              <td><strong>The print shop you chose</strong></td>
+              <td>Your document, its print settings and the token number</td>
+              <td>To print it</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          We may also disclose data where we are legally required to — a court order, or a lawful
+          request from a government agency under the Information Technology Act, 2000 or the
+          Code of Criminal Procedure.
+        </p>
+
+        <h2>4. How long we keep it</h2>
+        <ul>
+          <li>
+            <strong>Your document is deleted automatically</strong> once the job reaches a state
+            where it is no longer needed — printed, completed, cancelled or failed. It is not kept
+            as a backup copy and the deletion is recorded against the job. A job that still needs
+            the shop to act on it keeps the file until that is resolved, because otherwise the job
+            could never be completed.
+          </li>
+          <li>
+            <strong>The job record</strong> — settings, price, payment reference, timestamps, but not
+            the file — is retained for accounting and dispute resolution, and to meet record-keeping
+            obligations under Indian tax law (currently up to 8 years).
+          </li>
+          <li>
+            <strong>Shop accounts</strong> are kept for as long as the shop is on the platform, and
+            afterwards only as long as needed for settlement, tax and legal obligations.
+          </li>
+          <li><strong>Contact enquiries</strong> are kept until resolved and then archived.</li>
+        </ul>
+
+        <h2>5. Where your data goes</h2>
+        <p>
+          Our servers are hosted in <strong>Singapore</strong> (application) and our database and
+          document storage in the <strong>Asia-Pacific region</strong>. Personal data may therefore
+          be processed outside India. For transfers from the EU/UK, we rely on the European
+          Commission's Standard Contractual Clauses with our processors. Under the DPDP Act we do
+          not transfer personal data to any territory restricted by the Central Government.
+        </p>
+
+        <h2>6. How we protect it</h2>
+        <ul>
+          <li>All traffic to the service is encrypted with TLS.</li>
+          <li>Passwords are stored as salted hashes, never in a readable form.</li>
+          <li>
+            Sessions are signed tokens; shop data is reachable only with a valid session for that
+            shop, and one shop cannot read another's.
+          </li>
+          <li>Each connected shop PC holds its own key, which can be revoked individually.</li>
+          <li>Payment confirmations are verified cryptographically, so a payment cannot be faked.</li>
+          <li>Administrative actions are written to an audit log.</li>
+        </ul>
+        <p>
+          No system is perfectly secure. If a breach occurs that is likely to affect you, we will
+          notify you and the <strong>Data Protection Board of India</strong> as required by the DPDP
+          Act, and the relevant supervisory authority within 72 hours where the GDPR applies.
+        </p>
+
+        <h2>7. Your rights</h2>
+        <p>Under the DPDP Act, if you are in India, you have the right to:</p>
+        <ul>
+          <li>Access a summary of the personal data we hold about you and how it is processed.</li>
+          <li>Have inaccurate or incomplete data corrected, completed or updated.</li>
+          <li>Have your data erased, where we no longer need it for the purpose or by law.</li>
+          <li>Nominate someone to exercise these rights if you die or become incapacitated.</li>
+          <li>Raise a grievance with us, and escalate to the Data Protection Board of India.</li>
+          <li>Withdraw consent at any time, where processing rests on consent.</li>
+        </ul>
+        <p>Under the GDPR, if you are in the EU or UK, you additionally have the right to:</p>
+        <ul>
+          <li>Receive your data in a portable, machine-readable form.</li>
+          <li>Object to processing based on our legitimate interests.</li>
+          <li>Restrict processing while a dispute about accuracy is resolved.</li>
+          <li>Lodge a complaint with your local supervisory authority.</li>
+        </ul>
+        <p>
+          To exercise any of these, write to the Grievance Officer below. We will respond within
+          <strong>30 days</strong>. Because a print job holds nothing that identifies you, we may be
+          unable to link a document to you after the fact — in that case there is nothing for us to
+          return, and the document has already been deleted.
+        </p>
+
+        <h2>8. Children</h2>
+        <p>
+          PrintOk is not directed at children. Under the DPDP Act we do not knowingly process the
+          personal data of a child under 18 without verifiable consent from a parent or guardian,
+          and we do not track, profile or advertise to children.
+        </p>
+
+        <h2>9. Cookies and local storage</h2>
+        <p>
+          We use no advertising or analytics cookies. The site stores a small amount of data in your
+          browser purely to make it work: your sign-in session if you are a shop owner, which shop
+          your dashboard belongs to, and your light or dark theme choice. None of it is shared with
+          anyone or used to track you across other websites.
+        </p>
+
+        <h2>10. Changes</h2>
+        <p>
+          If we change this policy we will update the date at the top, and for a significant change
+          we will tell shop owners by email before it takes effect.
+        </p>
+
+        <h2 id="grievance">11. Grievance Officer</h2>
+        <p>
+          As required by the Information Technology Act, 2000 and the rules made under it, and by
+          the DPDP Act, 2023:
+        </p>
+        <address class="legal-address">
+          <strong>[GRIEVANCE OFFICER NAME]</strong><br>
+          Grievance Officer, PrintOk<br>
+          [REGISTERED ADDRESS]<br>
+          Email: <a href="mailto:[GRIEVANCE EMAIL]">[GRIEVANCE EMAIL]</a><br>
+          Phone: [GRIEVANCE PHONE]<br>
+          Hours: Monday to Friday, 10:00–18:00 IST
+        </address>
+        <p>
+          We acknowledge complaints within <strong>24 hours</strong> and resolve them within
+          <strong>15 days</strong>. If you are not satisfied, you may complain to the Data Protection
+          Board of India.
+        </p>
+      </article>
+
+      <footer class="landing-footer">
+        <div>
+          <strong>🖨️ PrintOk</strong>
+          <p class="meta-text">Hardware-free printing for neighbourhood shops.</p>
+        </div>
+        <nav class="landing-footer-links" aria-label="Footer">
+          <a href="/">Home</a>
+          <a href="/terms">Terms</a>
+          <a href="/refund">Refunds</a>
+          <a href="/#contact">Contact</a>
+        </nav>
+      </footer>
+
+    </div>
+  </div>
+</body>
+</html>
