@@ -1167,6 +1167,66 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     }
   });
 
+  await t.test('31. A sub-rupee job is refused before it reaches Razorpay', async () => {
+    // Razorpay rejects an order below 100 paise. A shop's own rate card can
+    // produce one — pricing accepts whatever it is given — and without this
+    // check the customer meets an opaque gateway error at the moment they pay,
+    // having already uploaded and configured the document.
+    const shop = await fetch(`${baseUrl}/api/shops/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopName: 'Penny Prints', ownerEmail: 'penny@example.com', printerName: 'HP',
+      }),
+    });
+    const { shop: pennyShop, printer: pennyPrinter } = (await shop.json()) as any;
+
+    // Half a rupee a page: a one-page job comes to 50 paise.
+    const merchant = await fetch(`${baseUrl}/api/merchant/claim`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopId: pennyShop.id, ownerEmail: 'penny@example.com', password: 'PennyOwner55xy',
+      }),
+    });
+    const { token: pennyToken } = (await merchant.json()) as any;
+
+    await fetch(`${baseUrl}/api/shops/${pennyShop.id}/pricing`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${pennyToken}` },
+      body: JSON.stringify({ bwSinglePerPageCents: 50 }),
+    });
+
+    // autoApprove=false is the online-payment path: the job waits for money
+    // rather than being marked paid on creation.
+    const jobRes = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: pennyPrinter.id,
+        fileName: 'one-page.pdf',
+        fileBase64: Buffer.from('%PDF-1.4 single page').toString('base64'),
+        copies: 1,
+        isColor: false,
+        isDuplex: false,
+      }),
+    });
+    const job = (await jobRes.json()) as any;
+    assert.ok(job.job, `job was not created: ${JSON.stringify(job)}`);
+    assert.ok(job.job.totalPriceInCents < 100,
+      `expected a sub-rupee total, got ${job.job.totalPriceInCents}`);
+
+    const order = await fetch(`${baseUrl}/api/payments/create-order`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jobId: job.job.id }),
+    });
+
+    assert.strictEqual(order.status, 400, 'a sub-rupee order must be refused, not sent to Razorpay');
+    const body = (await order.json()) as any;
+    assert.match(body.error, /counter/i, 'the refusal should point the customer at cash payment');
+  });
+
   server.close();
 });
 

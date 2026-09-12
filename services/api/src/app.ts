@@ -6,7 +6,7 @@ import { IStorageProvider, MemoryStorage } from './storage';
 import { generateQrCodeDataUrl } from './qr';
 import { AgentWebSocketServer } from './ws';
 import { processDocument } from './documentProcessor';
-import { RazorpayService } from './razorpayService';
+import { RazorpayService, MIN_ORDER_AMOUNT_PAISE } from './razorpayService';
 import { RazorpayRouteService } from './razorpayRoute';
 import { parsePrintState } from './jobStateMachine';
 import { classifyFailure } from './jobRecovery';
@@ -1469,6 +1469,17 @@ export function createApp(
           transfer = built.transfer;
           serviceFeeCents = built.serviceFeeCents;
         }
+      }
+
+      // Razorpay refuses anything under a rupee. A shop's own rate card can
+      // produce such a job, and without this the customer meets a gateway error
+      // at the moment they try to pay, with no way to tell what went wrong.
+      if (job.totalPriceInCents < MIN_ORDER_AMOUNT_PAISE) {
+        return res.status(400).json({
+          error:
+            'This job is below the ₹1 minimum a card or UPI payment can be taken for. ' +
+            'Please pay at the counter instead.',
+        });
       }
 
       const orderResult = await razorpayService.createOrder(jobId, job.totalPriceInCents, transfer);

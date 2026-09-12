@@ -1,5 +1,12 @@
 import crypto from 'crypto';
 
+/**
+ * Razorpay rejects an order below one rupee. Checked before the call rather
+ * than after, so a shop whose rate card produces a sub-rupee job gets a clear
+ * refusal instead of an opaque gateway error at the moment a customer pays.
+ */
+export const MIN_ORDER_AMOUNT_PAISE = 100;
+
 export interface RazorpayOrderResult {
   orderId: string;
   amountInCents: number;
@@ -48,6 +55,14 @@ export class RazorpayService {
     amountInCents: number,
     transfer?: OrderTransfer
   ): Promise<RazorpayOrderResult> {
+    // Guarded here as well as at the endpoint, so no future caller can send an
+    // amount Razorpay will refuse.
+    if (!Number.isFinite(amountInCents) || amountInCents < MIN_ORDER_AMOUNT_PAISE) {
+      throw new Error(
+        `A Razorpay order must be at least ${MIN_ORDER_AMOUNT_PAISE} paise; this job came to ${amountInCents}.`
+      );
+    }
+
     if (this.keyId && this.keySecret) {
       try {
         const Razorpay = require('razorpay');
