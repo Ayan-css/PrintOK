@@ -4,7 +4,7 @@ Every section of [`prd.md`](../prd.md) grouped into delivery phases, with an
 honest status. Companion to the PRD; update it in the same commit as the code it
 describes.
 
-**Last assessed:** 11 Sep 2026 · against `fc8c28a`
+**Last assessed:** 12 Sep 2026 · against `eb74af6`
 
 ## Status legend
 
@@ -19,6 +19,11 @@ describes.
 printed through this system. The agent has never run on a real Windows PC against
 a real printer. Nothing in Phase 2 can therefore score better than REVIEW,
 however well it is tested at the API level.
+
+**Second most important:** the platform cannot send email. Not a missing
+template — no mail library, no provider, nothing. Contact enquiries are stored
+and never delivered, and a shop owner who forgets their password is locked out
+permanently. See §18 and §24.
 
 ---
 
@@ -74,13 +79,15 @@ The §10 *architecture* is scored in Phase 1; this phase covers applying it.
 
 | § | Area | Status | Notes |
 |---|---|---|---|
-| 10 | Razorpay integration (applying §10) | REVIEW | Checkout wired, signatures verified server-side, webhook on the real Razorpay format. **Blocked: live keys not set on Render, so no payment can complete** |
-| 17 | Refunds & Disputes | TODO | `RefundReview` and `PartiallyRefunded` exist in the state machine; no refund flow, no dispute handling |
-| 18 | Notifications | TODO | No SMS, email or push to customers. The only push that exists is API → agent over WebSocket. A customer must keep the status page open to learn their job printed |
-| 41 | Commercial Model | PARTIAL | Hybrid tier + per-shop commission built and editable in admin. **Actual numbers undecided**; landing page shows placeholders |
+| 10 | Razorpay integration (applying §10) | DONE | Live keys configured; a real ₹2 live payment captured in production. Checkout, server-side signature verification and the live webhook all wired. Three defects found and fixed since: `payment.failed` was confirming payments, the webhook secret fell back to a public literal, and sub-rupee orders reached the gateway |
+| 17 | Refunds & Disputes | PARTIAL | A shop can decline a job, which refunds the customer in full via the Razorpay refunds API, ordered so nothing is recorded as refunded before the money moves. **No customer-facing refund request**, no dispute handling, no reconciliation tooling |
+| 18 | Notifications | TODO | **The system cannot send email at all** — no library, no provider. No SMS or push either. A customer must keep the status page open to learn their job printed, and a shop owner cannot recover a forgotten password |
+| 41 | Commercial Model | DONE | Four tiers with fixed commissions in `PLAN_CATALOGUE`, editable per shop in admin, published on the landing page and in the terms. A test asserts all three agree |
 
-Three env vars stand between this and working payments: `RAZORPAY_KEY_ID`,
-`RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`.
+Those three env vars are now set with live credentials. What remains in this
+phase is **Razorpay Route** — an external dependency, requested and pending —
+without which every payment lands in the platform account and each shop must be
+paid by hand. The application side of Route is built and preserved.
 
 ---
 
@@ -102,8 +109,8 @@ Three env vars stand between this and working payments: `RAZORPAY_KEY_ID`,
 |---|---|---|---|
 | 14 | Document Security & Privacy | PARTIAL | SHA-256 integrity, TLS in transit, documents purged on terminal state, temp files removed. No encryption at rest beyond the provider's |
 | 15 | Retention & Deletion | PARTIAL | Purge happens on terminal state and is recorded, including failures. **No timed sweep**, so the PRD's ~10 minute target is not enforced for a job that never terminates |
-| 26 | Security Program | PARTIAL | scrypt passwords, HMAC sessions, device tokens, signature verification, honeypot and rate limits. No external review or pen test |
-| 27 | Data Protection & Compliance | PARTIAL | Minimal collection, hashed IPs, no card data touched. No policy, no DPA, no retention schedule |
+| 26 | Security Program | PARTIAL | scrypt passwords, HMAC sessions, device tokens, timing-safe signature verification, honeypot and per-caller rate limits. Four real holes closed since the last assessment: the public printer endpoint leaked the agent API key and owner email, the webhook secret fell back to a value published in the repo, `payment.failed` marked jobs paid, and every visitor shared one rate-limit bucket. No external review or pen test |
+| 27 | Data Protection & Compliance | PARTIAL | Privacy policy, terms and refund policy published, written against the DPDP Act 2023, the IT Act 2000, the Consumer Protection (E-Commerce) Rules 2020 and the GDPR, and describing what the code actually does. **Live with unfilled placeholders** — proprietor name, address, grievance email and phone. No DPA, no lawyer review |
 | 28 | Backup & Disaster Recovery | REVIEW | Supabase provides backups; one manual export exists. **Restore has never been tested** |
 
 ---
@@ -113,7 +120,7 @@ Three env vars stand between this and working payments: `RAZORPAY_KEY_ID`,
 | § | Area | Status | Notes |
 |---|---|---|---|
 | 29 | Deployment & Release | DONE | Auto-deploy on push, migrations on boot with automatic baselining, `/health` reports the running commit, guard against migrating production from a laptop |
-| 37 | Quality Assurance | PARTIAL | 43 automated tests (22 API, 21 Postgres) covering money, state machine, idempotency, auth and recovery. **No print-specific tests, no failure injection, no load testing** |
+| 37 | Quality Assurance | PARTIAL | 63 automated tests (41 API, 22 Postgres) covering money, refunds, webhook events, state machine, idempotency, auth, rate limiting and recovery. **No print-specific tests, no failure injection, no load testing** |
 
 ---
 
@@ -151,10 +158,10 @@ Deliberately deferred. PRD §44 places these after the core network is dependabl
 |---|---|---|
 | 1 — Technical | PARTIAL | Queue, idempotency and recovery are done and tested. **Agent stability unproven; no printer compatibility matrix** |
 | 2 — Security | PARTIAL | Auth, secrets, document privacy and auditability in place. No external review |
-| 3 — Payments | PARTIAL | Integration and webhook verification done. **Keys not configured; no refunds; no reconciliation** |
+| 3 — Payments | PARTIAL | Live keys configured, a real payment captured, webhook verified, refunds on decline. **Route not activated, so no shop can be paid automatically; no customer refund path; no reconciliation** |
 | 4 — Operations | PARTIAL | Support tooling and audit exist. **No monitoring, no alerts, no incident process, untested restore** |
 | 5 — Shop Network | PARTIAL | Onboarding and agent pairing work. No certification, no agent updates, no training material |
-| 6 — Customer | PARTIAL | Mobile UX, status clarity and collection flow are built. **Payment confidence blocked on keys; no refund experience** |
+| 6 — Customer | PARTIAL | Mobile UX, status clarity, collection flow and live payment all work. **No way for a customer to ask for a refund, and no notification of any kind** |
 
 **No gate is fully passed.** Closest: Gate 1, pending a real print.
 
@@ -167,7 +174,7 @@ Deliberately deferred. PRD §44 places these after the core network is dependabl
 | New shop onboards without engineering | DONE |
 | Shop can configure and validate its printer | REVIEW — configure yes; validate never proven |
 | Agent operates unattended | REVIEW — unproven |
-| Customer completes the journey from a phone | PARTIAL — blocked on payment keys |
+| Customer completes the journey from a phone | REVIEW — works end to end with live payment; never done by a real customer on a real shop |
 | Paid jobs safely orchestrated | DONE |
 | Duplicate printing prevented or safely resolved | DONE |
 | Payment and print records reconcile | PARTIAL — no reconciliation tooling |
@@ -180,7 +187,7 @@ Deliberately deferred. PRD §44 places these after the core network is dependabl
 | Release and rollback procedures exist | PARTIAL — release yes, rollback undocumented |
 | Security and privacy controls validated | TODO — no external validation |
 | Real printer compatibility documented | TODO |
-| Refund, dispute, pricing and support policies operational | TODO |
+| Refund, dispute, pricing and support policies operational | PARTIAL — all three published and pricing is enforced in code; refunds operational only as a shop decline; support has no delivery channel |
 
 ---
 
@@ -191,18 +198,31 @@ done-criteria tables above, scored separately).
 
 | Status | Count | Sections |
 |---|---|---|
-| DONE | 13 | 1, 2, 3, 5, 6, 9, 10, 11, 12, 16, 21, 29, 38 |
+| DONE | 15 | 1, 2, 3, 5, 6, 9, 10, 11, 12, 16, 21, 29, 38, 41, and §10 applied |
 | REVIEW | 3 | 7, 13, 28 |
-| PARTIAL | 12 | 4, 14, 15, 22, 24, 25, 26, 27, 31, 37, 39, 41 |
-| TODO | 14 | 8, 17, 18, 19, 20, 23, 30, 32, 33, 34, 35, 36, 40, 44 |
+| PARTIAL | 13 | 4, 14, 15, 17, 22, 24, 25, 26, 27, 31, 37, 39 |
+| TODO | 13 | 8, 18, 19, 20, 23, 30, 32, 33, 34, 35, 36, 40, 44 |
+
+Movement since 11 Sep: §10 and §41 to DONE, §17 TODO → PARTIAL.
 
 The core print pipeline is genuinely production-grade: durable job model,
 guarded state machine, idempotency, failure recovery, device-scoped agent
 credentials, and an audited admin console — all deployed and tested.
 
-What stands between this and a real launch is not more features. It is:
+Payments now work with live credentials, the commercial model is settled and
+enforced, and a shop can refuse a job and refund the customer. What stands
+between this and a real launch is still not more features. It is:
 
-1. **Three Razorpay env vars** — no one can pay without them
-2. **One physical print** — the entire Phase 2 column is unverified reality
-3. **Monitoring** — nobody currently finds out when something breaks
-4. **Refunds** — needed the first time a real payment goes wrong
+1. **One physical print** — the entire Phase 2 column is unverified reality,
+   and no amount of API testing substitutes for it
+2. **Email** — enquiries reach nobody, and a locked-out shop owner has no way
+   back into their account
+3. **`PUBLIC_WEB_URL`** — unset in production, so shop registration returns 500
+   and no new shop can sign up at all
+4. **Razorpay Route** — pending with Razorpay; until then every payment lands
+   in the platform account and each shop is paid by hand
+5. **Monitoring** — nobody finds out when something breaks. Three of the four
+   defects fixed this week were found by reading code, not by an alert
+
+The legal pages are published but still carry placeholders, and are publicly
+reachable in that state.
