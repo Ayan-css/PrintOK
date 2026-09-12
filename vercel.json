@@ -3,6 +3,10 @@
   "trailingSlash": false,
   "rewrites": [
     {
+      "source": "/",
+      "destination": "/apps/customer-web/public/index.html"
+    },
+    {
       "source": "/admin",
       "destination": "/apps/customer-web/public/admin.html"
     },
@@ -39,7 +43,7 @@
       "destination": "/apps/customer-web/public/refund.html"
     },
     {
-      "source": "/(.*)",
+      "source": "/(.*\\..*)",
       "destination": "/apps/customer-web/public/$1"
     }
   ]
