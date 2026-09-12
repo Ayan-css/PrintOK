@@ -1,58 +1,54 @@
 {
+  "cleanUrls": true,
   "trailingSlash": false,
-  "routes": [
+  "rewrites": [
     {
-      "src": "/",
-      "dest": "/apps/customer-web/public/index.html"
+      "source": "/",
+      "destination": "/apps/customer-web/public/index.html"
     },
     {
-      "src": "/admin/?",
-      "dest": "/apps/customer-web/public/admin.html"
+      "source": "/admin",
+      "destination": "/apps/customer-web/public/admin.html"
     },
     {
-      "src": "/register/?",
-      "dest": "/apps/customer-web/public/register.html"
+      "source": "/register",
+      "destination": "/apps/customer-web/public/register.html"
     },
     {
-      "src": "/registration/?",
-      "dest": "/apps/customer-web/public/register.html"
+      "source": "/registration",
+      "destination": "/apps/customer-web/public/register.html"
     },
     {
-      "src": "/dashboard/?",
-      "dest": "/apps/customer-web/public/dashboard.html"
+      "source": "/dashboard",
+      "destination": "/apps/customer-web/public/dashboard.html"
     },
     {
-      "src": "/print/?",
-      "dest": "/apps/customer-web/public/print.html"
+      "source": "/print",
+      "destination": "/apps/customer-web/public/print.html"
     },
     {
-      "src": "/p/[^/]+/?",
-      "dest": "/apps/customer-web/public/print.html"
+      "source": "/p/:printerId",
+      "destination": "/apps/customer-web/public/print.html"
     },
     {
-      "src": "/privacy/?",
-      "dest": "/apps/customer-web/public/privacy.html"
+      "source": "/privacy",
+      "destination": "/apps/customer-web/public/privacy.html"
     },
     {
-      "src": "/terms/?",
-      "dest": "/apps/customer-web/public/terms.html"
+      "source": "/terms",
+      "destination": "/apps/customer-web/public/terms.html"
     },
     {
-      "src": "/refund/?",
-      "dest": "/apps/customer-web/public/refund.html"
+      "source": "/refund",
+      "destination": "/apps/customer-web/public/refund.html"
     },
     {
-      "src": "/404/?",
-      "dest": "/apps/customer-web/public/404.html"
+      "source": "/404",
+      "destination": "/apps/customer-web/public/404.html"
     },
     {
-      "src": "/(.*\\..*)",
-      "dest": "/apps/customer-web/public/$1"
-    },
-    {
-      "src": "/.*",
-      "status": 404,
-      "dest": "/apps/customer-web/public/404.html"
+      "source": "/(.*\\..*)",
+      "destination": "/apps/customer-web/public/$1"
     }
   ]
 }
