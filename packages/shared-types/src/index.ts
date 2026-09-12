@@ -96,7 +96,26 @@ export interface JobEvent {
 /**
  * Shop entity definition
  */
-export interface Shop {
+/**
+ * Contact and registered address for a shop.
+ *
+ * Razorpay requires a phone number to create a Route linked account and refuses
+ * the call without one, and stalls KYC on an incomplete address. Collected at
+ * signup so a shop is not chased for it later, at the moment it is trying to
+ * get paid.
+ */
+export interface ShopContactDetails {
+  contactPhone?: string;
+  addressStreet1?: string;
+  addressStreet2?: string;
+  addressCity?: string;
+  addressState?: string;
+  addressPostalCode?: string;
+  /** ISO country code; India unless stated otherwise. */
+  addressCountry?: string;
+}
+
+export interface Shop extends ShopContactDetails {
   id: string;
   name: string;
   ownerEmail: string;

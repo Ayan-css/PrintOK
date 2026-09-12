@@ -223,6 +223,26 @@ export function createApp(
    * Merchant signup: creates the shop, its first printer and the owner account
    * in one step, so a shop is never left without anyone able to sign in to it.
    */
+  /**
+   * Contact and registered address from a signup body.
+   *
+   * Razorpay refuses to create a Route linked account without a phone number
+   * and stalls KYC on an incomplete address, so these are collected up front
+   * rather than chased later when a shop is trying to get paid.
+   */
+  function readShopContact(body: any) {
+    const trim = (v: unknown) => (v === undefined || v === null ? undefined : String(v).trim() || undefined);
+    return {
+      contactPhone: trim(body?.contactPhone ?? body?.phone),
+      addressStreet1: trim(body?.addressStreet1),
+      addressStreet2: trim(body?.addressStreet2),
+      addressCity: trim(body?.addressCity),
+      addressState: trim(body?.addressState),
+      addressPostalCode: trim(body?.addressPostalCode),
+      addressCountry: trim(body?.addressCountry) || 'IN',
+    };
+  }
+
   app.post('/api/merchant/signup', async (req: Request, res: Response) => {
     try {
       const { shopName, ownerEmail, printerName, password, name, phone,
@@ -250,7 +270,9 @@ export function createApp(
       }
       const baseUrl = (configuredWebUrl || 'http://localhost:3000').replace(/\/$/, '');
 
-      const shop = await storage.createShop(shopName, ownerEmail, upiId, bankAccountNumber, bankIfsc);
+      const shop = await storage.createShop(
+        shopName, ownerEmail, upiId, bankAccountNumber, bankIfsc, readShopContact(req.body)
+      );
       const printer = await storage.createPrinter(shop.id, printerName, baseUrl, undefined, generateQrCodeDataUrl);
 
       const merchant = await storage.createMerchantUser({
@@ -385,7 +407,9 @@ export function createApp(
         return res.status(400).json({ error: 'shopName, ownerEmail, and printerName are required.' });
       }
 
-      const shop = await storage.createShop(shopName, ownerEmail, upiId, bankAccountNumber, bankIfsc);
+      const shop = await storage.createShop(
+        shopName, ownerEmail, upiId, bankAccountNumber, bankIfsc, readShopContact(req.body)
+      );
       
       // PUBLIC_WEB_URL must be set to the Vercel frontend URL in Render env vars (e.g. https://printok.vercel.app)
       // A QR poster is printed and physically mounted in a shop. Emitting a
@@ -864,14 +888,36 @@ export function createApp(
 
       const { phone, businessType, contactName, address } = req.body || {};
 
+      // What the shop gave at signup is the default; the request body may still
+      // override it, so a shop can correct its details at onboarding time
+      // without editing its profile first.
+      const effectivePhone = phone || shop.contactPhone;
+
+      if (!effectivePhone) {
+        return res.status(400).json({
+          error:
+            'A contact phone number is required to create a Razorpay linked account. ' +
+            'Add one to the shop profile, or send it with this request.',
+        });
+      }
+
+      const effectiveAddress = address || {
+        street1: shop.addressStreet1,
+        street2: shop.addressStreet2,
+        city: shop.addressCity,
+        state: shop.addressState,
+        postalCode: shop.addressPostalCode,
+        country: shop.addressCountry || 'IN',
+      };
+
       const result = await routeService.createLinkedAccount({
         shopId,
         shopName: shop.name,
         ownerEmail: shop.ownerEmail,
-        phone,
+        phone: effectivePhone,
         businessType,
         contactName,
-        address,
+        address: effectiveAddress,
       });
 
       if (!result.ok) {

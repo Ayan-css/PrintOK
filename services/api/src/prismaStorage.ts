@@ -4,6 +4,7 @@ import {
   Shop, Printer, PrintJob, PaymentState, PrintState, PrinterTelemetry,
   MerchantPricingConfig, MerchantStats, JobEvent, PriceSnapshot, PrintConfigSnapshot,
   FailureCategory,
+  ShopContactDetails,
 } from '@printok/shared-types';
 import {
   IStorageProvider, CreateJobOptions, TransitionMeta, StateChangeResult, StoredIdempotencyRecord,
@@ -43,7 +44,8 @@ export class PrismaStorage implements IStorageProvider {
     ownerEmail: string,
     upiId?: string,
     bankAccountNumber?: string,
-    bankIfsc?: string
+    bankIfsc?: string,
+    contact: ShopContactDetails = {}
   ): Promise<Shop> {
     const id = `shop_${crypto.randomBytes(6).toString('hex')}`;
     const shop = await this.prisma.shop.create({
@@ -54,6 +56,8 @@ export class PrismaStorage implements IStorageProvider {
         upiId,
         bankAccountNumber,
         bankIfsc,
+        ...contact,
+        addressCountry: contact.addressCountry || 'IN',
         payoutStatus: upiId || bankAccountNumber ? 'active' : 'pending',
         // Every shop starts with an explicit rate card row so the merchant
         // Rates Matrix has something real to edit.

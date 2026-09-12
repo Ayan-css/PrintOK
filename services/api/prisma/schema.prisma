@@ -38,6 +38,17 @@ model Shop {
   bankIfsc          String?
   payoutStatus      String       @default("active")
 
+  // --- Contact & registered address ---
+  /// Razorpay will not create a Route linked account without a phone number,
+  /// and stalls KYC on an incomplete address.
+  contactPhone      String?
+  addressStreet1    String?
+  addressStreet2    String?
+  addressCity       String?
+  addressState      String?
+  addressPostalCode String?
+  addressCountry    String?      @default("IN")
+
   /// Subscription tier: start | smart | business | enterprise (PRD 41).
   /// Canonical definitions live in PLAN_CATALOGUE in @printok/shared-types.
   planTier          String       @default("start")

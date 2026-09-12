@@ -302,6 +302,21 @@ document.addEventListener('DOMContentLoaded', () => {
           return;
         }
 
+        const missing = [
+          ['regContactPhone', 'Contact phone'],
+          ['regAddressStreet1', 'Street address'],
+          ['regAddressCity', 'City'],
+          ['regAddressState', 'State'],
+          ['regAddressPostalCode', 'PIN code'],
+        ].filter(([id]) => !(document.getElementById(id) || {}).value?.trim())
+         .map(([, label]) => label);
+
+        if (missing.length) {
+          showToast('warning', 'Business details needed',
+            `${missing.join(', ')} — Razorpay cannot settle payments to you without these.`);
+          return;
+        }
+
         formStep2.hidden = true;
         formStep3.hidden = false;
         stepNav2.classList.remove('active');
@@ -325,6 +340,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const printerName = document.getElementById('regPrinterName').value.trim();
         const upiId = document.getElementById('regUpiId').value.trim();
         const password = document.getElementById('regPassword').value;
+        const val = (id) => (document.getElementById(id)?.value || '').trim();
 
         if (!password || password.length < 12) {
           showToast('warning', 'Password too short',
@@ -343,6 +359,15 @@ document.addEventListener('DOMContentLoaded', () => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               shopName, ownerEmail, printerName, upiId, password, plan: selectedPlan,
+              // Stored on the shop so Route onboarding has them already, rather
+              // than asking again at the moment the shop wants to be paid.
+              contactPhone: val('regContactPhone'),
+              addressStreet1: val('regAddressStreet1'),
+              addressStreet2: val('regAddressStreet2'),
+              addressCity: val('regAddressCity'),
+              addressState: val('regAddressState'),
+              addressPostalCode: val('regAddressPostalCode'),
+              addressCountry: 'IN',
             }),
           });
 

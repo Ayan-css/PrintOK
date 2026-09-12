@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import {
   Shop, Printer, PrintJob, PaymentState, PrintState, PrinterTelemetry,
   MerchantPricingConfig, MerchantStats, JobEvent, FailureCategory, PlanTier, getPlan,
+  ShopContactDetails,
 } from '@printok/shared-types';
 import { S3StorageService } from './s3Storage';
 import { calculateJobPriceBreakdown, DEFAULT_PRICING_CONFIG } from './pricing';
@@ -210,7 +211,14 @@ export interface StoredIdempotencyRecord {
 
 export interface IStorageProvider {
   calculateChecksum(content: string | Buffer): string;
-  createShop(name: string, ownerEmail: string, upiId?: string, bankAccountNumber?: string, bankIfsc?: string): Promise<Shop>;
+  createShop(
+    name: string,
+    ownerEmail: string,
+    upiId?: string,
+    bankAccountNumber?: string,
+    bankIfsc?: string,
+    contact?: ShopContactDetails
+  ): Promise<Shop>;
   getShop(id: string): Promise<Shop | undefined>;
   createPrinter(shopId: string, printerName: string, baseUrlOrTargetUrl: string, qrCodeDataUrl?: string, qrGeneratorFn?: (url: string) => Promise<string>): Promise<Printer>;
   getPrinter(id: string): Promise<Printer | undefined>;
@@ -405,7 +413,8 @@ export class MemoryStorage implements IStorageProvider {
     ownerEmail: string,
     upiId?: string,
     bankAccountNumber?: string,
-    bankIfsc?: string
+    bankIfsc?: string,
+    contact: ShopContactDetails = {}
   ): Promise<Shop> {
     const id = `shop_${crypto.randomBytes(6).toString('hex')}`;
     const shop: Shop = {
@@ -415,6 +424,8 @@ export class MemoryStorage implements IStorageProvider {
       upiId,
       bankAccountNumber,
       bankIfsc,
+      ...contact,
+      addressCountry: contact.addressCountry || 'IN',
       payoutStatus: upiId || bankAccountNumber ? 'active' : 'pending',
       createdAt: new Date().toISOString(),
     };

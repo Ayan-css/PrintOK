@@ -1483,6 +1483,69 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
       'no refund id may be recorded when no refund was made');
   });
 
+  await t.test('37. Signup stores the details Route onboarding will need', async () => {
+    // Razorpay refuses to create a linked account without a phone number and
+    // stalls KYC on an incomplete address. Collecting them at signup is what
+    // stops a shop being chased for them at the moment it wants to be paid.
+    const res = await fetch(`${baseUrl}/api/merchant/signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopName: 'Route Ready Prints', ownerEmail: 'routeready@example.com',
+        printerName: 'HP', password: 'RouteOwner99xy',
+        contactPhone: '9876543210',
+        addressStreet1: '12 Linking Road', addressStreet2: 'Bandra West',
+        addressCity: 'Mumbai', addressState: 'Maharashtra', addressPostalCode: '400050',
+      }),
+    });
+    assert.strictEqual(res.status, 201);
+    const { shop, token } = (await res.json()) as any;
+
+    assert.strictEqual(shop.contactPhone, '9876543210');
+    assert.strictEqual(shop.addressStreet1, '12 Linking Road');
+    assert.strictEqual(shop.addressCity, 'Mumbai');
+    assert.strictEqual(shop.addressState, 'Maharashtra');
+    assert.strictEqual(shop.addressPostalCode, '400050');
+    assert.strictEqual(shop.addressCountry, 'IN', 'country defaults to India');
+
+    // Route is off in this suite, so the call cannot reach Razorpay — but it
+    // must fail because Route is unavailable, not because the phone number is
+    // missing. That distinction is the whole point of storing it at signup.
+    const link = await fetch(`${baseUrl}/api/shops/${shop.id}/razorpay-account`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({}),
+    });
+    const linkBody = (await link.json()) as any;
+    assert.notStrictEqual(link.status, 400,
+      `onboarding must not fail for want of a phone number: ${JSON.stringify(linkBody)}`);
+    assert.match(String(linkBody.error || ''), /Route/i);
+  });
+
+  await t.test('38. Route onboarding refuses a shop with no phone number', async () => {
+    // A shop registered before these fields existed, or through the older
+    // endpoint, has no phone. Razorpay would reject that call anyway; refusing
+    // it here says which field is missing instead of relaying a gateway error.
+    const res = await fetch(`${baseUrl}/api/merchant/signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopName: 'No Phone Prints', ownerEmail: 'nophone@example.com',
+        printerName: 'HP', password: 'NoPhoneOwner77xy',
+      }),
+    });
+    const { shop, token } = (await res.json()) as any;
+    assert.strictEqual(shop.contactPhone, undefined);
+
+    const link = await fetch(`${baseUrl}/api/shops/${shop.id}/razorpay-account`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({}),
+    });
+    assert.strictEqual(link.status, 400);
+    assert.match(String(((await link.json()) as any).error), /phone/i);
+  });
+
   server.close();
 });
 
