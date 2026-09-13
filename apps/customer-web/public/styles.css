@@ -3934,16 +3934,21 @@ body::before {
   display: grid;
   grid-template-columns: minmax(0, 420px) minmax(0, 1fr);
   gap: clamp(24px, 5vw, 72px);
-  align-items: start;
+  /* Stretch, so the illustration panel runs the full height of the steps
+     beside it and the two columns finish on the same line. */
+  align-items: stretch;
 }
 
 .journey-stage { position: relative; }
 
 .journey-stage-inner {
-  position: sticky;
-  /* Sits a little below the top of the viewport while the steps pass it, so it
-     reads as pinned alongside them rather than jammed against the edge. */
-  top: max(12vh, 80px);
+  /* Full height of the row, so its bottom edge lands on the same line as the
+     last step card. Deliberately not sticky: an element as tall as its own
+     column has nowhere to travel, so `position: sticky` here would be a
+     declaration that does nothing. At this size the whole section sits within
+     about one viewport anyway, and the illustration stays in view while all
+     three steps are read. */
+  height: 100%;
   /* Matches the step cards' shadow and radius. At 8px/18px it read as a
      different kind of object sitting next to them rather than part of the set. */
   border: 3px solid var(--color-border);
@@ -3956,6 +3961,7 @@ body::before {
      empty below it — a large hole beside three stacked steps. It now fills
      most of the column and centres the illustration, keeping just enough
      travel for the sticky pin to be doing something. */
+  /* A floor for the case where the steps are unusually short. */
   min-height: min(62vh, 560px);
   display: grid;
   place-items: center;
@@ -4083,7 +4089,7 @@ body::before {
   .journey-grid { grid-template-columns: 1fr; }
 
   .journey-stage-inner {
-    position: static;
+    height: auto;
     max-width: 300px;
     margin-inline: auto;
   }
