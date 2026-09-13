@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="description" content="Design direction prototype for PrintOk — paper and receipt materiality with Swiss typographic discipline.">
+  <meta name="theme-color" content="#fbfaf7">
+  <title>Direction 02 — Paper &amp; Receipt · PrintOk</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <!-- Its own stylesheet. Nothing here can reach the live pages. -->
+  <link rel="stylesheet" href="/example.css">
+</head>
+<body class="pp">
+
+  <div class="pp-wrap">
+    <header class="pp-masthead">
+      <a class="pp-logo" href="/example">PrintOk <span>/ direction 02</span></a>
+      <nav class="pp-nav" aria-label="Prototype sections">
+        <a href="#how">How it works</a>
+        <a href="#pricing">Pricing</a>
+        <a href="#system">The system</a>
+        <a href="/">← Live site</a>
+      </nav>
+    </header>
+    <hr class="pp-rule">
+  </div>
+
+  <!-- ============ HERO ============ -->
+  <div class="pp-wrap">
+    <section class="pp-hero">
+      <div class="pp-rise">
+        <span class="pp-eyebrow">For stationery &amp; xerox shops · India</span>
+        <h1>The printer in your shop is already the product.</h1>
+        <p>
+          Put a QR code on the counter. Customers scan it, send the file from their own
+          phone, pay, and collect a token. You buy nothing and install nothing but a small
+          program on the PC you already have.
+        </p>
+        <div class="pp-cta-row">
+          <a class="pp-btn" href="/register">List your shop — free</a>
+          <a class="pp-btn pp-btn--ghost" href="#how">See how it works</a>
+        </div>
+      </div>
+
+      <!-- The product's own artefact as the hero image. A customer ends this
+           journey holding exactly this. -->
+      <div class="pp-rise">
+        <div class="pp-slip">
+          <div class="pp-slip-head">
+            <span>Metro Print &amp; Stationers</span>
+            <span>12 Sep</span>
+          </div>
+
+          <p class="pp-token">#014</p>
+          <p class="pp-token-sub">Show this number at the counter</p>
+
+          <div class="pp-slip-rows">
+            <div class="pp-slip-row">
+              <span>Assignment_03.pdf</span><strong>8 pp</strong>
+            </div>
+            <div class="pp-slip-row">
+              <span>Black &amp; white · single</span><strong>A4</strong>
+            </div>
+            <div class="pp-slip-row">
+              <span>2.00 × 8</span><strong>₹16.00</strong>
+            </div>
+            <div class="pp-slip-row pp-slip-row--total">
+              <span>Paid · UPI</span><strong>₹16.00</strong>
+            </div>
+          </div>
+
+          <span class="pp-stamp">Printed</span>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="pp-wrap"><hr class="pp-perf"></div>
+
+  <!-- ============ HOW IT WORKS ============ -->
+  <div class="pp-wrap">
+    <section class="pp-section" id="how">
+      <div class="pp-section-head">
+        <span class="pp-num">01</span>
+        <div>
+          <h2>Where the file goes</h2>
+          <p class="pp-lede">
+            Three pieces, and only one of them sits in your shop.
+          </p>
+        </div>
+      </div>
+
+      <div class="pp-steps">
+        <article class="pp-step">
+          <span class="pp-num">01.1</span>
+          <div>
+            <h3>The customer's phone</h3>
+            <p>
+              They scan the QR on your counter, pick copies, colour and pages, and see the
+              price before paying a rupee. No app, no account.
+            </p>
+          </div>
+          <div class="pp-step-meta">
+            <ul>
+              <li>No app to install</li>
+              <li>Pays by UPI or card</li>
+              <li>Gets a token number</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="pp-step">
+          <span class="pp-num">01.2</span>
+          <div>
+            <h3>PrintOk</h3>
+            <p>
+              Counts the pages from the file itself, prices the job from your rates, takes
+              the payment and holds the queue until your printer is ready for it.
+            </p>
+          </div>
+          <div class="pp-step-meta">
+            <ul>
+              <li>Pages verified server-side</li>
+              <li>Payment and printing kept separate</li>
+              <li>File deleted when done</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="pp-step">
+          <span class="pp-num">01.3</span>
+          <div>
+            <h3>Your shop PC</h3>
+            <p>
+              A small program collects paid jobs and sends them to the printer you already
+              own. It pairs once and reconnects on its own after a restart.
+            </p>
+          </div>
+          <div class="pp-step-meta">
+            <ul>
+              <li>Pairs once with a code</li>
+              <li>Reconnects after a restart</li>
+              <li>Removes files after printing</li>
+            </ul>
+          </div>
+        </article>
+      </div>
+    </section>
+  </div>
+
+  <!-- ============ PRICING ============ -->
+  <div class="pp-wrap">
+    <section class="pp-section" id="pricing">
+      <div class="pp-section-head">
+        <span class="pp-num">02</span>
+        <div>
+          <h2>What it costs you</h2>
+          <p class="pp-lede">
+            A service fee on paid orders, and nothing on cash taken at your counter.
+            Gateway charges are Razorpay's and are deducted before settlement.
+          </p>
+        </div>
+      </div>
+
+      <div class="pp-table-wrap">
+        <table class="pp-table">
+          <thead>
+            <tr>
+              <th scope="col">Plan</th>
+              <th scope="col">Monthly</th>
+              <th scope="col">Service fee</th>
+              <th scope="col">Orders / mo</th>
+              <th scope="col">Printers</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="pp-plan">Start</td>
+              <td class="pp-figure">Free</td>
+              <td class="pp-figure">8.0%</td>
+              <td class="pp-figure">100</td>
+              <td class="pp-figure">1</td>
+            </tr>
+            <tr>
+              <td class="pp-plan">Smart</td>
+              <td class="pp-figure">₹79</td>
+              <td class="pp-figure">4.0%</td>
+              <td class="pp-figure">500</td>
+              <td class="pp-figure">2</td>
+            </tr>
+            <tr>
+              <td class="pp-plan">Business</td>
+              <td class="pp-figure">₹249</td>
+              <td class="pp-figure">2.0%</td>
+              <td class="pp-figure">2,500</td>
+              <td class="pp-figure">5</td>
+            </tr>
+            <tr>
+              <td class="pp-plan">Enterprise</td>
+              <td class="pp-figure">₹599</td>
+              <td class="pp-figure">0.5%</td>
+              <td class="pp-figure">10,000</td>
+              <td class="pp-figure">10</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="pp-lede" style="margin-top:22px">
+        On a ₹100 order on Business you receive <strong>₹95.64</strong> — the order less the
+        ₹2.00 service fee and Razorpay's ₹2.36.
+      </p>
+    </section>
+  </div>
+
+  <div class="pp-wrap"><hr class="pp-perf"></div>
+
+  <!-- ============ THE SYSTEM ============ -->
+  <div class="pp-wrap">
+    <section class="pp-section" id="system">
+      <div class="pp-section-head">
+        <span class="pp-num">03</span>
+        <div>
+          <h2>The system</h2>
+          <p class="pp-lede">
+            The parts that would carry across to the dashboard and the customer flow, shown
+            on their own so the direction can be judged rather than inferred.
+          </p>
+        </div>
+      </div>
+
+      <div class="pp-specimen">
+        <div class="pp-spec">
+          <h4>Paper &amp; ink</h4>
+          <div class="pp-swatches">
+            <span class="pp-swatch" style="background:#fbfaf7" title="#fbfaf7 paper"></span>
+            <span class="pp-swatch" style="background:#f3f0e9" title="#f3f0e9 paper 2"></span>
+            <span class="pp-swatch" style="background:#e9e4d9" title="#e9e4d9 paper 3"></span>
+            <span class="pp-swatch" style="background:#14120f" title="#14120f ink"></span>
+            <span class="pp-swatch" style="background:#5b2bd9" title="#5b2bd9 accent"></span>
+            <span class="pp-swatch" style="background:#b23a1c" title="#b23a1c stamp"></span>
+          </div>
+        </div>
+
+        <div class="pp-spec">
+          <h4>Job state</h4>
+          <div class="pp-badges">
+            <span class="pp-badge pp-badge--waiting">Awaiting payment</span>
+            <span class="pp-badge pp-badge--queued">Queued</span>
+            <span class="pp-badge pp-badge--printed">Printed</span>
+            <span class="pp-badge pp-badge--failed">Failed</span>
+          </div>
+        </div>
+
+        <div class="pp-spec">
+          <h4>Money</h4>
+          <p class="pp-money">₹1,240.00<small>Today · 18 jobs</small></p>
+        </div>
+
+        <div class="pp-spec">
+          <h4>Type</h4>
+          <p style="margin:0">
+            <span style="font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:1.5rem;letter-spacing:-0.02em">Space Grotesk</span><br>
+            <span style="color:#56524a">Inter — running text</span><br>
+            <span style="font-family:ui-monospace,Menlo,monospace;font-size:0.85rem;color:#8a847a">System mono — figures &amp; tokens</span>
+          </p>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="pp-wrap">
+    <hr class="pp-rule">
+    <footer class="pp-footer">
+      <span>Prototype only · not linked from the live site · <code>noindex</code></span>
+      <span><a href="/">Back to the live landing page</a></span>
+    </footer>
+  </div>
+
+</body>
+</html>

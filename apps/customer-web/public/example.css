@@ -1,0 +1,486 @@
+/* ============================================================
+   PRINTOK — DIRECTION 02: PAPER & RECEIPT
+   ------------------------------------------------------------
+   A prototype system, deliberately separate from styles.css so
+   nothing here can reach the live pages.
+
+   Two ideas, held together:
+
+   1. Swiss typographic discipline — a strict grid, numbered
+      sections, hairline rules instead of boxes, and hierarchy
+      carried by type rather than by colour or shadow.
+
+   2. Receipt materiality — the artefacts this product already
+      lives among. Token slips, stamps, perforations, tabular
+      figures. Expressed in structure and type, never in texture:
+      a paper photograph or an inset shadow would tip the whole
+      thing into pastiche.
+
+   No webfont beyond the two the site already loads. Numbers use
+   the system monospace stack, which costs nothing and is what
+   gives money and tokens their receipt character.
+   ============================================================ */
+
+:root {
+  color-scheme: light;
+
+  /* Paper, aged very slightly. Pure white reads as a screen; this reads
+     as stock. */
+  --pp-paper:      #fbfaf7;
+  --pp-paper-2:    #f3f0e9;
+  --pp-paper-3:    #e9e4d9;
+
+  --pp-ink:        #14120f;
+  --pp-ink-2:      #56524a;
+  --pp-ink-3:      #8a847a;
+
+  /* One hairline weight, used everywhere. The single most important
+     value in the system: it replaces every border and every box. */
+  --pp-rule:       #d9d3c6;
+
+  /* Brand purple survives, but spends most of its time absent. It marks
+     the one thing that matters on a screen, never decorates. */
+  --pp-accent:     #5b2bd9;
+  --pp-accent-pale:#ece5ff;
+
+  /* Oxidised stamp red, for state and emphasis. */
+  --pp-stamp:      #b23a1c;
+  --pp-stamp-pale: #f7e7e1;
+
+  --pp-ok:         #1d7a52;
+
+  --pp-display: 'Space Grotesk', system-ui, sans-serif;
+  --pp-body:    'Inter', system-ui, sans-serif;
+  /* No font to download: every platform ships a good monospace, and this
+     is where the receipt character comes from. */
+  --pp-mono:    ui-monospace, 'SF Mono', 'Roboto Mono', Menlo, Consolas, monospace;
+
+  --pp-gutter: clamp(20px, 5vw, 64px);
+  --pp-measure: 62ch;
+}
+
+* { box-sizing: border-box; }
+
+body.pp {
+  margin: 0;
+  background: var(--pp-paper);
+  color: var(--pp-ink);
+  font-family: var(--pp-body);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  /* Tabular figures everywhere, so a column of money never shifts. */
+  font-variant-numeric: tabular-nums;
+}
+
+.pp-wrap {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding-inline: var(--pp-gutter);
+}
+
+/* --- the rule, which does the work borders used to --- */
+
+.pp-rule {
+  border: 0;
+  border-top: 1px solid var(--pp-rule);
+  margin: 0;
+}
+
+/* A perforation, not a picture of one: notches punched out of the paper
+   colour along a dashed line. */
+.pp-perf {
+  position: relative;
+  height: 1px;
+  background-image: linear-gradient(to right, var(--pp-rule) 50%, transparent 50%);
+  background-size: 9px 1px;
+  margin: 0;
+  border: 0;
+}
+.pp-perf::before,
+.pp-perf::after {
+  content: '';
+  position: absolute;
+  top: -7px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--pp-paper);
+  border: 1px solid var(--pp-rule);
+}
+.pp-perf::before { left: calc(var(--pp-gutter) * -1 - 7px); }
+.pp-perf::after  { right: calc(var(--pp-gutter) * -1 - 7px); }
+
+/* --- masthead --- */
+
+.pp-masthead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 0;
+  flex-wrap: wrap;
+}
+
+.pp-logo {
+  font-family: var(--pp-display);
+  font-weight: 700;
+  font-size: 1.05rem;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  color: var(--pp-ink);
+}
+.pp-logo span { color: var(--pp-ink-3); font-weight: 500; }
+
+.pp-nav {
+  display: flex;
+  gap: clamp(14px, 2.5vw, 30px);
+  font-size: 0.83rem;
+  letter-spacing: 0.02em;
+  flex-wrap: wrap;
+}
+.pp-nav a { color: var(--pp-ink-2); text-decoration: none; }
+.pp-nav a:hover { color: var(--pp-ink); text-decoration: underline; text-underline-offset: 3px; }
+
+/* --- sections, numbered like a document --- */
+
+.pp-section { padding: clamp(56px, 9vw, 116px) 0; }
+
+.pp-section-head {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  gap: 0 clamp(16px, 3vw, 34px);
+  margin-bottom: clamp(30px, 5vw, 54px);
+}
+
+.pp-num {
+  font-family: var(--pp-mono);
+  font-size: 0.76rem;
+  letter-spacing: 0.14em;
+  color: var(--pp-ink-3);
+  padding-top: 0.7em;
+}
+
+.pp-section h2 {
+  font-family: var(--pp-display);
+  font-weight: 700;
+  font-size: clamp(1.7rem, 4.6vw, 3.1rem);
+  line-height: 1.05;
+  letter-spacing: -0.025em;
+  margin: 0 0 12px;
+  max-width: 18ch;
+}
+
+.pp-lede {
+  margin: 0;
+  color: var(--pp-ink-2);
+  max-width: var(--pp-measure);
+  font-size: clamp(0.98rem, 1.4vw, 1.1rem);
+}
+
+/* --- hero --- */
+
+.pp-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: clamp(30px, 6vw, 80px);
+  align-items: center;
+  padding: clamp(44px, 8vw, 104px) 0 clamp(40px, 7vw, 88px);
+}
+
+.pp-eyebrow {
+  font-family: var(--pp-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--pp-ink-3);
+  display: block;
+  margin-bottom: 22px;
+}
+
+.pp-hero h1 {
+  font-family: var(--pp-display);
+  font-weight: 700;
+  /* The whole argument for this direction is here: one very large,
+     very quiet block of type doing the persuading. */
+  font-size: clamp(2.3rem, 7vw, 5.1rem);
+  line-height: 0.98;
+  letter-spacing: -0.038em;
+  margin: 0 0 26px;
+}
+.pp-hero h1 em {
+  font-style: normal;
+  /* A printed underline rather than a highlight — the mark a person
+     makes on paper, not a UI state. */
+  box-shadow: inset 0 -0.13em 0 var(--pp-accent-pale);
+}
+
+.pp-hero p {
+  margin: 0 0 32px;
+  max-width: 48ch;
+  color: var(--pp-ink-2);
+  font-size: clamp(1rem, 1.5vw, 1.13rem);
+}
+
+.pp-cta-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+
+.pp-btn {
+  font-family: var(--pp-body);
+  font-size: 0.92rem;
+  font-weight: 600;
+  padding: 13px 22px;
+  border: 1px solid var(--pp-ink);
+  background: var(--pp-ink);
+  color: var(--pp-paper);
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease;
+}
+.pp-btn:hover { background: var(--pp-accent); border-color: var(--pp-accent); }
+
+.pp-btn--ghost { background: transparent; color: var(--pp-ink); border-color: var(--pp-rule); }
+.pp-btn--ghost:hover { background: transparent; color: var(--pp-accent); border-color: var(--pp-accent); }
+
+/* --- the token slip: the product's own artefact, as the hero image --- */
+
+.pp-slip {
+  background: #fff;
+  border: 1px solid var(--pp-rule);
+  padding: 26px 24px 22px;
+  /* Barely off-square. Enough to read as a physical object resting on a
+     counter, not enough to look like a sticker. */
+  transform: rotate(-1.4deg);
+  position: relative;
+}
+
+.pp-slip::after {
+  /* The torn bottom edge, drawn rather than photographed. */
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: -9px;
+  height: 9px;
+  background:
+    radial-gradient(circle at 5px -2px, transparent 5px, #fff 5px) repeat-x;
+  background-size: 10px 9px;
+  border-bottom: 1px solid var(--pp-rule);
+  filter: drop-shadow(0 1px 0 var(--pp-rule));
+}
+
+.pp-slip-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-family: var(--pp-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--pp-ink-3);
+  margin-bottom: 18px;
+}
+
+.pp-slip .pp-token {
+  font-family: var(--pp-display);
+  font-size: clamp(2.6rem, 7vw, 3.6rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  margin: 0 0 4px;
+}
+.pp-slip .pp-token-sub {
+  font-family: var(--pp-mono);
+  font-size: 0.72rem;
+  color: var(--pp-ink-3);
+  margin: 0 0 20px;
+}
+
+.pp-slip-rows { font-family: var(--pp-mono); font-size: 0.8rem; }
+.pp-slip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-top: 1px dotted var(--pp-rule);
+  color: var(--pp-ink-2);
+}
+.pp-slip-row strong { color: var(--pp-ink); font-weight: 600; }
+.pp-slip-row--total { border-top: 1px solid var(--pp-ink); margin-top: 4px; }
+.pp-slip-row--total strong { font-size: 1.05rem; }
+
+/* A rubber stamp. Rotated, outlined, letterspaced — never a filled pill. */
+.pp-stamp {
+  position: absolute;
+  right: 18px;
+  top: 92px;
+  transform: rotate(-11deg);
+  border: 2px solid var(--pp-stamp);
+  color: var(--pp-stamp);
+  font-family: var(--pp-mono);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  padding: 5px 9px;
+  opacity: 0.86;
+}
+
+/* --- steps, as a ruled list rather than cards --- */
+
+.pp-steps { display: grid; gap: 0; }
+
+.pp-step {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr) minmax(0, 0.85fr);
+  gap: 0 clamp(16px, 3vw, 34px);
+  padding: clamp(22px, 3.4vw, 34px) 0;
+  border-top: 1px solid var(--pp-rule);
+  align-items: start;
+}
+.pp-step:last-child { border-bottom: 1px solid var(--pp-rule); }
+
+.pp-step h3 {
+  font-family: var(--pp-display);
+  font-size: clamp(1.05rem, 2vw, 1.35rem);
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  margin: 0 0 8px;
+}
+.pp-step p { margin: 0; color: var(--pp-ink-2); max-width: 46ch; }
+
+.pp-step-meta {
+  font-family: var(--pp-mono);
+  font-size: 0.76rem;
+  color: var(--pp-ink-3);
+  line-height: 1.9;
+}
+.pp-step-meta li { list-style: none; }
+.pp-step-meta ul { margin: 0; padding: 0; }
+.pp-step-meta li::before { content: '— '; color: var(--pp-rule); }
+
+/* --- pricing, as a table because it is one --- */
+
+.pp-table-wrap { overflow-x: auto; }
+
+.pp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+  min-width: 520px;
+}
+.pp-table th,
+.pp-table td {
+  text-align: left;
+  padding: 15px 16px 15px 0;
+  border-bottom: 1px solid var(--pp-rule);
+}
+.pp-table thead th {
+  font-family: var(--pp-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--pp-ink-3);
+  font-weight: 500;
+  border-bottom-color: var(--pp-ink);
+}
+.pp-table td.pp-figure {
+  font-family: var(--pp-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.pp-table tbody tr:hover { background: var(--pp-paper-2); }
+.pp-plan { font-family: var(--pp-display); font-weight: 700; }
+.pp-table .pp-note { color: var(--pp-ink-3); font-size: 0.82rem; }
+
+/* --- specimen: the system itself, so it can be judged directly --- */
+
+.pp-specimen {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: clamp(20px, 3vw, 40px);
+  padding-top: 8px;
+}
+
+.pp-spec h4 {
+  font-family: var(--pp-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--pp-ink-3);
+  font-weight: 500;
+  margin: 0 0 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--pp-rule);
+}
+
+.pp-swatches { display: flex; gap: 8px; flex-wrap: wrap; }
+.pp-swatch {
+  width: 46px; height: 46px;
+  border: 1px solid var(--pp-rule);
+}
+
+.pp-badges { display: flex; gap: 8px; flex-wrap: wrap; }
+/* State reads as a stamped word, not a coloured capsule. */
+.pp-badge {
+  font-family: var(--pp-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border: 1px solid currentColor;
+}
+.pp-badge--queued  { color: var(--pp-accent); }
+.pp-badge--printed { color: var(--pp-ok); }
+.pp-badge--failed  { color: var(--pp-stamp); }
+.pp-badge--waiting { color: var(--pp-ink-3); }
+
+.pp-money {
+  font-family: var(--pp-mono);
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+}
+.pp-money small { font-size: 0.78rem; color: var(--pp-ink-3); display: block; letter-spacing: 0.08em; }
+
+/* --- footer --- */
+
+.pp-footer {
+  padding: 40px 0 56px;
+  font-size: 0.83rem;
+  color: var(--pp-ink-3);
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.pp-footer a { color: var(--pp-ink-2); }
+
+/* --- a single, restrained entrance --- */
+
+@media (prefers-reduced-motion: no-preference) {
+  .pp-rise {
+    animation: pp-rise 620ms cubic-bezier(.22, 1, .36, 1) both;
+  }
+  .pp-rise:nth-child(2) { animation-delay: 60ms; }
+  .pp-rise:nth-child(3) { animation-delay: 120ms; }
+}
+
+@keyframes pp-rise {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* --- responsive --- */
+
+@media (max-width: 900px) {
+  .pp-hero { grid-template-columns: 1fr; }
+  .pp-slip { max-width: 380px; }
+}
+
+@media (max-width: 620px) {
+  .pp-section-head { grid-template-columns: 1fr; gap: 6px; }
+  .pp-num { padding-top: 0; }
+
+  /* The third column is supporting detail; below this it belongs under
+     the paragraph rather than squeezed beside it. */
+  .pp-step { grid-template-columns: 2.6rem minmax(0, 1fr); }
+  .pp-step-meta { grid-column: 2; margin-top: 12px; }
+
+  .pp-perf::before, .pp-perf::after { display: none; }
+}

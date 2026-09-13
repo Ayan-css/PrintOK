@@ -47,6 +47,10 @@
       "destination": "/apps/customer-web/public/404.html"
     },
     {
+      "source": "/example",
+      "destination": "/apps/customer-web/public/example.html"
+    },
+    {
       "source": "/(.*\\..*)",
       "destination": "/apps/customer-web/public/$1"
     }
