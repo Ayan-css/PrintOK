@@ -3941,13 +3941,16 @@ body::before {
 
 .journey-stage-inner {
   position: sticky;
-  /* Centres the illustration in the viewport while the steps pass it. */
+  /* Sits a little below the top of the viewport while the steps pass it, so it
+     reads as pinned alongside them rather than jammed against the edge. */
   top: max(12vh, 80px);
+  /* Matches the step cards' shadow and radius. At 8px/18px it read as a
+     different kind of object sitting next to them rather than part of the set. */
   border: 3px solid var(--color-border);
-  border-radius: 18px;
+  border-radius: 14px;
   background: var(--color-surface);
-  box-shadow: 8px 8px 0 var(--color-border);
-  padding: clamp(14px, 3vw, 26px);
+  box-shadow: 5px 5px 0 var(--color-border);
+  padding: clamp(14px, 3vw, 22px);
 }
 
 .journey-svg { width: 100%; height: auto; display: block; }
