@@ -3951,9 +3951,23 @@ body::before {
   background: var(--color-surface);
   box-shadow: 5px 5px 0 var(--color-border);
   padding: clamp(14px, 3vw, 22px);
+
+  /* The card was only as tall as its artwork, which left most of this column
+     empty below it — a large hole beside three stacked steps. It now fills
+     most of the column and centres the illustration, keeping just enough
+     travel for the sticky pin to be doing something. */
+  min-height: min(62vh, 560px);
+  display: grid;
+  place-items: center;
 }
 
-.journey-svg { width: 100%; height: auto; display: block; }
+.journey-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  /* Never taller than the panel it is centred in. */
+  max-height: min(58vh, 520px);
+}
 
 /* --- the illustration --- */
 
