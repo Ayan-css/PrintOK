@@ -104,3 +104,65 @@ file manually.
 **Jobs stay queued and nothing happens**
 Confirm the `PrinterId` in `appsettings.json` matches the printer shown on the
 dashboard — one agent serves one printer.
+
+---
+
+## Running it on Linux or macOS (development)
+
+The agent is a .NET 8 worker, and .NET is cross-platform, so the same code that
+runs in shops also runs here. This is not a separate port — the only thing that
+differs is which printing backend is resolved at startup:
+
+| Host | Backend | How it prints |
+|---|---|---|
+| Windows | `WindowsPrinterSpooler` | The shell's `printto` / `print` verbs, one job per copy |
+| Linux, macOS | `CupsPrinterSpooler` | CUPS `lp`, with copies and colour as flags on one job |
+
+The choice is made once in `Program.cs` from the host OS. **Nothing about the
+Windows path changed** when the CUPS one was added, and the release workflow
+still publishes exactly the same `win-x64` executable.
+
+### Prerequisites
+
+```bash
+# .NET SDK — Arch / EndeavourOS
+sudo pacman -S dotnet-sdk
+
+# CUPS, only if you want jobs to reach real paper
+sudo pacman -S cups
+sudo systemctl enable --now cups
+lpstat -p -d          # should list at least one printer
+```
+
+Without a printer the agent still runs and still exercises pairing, polling, the
+WebSocket push channel, downloading and status reporting — everything except the
+final spool. Worth knowing: that covers most of what can go wrong.
+
+### Run it
+
+```bash
+cd agent/windows-print-agent
+
+./run-linux.sh --PairingCode=K7MP-3QRT     # first run, pairs this machine
+./run-linux.sh                             # afterwards, uses the stored token
+./run-linux.sh --publish                   # standalone binary in bin/linux-publish
+```
+
+Credentials are stored under `~/.local/share/PrintOk/`, and the log is at
+`~/.local/share/PrintOk/agent.log`.
+
+### Pointing it at a local API
+
+```bash
+PRINTOK_PrintOkApiUrl=http://localhost:4000 ./run-linux.sh --PairingCode=XXXX-XXXX
+```
+
+Any setting can be overridden by a `PRINTOK_`-prefixed environment variable,
+which is usually easier than editing `appsettings.json` while testing.
+
+### A note on colour
+
+The console styling matches the dashboard's palette and job-state badges, and
+switches itself off when it would not render — redirected output, `NO_COLOR`,
+`TERM=dumb`, or a Windows console that will not enable virtual terminal
+processing. The log file never contains escape codes.

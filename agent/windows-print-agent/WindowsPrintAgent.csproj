@@ -15,8 +15,19 @@
        without installing the .NET runtime first. appsettings.json is deliberately
        left beside the executable (not embedded) so merchants can drop in the
        config they download from the dashboard. -->
-  <PropertyGroup>
+
+  <!-- Windows remains the default, so an unqualified publish produces exactly
+       what it always did and the release workflow is unaffected. Passing
+       -r linux-x64 now overrides it instead of being ignored, which is what
+       lets the same agent be run and tested on a Linux machine. -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == ''">
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <RuntimeIdentifiers>win-x64;linux-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
+  </PropertyGroup>
+  <PropertyGroup>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>

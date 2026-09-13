@@ -4,6 +4,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PrintOk.WindowsPrintAgent.Models;
 using PrintOk.WindowsPrintAgent.Services;
+using System.Runtime.InteropServices;
 
 // ---------------------------------------------------------------------------
 // Interactive-console helpers.
@@ -31,8 +32,8 @@ static void HoldWindowOpen()
 {
     if (!IsInteractive()) return;
 
-    Console.WriteLine();
-    Console.WriteLine("Press any key to close this window...");
+    Ui.Blank();
+    Ui.Note("Press any key to close this window...");
     try
     {
         Console.ReadKey(intercept: true);
@@ -43,13 +44,14 @@ static void HoldWindowOpen()
     }
 }
 
-static void Banner()
+static string PlatformLabel()
 {
-    Console.WriteLine();
-    Console.WriteLine("======================================================");
-    Console.WriteLine($"  PrintOk Print Agent {AgentVersion.Current}");
-    Console.WriteLine("======================================================");
-    Console.WriteLine();
+    string os =
+        RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "Windows" :
+        RuntimeInformation.IsOSPlatform(OSPlatform.Linux)   ? "Linux"   :
+        RuntimeInformation.IsOSPlatform(OSPlatform.OSX)     ? "macOS"   : "Unknown";
+
+    return $"{os} · {RuntimeInformation.OSArchitecture}";
 }
 
 var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
@@ -80,9 +82,8 @@ using var startupLoggerFactory = LoggerFactory.Create(b =>
 });
 var startupLogger = startupLoggerFactory.CreateLogger("PrintOk.Startup");
 
-Banner();
-Console.WriteLine($"Log file: {logPath}");
-Console.WriteLine();
+Ui.Banner(AgentVersion.Current, PlatformLabel());
+Ui.Field("Log file", logPath);
 
 var credentialStore = new CredentialStore(startupLoggerFactory.CreateLogger<CredentialStore>());
 
@@ -104,22 +105,21 @@ string? pairingCode = settings.PairingCode;
 // failing. This is the first-run path for a freshly downloaded executable.
 if (existing is null && string.IsNullOrWhiteSpace(pairingCode) && !settings.IsConfigured && IsInteractive())
 {
-    Console.WriteLine("This PC is not connected to a PrintOk shop yet.");
-    Console.WriteLine();
-    Console.WriteLine("  To connect it:");
-    Console.WriteLine("    1. Open your PrintOk merchant dashboard in a browser");
-    Console.WriteLine("    2. Go to the 'QR Poster & Agent' tab");
-    Console.WriteLine("    3. Click 'Pair New PC' and copy the code it shows");
-    Console.WriteLine();
-    Console.Write("  Pairing code (e.g. K7MP-3QRT), or press Enter to quit: ");
+    Ui.Section("Not connected yet");
+    Ui.Note("This machine is not linked to a PrintOk shop.");
+    Ui.Blank();
+    Ui.Info("Open your merchant dashboard in a browser");
+    Ui.Info("Go to the 'QR Poster & Agent' tab");
+    Ui.Info("Click 'Pair New PC' and copy the code it shows");
+    Ui.Blank();
 
-    pairingCode = Console.ReadLine()?.Trim();
+    pairingCode = Ui.Prompt("Pairing code (e.g. K7MP-3QRT), or Enter to quit:");
 
     if (string.IsNullOrWhiteSpace(pairingCode))
     {
-        Console.WriteLine();
-        Console.WriteLine("No pairing code entered, so nothing was connected.");
-        Console.WriteLine("Run this program again when you have a code from the dashboard.");
+        Ui.Blank();
+        Ui.Warn("No pairing code entered, so nothing was connected.");
+        Ui.Note("Run this again once you have a code from the dashboard.");
         HoldWindowOpen();
         return 1;
     }
@@ -134,10 +134,11 @@ if (!string.IsNullOrWhiteSpace(pairingCode))
     var paired = await pairingClient.PairAsync(pairingCode!, settings.ApiBaseUrl);
     if (paired is null)
     {
-        Console.WriteLine();
-        Console.WriteLine("  Pairing failed. Codes are single use and expire after 15 minutes,");
-        Console.WriteLine("  so generate a fresh one from the dashboard and try again.");
-        Console.WriteLine($"  Details were written to {logPath}");
+        Ui.Blank();
+        Ui.Fail("Pairing failed.");
+        Ui.Note("Codes are single use and expire after 15 minutes, so generate a");
+        Ui.Note("fresh one from the dashboard and try again.");
+        Ui.Field("Details in", logPath);
         HoldWindowOpen();
         return 1;
     }
@@ -145,10 +146,10 @@ if (!string.IsNullOrWhiteSpace(pairingCode))
     await credentialStore.SaveAsync(paired);
     existing = paired;
 
-    Console.WriteLine();
-    Console.WriteLine($"  Paired successfully. This PC is now connected to printer {paired.PrinterId}.");
-    Console.WriteLine("  You will not need the code again - just run this program to start printing.");
-    Console.WriteLine();
+    Ui.Blank();
+    Ui.Ok($"Paired. This machine is connected to printer {paired.PrinterId}.");
+    Ui.Note("The code is not needed again — just run this to start printing.");
+    Ui.Blank();
 }
 
 if (existing is not null)
@@ -175,6 +176,16 @@ if (!settings.IsConfigured)
     return 1;
 }
 
+Ui.Section("Connected");
+Ui.Field("Cloud API", settings.ApiBaseUrl);
+Ui.Field("Printer", existing?.PrinterId ?? settings.PrinterId ?? "(unset)");
+Ui.Field("Auth", settings.HasDeviceToken
+    ? $"device token ({settings.DeviceId})"
+    : "shared printer key (legacy)");
+if (!string.IsNullOrWhiteSpace(settings.PrinterName)) Ui.Field("Target", settings.PrinterName!);
+
+// The same detail still reaches the log file, which is what a support request
+// actually reads.
 startupLogger.LogInformation(
     "Cloud API: {ApiBaseUrl} | Printer: {PrinterId} | Auth: {AuthMethod}",
     settings.ApiBaseUrl,
@@ -189,7 +200,31 @@ if (!settings.HasDeviceToken)
 }
 
 builder.Services.AddSingleton(settings);
-builder.Services.AddSingleton<IPrinterSpooler, WindowsPrinterSpooler>();
+// Which spooler runs is decided once, here, by the host OS. The Windows path is
+// untouched by the addition of the CUPS one: on Windows this resolves exactly as
+// it always did, and a Linux or macOS machine now prints for real instead of
+// falling into WindowsPrinterSpooler's simulation branch.
+if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+{
+    builder.Services.AddSingleton<IPrinterSpooler, WindowsPrinterSpooler>();
+}
+else
+{
+    builder.Services.AddSingleton<IPrinterSpooler, CupsPrinterSpooler>();
+
+    // Say now whether anything is printable, rather than discovering it on the
+    // first job a customer has already paid for.
+    var printers = await CupsPrinterSpooler.DescribeDefaultPrinterAsync(CancellationToken.None);
+    if (printers is null)
+    {
+        Ui.Warn("No CUPS printer found. Jobs will be collected but cannot print.");
+        Ui.Note("Check with: lpstat -p -d");
+    }
+    else
+    {
+        Ui.Field("CUPS", printers);
+    }
+}
 
 builder.Services.AddHttpClient("PrintOkApi", client =>
 {
@@ -199,8 +234,9 @@ builder.Services.AddHttpClient("PrintOkApi", client =>
 
 builder.Services.AddHostedService<PrintAgentWorker>();
 
-Console.WriteLine("  Ready. Keep this window open - closing it stops printing.");
-Console.WriteLine();
+Ui.Blank();
+Ui.Ok("Ready. Keep this window open — closing it stops printing.");
+Ui.Blank();
 
 try
 {
