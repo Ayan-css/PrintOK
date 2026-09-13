@@ -1,6 +1,8 @@
 {
+  "_comment": "Used when the Vercel project's Root Directory is apps/customer-web. The repo-root vercel.json covers the case where it is the repository root. The two must stay in step, and neither may declare `routes`: mixing `routes` with cleanUrls/trailingSlash/rewrites is rejected by Vercel and previously took the site down with a 403 on every path. Unknown paths are deliberately left unmatched so Vercel serves public/404.html with a real 404 status.",
   "cleanUrls": true,
   "trailingSlash": false,
+  "outputDirectory": "public",
   "rewrites": [
     {
       "source": "/admin",
@@ -25,6 +27,22 @@
     {
       "source": "/p/:printerId",
       "destination": "/print.html"
+    },
+    {
+      "source": "/privacy",
+      "destination": "/privacy.html"
+    },
+    {
+      "source": "/terms",
+      "destination": "/terms.html"
+    },
+    {
+      "source": "/refund",
+      "destination": "/refund.html"
+    },
+    {
+      "source": "/example",
+      "destination": "/example.html"
     }
   ]
 }

@@ -13,6 +13,32 @@ public record PairResponse(
     [property: JsonPropertyName("tokenExpiresAt")] DateTimeOffset? TokenExpiresAt
 );
 
+/// <summary>Why a pairing attempt did not produce a credential.</summary>
+public enum PairFailure
+{
+    None,
+    /// <summary>The API could not be reached at all — DNS, firewall, wrong URL, no internet.</summary>
+    Unreachable,
+    /// <summary>The API answered and said no — expired, already used, or unknown code.</summary>
+    Refused,
+    /// <summary>The API answered 2xx but the body was not a usable credential.</summary>
+    MalformedResponse,
+}
+
+/// <summary>
+/// The outcome of one pairing attempt.
+///
+/// The distinction matters to the person standing at the counter: "could not
+/// reach the server" and "the server rejected your code" need opposite
+/// remedies, and telling someone to generate a fresh code when the request
+/// never left their PC sends them round a loop that cannot succeed.
+/// </summary>
+public sealed record PairResult(StoredCredentials? Credentials, PairFailure Failure)
+{
+    public static PairResult Ok(StoredCredentials credentials) => new(credentials, PairFailure.None);
+    public static PairResult Failed(PairFailure failure) => new(null, failure);
+}
+
 /// <summary>
 /// Exchanges a short-lived pairing code for this machine's own device token
 /// (PRD 7.1).
@@ -32,7 +58,7 @@ public class PairingClient
         _httpClient = httpClient;
     }
 
-    public async Task<StoredCredentials?> PairAsync(
+    public async Task<PairResult> PairAsync(
         string pairingCode,
         string apiBaseUrl,
         CancellationToken cancellationToken = default)
@@ -58,33 +84,40 @@ public class PairingClient
                     "Pairing was refused ({Status}). Pairing codes are single use and expire after 15 minutes; " +
                     "generate a fresh one from the dashboard. Server said: {Body}",
                     (int)response.StatusCode, body);
-                return null;
+                return PairResult.Failed(PairFailure.Refused);
             }
 
             var paired = await response.Content.ReadFromJsonAsync<PairResponse>(cancellationToken: cancellationToken);
             if (paired is null || string.IsNullOrWhiteSpace(paired.DeviceToken))
             {
                 _logger.LogError("Pairing succeeded but the server returned no device token.");
-                return null;
+                return PairResult.Failed(PairFailure.MalformedResponse);
             }
 
             _logger.LogInformation(
                 "Paired successfully. Device {DeviceId} is now bound to printer {PrinterId}.",
                 paired.DeviceId, paired.PrinterId);
 
-            return new StoredCredentials(
+            return PairResult.Ok(new StoredCredentials(
                 paired.DeviceId,
                 paired.DeviceToken,
                 paired.PrinterId,
                 paired.ShopId,
                 // Trust the server's canonical URL when it supplies one.
                 string.IsNullOrWhiteSpace(paired.ApiBaseUrl) ? apiBaseUrl : paired.ApiBaseUrl!,
-                paired.TokenExpiresAt);
+                paired.TokenExpiresAt));
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            // The request never got an answer, so nothing was spent: the pairing
+            // code is still valid and re-issuing one will not help.
+            _logger.LogError(ex, "Could not reach the PrintOk API at {ApiBaseUrl} to pair.", apiBaseUrl);
+            return PairResult.Failed(PairFailure.Unreachable);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Could not reach the PrintOk API at {ApiBaseUrl} to pair.", apiBaseUrl);
-            return null;
+            _logger.LogError(ex, "Pairing against {ApiBaseUrl} failed unexpectedly.", apiBaseUrl);
+            return PairResult.Failed(PairFailure.MalformedResponse);
         }
     }
 }

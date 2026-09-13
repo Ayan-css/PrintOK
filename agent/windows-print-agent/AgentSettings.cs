@@ -43,6 +43,22 @@ public sealed class AgentSettings
 
     public const string PlaceholderApiKey = "PASTE_YOUR_AGENT_API_KEY_HERE";
 
+    /// <summary>
+    /// Where the agent looks when nothing else tells it otherwise.
+    ///
+    /// This was http://localhost:4000, which is only ever right on a developer's
+    /// machine. The published .exe carries no appsettings.json - that file is
+    /// deliberately left beside the executable so a merchant can drop in the one
+    /// they download - so a shop that took the standalone executable had no
+    /// source for this value at all and tried to pair against a server on its
+    /// own PC, failing with "the target machine actively refused it".
+    ///
+    /// Shipping the production address as the compiled-in default makes the
+    /// standalone download work unattended. Development still overrides it
+    /// through appsettings.json, PRINTOK_PrintOkApiUrl, or --PrintOkApiUrl=.
+    /// </summary>
+    public const string DefaultApiBaseUrl = "https://prinok-api.onrender.com";
+
     public static AgentSettings FromConfiguration(IConfiguration config)
     {
         int heartbeatSeconds = ReadInt(config, 30, "HeartbeatIntervalSeconds", "PrintOk:HeartbeatIntervalSeconds");
@@ -51,7 +67,7 @@ public sealed class AgentSettings
         {
             ApiBaseUrl = Normalize(
                 ReadString(config, "PrintOkApiUrl", "PrintOk:ApiBaseUrl", "ApiBaseUrl")
-                ?? "http://localhost:4000"),
+                ?? DefaultApiBaseUrl),
             ApiKey = ReadString(config, "AgentApiKey", "PrintOk:ApiKey", "ApiKey") ?? PlaceholderApiKey,
             ShopId = ReadString(config, "ShopId", "PrintOk:ShopId"),
             PrinterId = ReadString(config, "PrinterId", "PrintOk:PrinterId"),
@@ -62,18 +78,22 @@ public sealed class AgentSettings
         };
     }
 
-    /// <summary>Derives the WebSocket push endpoint from the HTTP base address.</summary>
+    /// <summary>
+    /// The WebSocket push endpoint, with no credential in it.
+    ///
+    /// The token used to be a query parameter, which put a live credential
+    /// everywhere a URL goes: the agent's own log file (which INSTALL.md asks
+    /// shop owners to send to support), proxy and gateway access logs, and any
+    /// crash report quoting the endpoint. The server accepts the same
+    /// credential as an x-agent-device-token / x-agent-api-key header, so the
+    /// agent sends it that way instead — see <see cref="WebSocketAuthHeaders"/>.
+    /// </summary>
     public Uri BuildWebSocketUri()
     {
-        string query = HasDeviceToken
-            ? $"deviceToken={Uri.EscapeDataString(DeviceToken!)}"
-            : $"apiKey={Uri.EscapeDataString(ApiKey)}";
-
         var builder = new UriBuilder(ApiBaseUrl)
         {
             Scheme = ApiBaseUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? "wss" : "ws",
             Path = "/ws/agent",
-            Query = query
         };
 
         // UriBuilder re-adds the default HTTP port when swapping to ws/wss; drop it.
@@ -83,6 +103,25 @@ public sealed class AgentSettings
         }
 
         return builder.Uri;
+    }
+
+    /// <summary>
+    /// Credential headers for the WebSocket handshake.
+    ///
+    /// A device token is preferred; the shared printer key remains supported
+    /// for installs that predate pairing. Either way it travels in a header
+    /// rather than the URL, so it does not end up in logs.
+    /// </summary>
+    public IEnumerable<KeyValuePair<string, string>> WebSocketAuthHeaders()
+    {
+        if (HasDeviceToken)
+        {
+            yield return new KeyValuePair<string, string>("x-agent-device-token", DeviceToken!);
+        }
+        else
+        {
+            yield return new KeyValuePair<string, string>("x-agent-api-key", ApiKey);
+        }
     }
 
     private static string? ReadString(IConfiguration config, params string[] keys)

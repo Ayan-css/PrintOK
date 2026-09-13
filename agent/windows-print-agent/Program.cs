@@ -130,19 +130,42 @@ if (!string.IsNullOrWhiteSpace(pairingCode))
     using var pairingHttp = new HttpClient { BaseAddress = new Uri(settings.ApiBaseUrl) };
     var pairingClient = new PairingClient(startupLoggerFactory.CreateLogger<PairingClient>(), pairingHttp);
 
-    Console.WriteLine();
-    var paired = await pairingClient.PairAsync(pairingCode!, settings.ApiBaseUrl);
-    if (paired is null)
+    // Named before the attempt, not only after it succeeds. When pairing fails
+    // because the agent is pointed at the wrong server, this one line is the
+    // whole diagnosis — and it is the line that was missing when a shop PC tried
+    // to pair against http://localhost:4000.
+    Ui.Blank();
+    Ui.Field("Pairing with", settings.ApiBaseUrl);
+
+    var result = await pairingClient.PairAsync(pairingCode!, settings.ApiBaseUrl);
+    if (result.Credentials is null)
     {
         Ui.Blank();
         Ui.Fail("Pairing failed.");
-        Ui.Note("Codes are single use and expire after 15 minutes, so generate a");
-        Ui.Note("fresh one from the dashboard and try again.");
+
+        if (result.Failure == PairFailure.Unreachable)
+        {
+            // The code was never sent, so it is still good. Sending the operator
+            // to generate a fresh one would be a loop that cannot succeed.
+            Ui.Note($"Nothing answered at {settings.ApiBaseUrl}, so the code was never used —");
+            Ui.Note("it is still valid. This is a connection problem, not a code problem.");
+            Ui.Blank();
+            Ui.Info("Check this PC is online and that a firewall is not blocking the agent");
+            Ui.Info("If your PrintOk server is elsewhere, point the agent at it:");
+            Ui.Note("    WindowsPrintAgent.exe --PrintOkApiUrl=https://your-api --PairingCode=XXXX-XXXX");
+        }
+        else
+        {
+            Ui.Note("The server rejected this code. Codes are single use and expire after");
+            Ui.Note("15 minutes, so generate a fresh one from the dashboard and try again.");
+        }
+
         Ui.Field("Details in", logPath);
         HoldWindowOpen();
         return 1;
     }
 
+    var paired = result.Credentials;
     await credentialStore.SaveAsync(paired);
     existing = paired;
 

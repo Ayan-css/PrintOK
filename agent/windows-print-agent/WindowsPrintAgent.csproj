@@ -8,7 +8,7 @@
     <UserSecretsId>dotnet-WindowsPrintAgent-12345</UserSecretsId>
     <Product>PrintOk Windows Print Agent</Product>
     <Company>PrintOk</Company>
-    <Version>1.2.0</Version>
+    <Version>1.2.1</Version>
   </PropertyGroup>
 
   <!-- Published as a self-contained single file so a shop PC can run the agent
@@ -24,9 +24,12 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
 
-  <PropertyGroup>
-    <RuntimeIdentifiers>win-x64;linux-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
-  </PropertyGroup>
+  <!-- Deliberately no <RuntimeIdentifiers> list. With SelfContained=true, listing
+       every RID makes restore download a full runtime pack for each one - roughly
+       400 MB for a build that needs a single platform - which is slow everywhere
+       and times out on a weak connection. Passing -r on the command line
+       overrides the default above, so the list bought nothing. -->
+
   <PropertyGroup>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>

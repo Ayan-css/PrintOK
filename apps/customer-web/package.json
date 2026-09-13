@@ -5,7 +5,8 @@
   "scripts": {
     "build": "echo 'customer-web: static app, no build step required'",
     "dev": "node server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test test/routing.test.js"
   },
   "dependencies": {
     "express": "^4.19.2"

@@ -58,6 +58,198 @@ nothing is exposed on the shop's network.
 
 ---
 
+## Architecture
+
+### System topology
+
+Three deployment targets, one database, and a shop PC that only ever dials out.
+
+```mermaid
+graph TD
+    subgraph Customer["Customer — phone browser"]
+        QR[Scan QR poster] --> PRINT["/p/:printerId — print.html"]
+        PRINT --> UPLOAD[Upload document]
+        UPLOAD --> QUOTE[Price quote from shop rate card]
+        QUOTE --> PAY[Razorpay Checkout]
+    end
+
+    subgraph Merchant["Merchant — desktop browser"]
+        LOGIN["/dashboard — merchant session"] --> QUEUE[Job queue]
+        LOGIN --> RATES[Rate card]
+        LOGIN --> AGENTTAB[QR poster and agent]
+    end
+
+    subgraph Vercel["Vercel — static multi-page site"]
+        PRINT
+        LOGIN
+        NOTFOUND["404.html — real 404, no SPA fallback"]
+    end
+
+    subgraph Render["Render — Express + TypeScript API"]
+        API[REST API]
+        WS["WebSocket /ws/agent"]
+        HOOK["POST /api/payments/webhook"]
+    end
+
+    subgraph Supabase["Supabase"]
+        PG[(PostgreSQL — Prisma)]
+        S3[(S3 object storage — documents)]
+    end
+
+    subgraph Shop["Shop PC — .NET 8 agent, outbound only"]
+        AGENT[PrintAgentWorker]
+        SPOOL{Host OS}
+        WINSPOOL[WindowsPrinterSpooler]
+        CUPS[CupsPrinterSpooler]
+        PRINTER[[Physical printer]]
+    end
+
+    PAY --> API
+    Razorpay[[Razorpay]] -->|payment.captured| HOOK
+    PAY -->|checkout| Razorpay
+    QUEUE --> API
+    RATES --> API
+    AGENTTAB --> API
+
+    API --> PG
+    API --> S3
+    HOOK --> PG
+
+    AGENT -->|poll every 3s| API
+    WS -.->|JOB_QUEUED push| AGENT
+    AGENT -->|download document| S3
+    AGENT --> SPOOL
+    SPOOL -->|Windows| WINSPOOL
+    SPOOL -->|Linux / macOS| CUPS
+    WINSPOOL --> PRINTER
+    CUPS --> PRINTER
+    AGENT -->|status + heartbeat| API
+```
+
+### Order lifecycle
+
+Payment state and print state are separate columns with their own guarded
+transition tables — a paid job is not a printed job, and neither is ever derived
+from the other. Every transition is appended to `JobEvent`.
+
+```mermaid
+graph TD
+    A[Customer uploads document] --> B[Server extracts page count]
+    B --> C[Price computed from shop rate card]
+    C --> D[Job created — priceSnapshot and printConfig frozen]
+    D --> E{Payment route}
+
+    E -->|Online| F[Razorpay order created]
+    E -->|Cash at counter| G[PaymentState: PendingCash]
+
+    F --> H{Webhook event}
+    H -->|payment.captured or order.paid| I[PaymentState: Paid]
+    H -->|payment.failed| J[PaymentState: Failed — never printed]
+
+    I --> K[PrintState: Queued]
+    G -->|Merchant confirms| K
+
+    K --> L[Agent claims job — assignJobToDevice]
+    L --> M[PrintState: Assigned → Downloading]
+    M --> N{Spool to printer}
+
+    N -->|Success| O[PrintState: Printed → Completed]
+    N -->|Hard failure| P[PrintState: Failed]
+    N -->|Ambiguous| Q[RequiresShopAction — never auto-reprint]
+
+    O --> R[Document purged, deletion recorded]
+    P --> S{Merchant decision}
+    Q --> S
+    S -->|Decline| T[Razorpay refund issued]
+    T --> R
+
+    I --> U[Route transfer — shop's share after fees]
+```
+
+### Agent credential lifecycle
+
+The shop PC never holds the printer's shared key. It earns its own revocable,
+device-scoped token, and the server stores only that token's SHA-256.
+
+```mermaid
+graph TD
+    A[Merchant signs in to dashboard] --> B{Authorised for this printer?}
+    B -->|No — another shop's printer| C[404, so ids cannot be probed]
+    B -->|Yes| D[POST /printers/:id/pairing-code]
+
+    D --> E[Code: 8 chars, single use, 15 min TTL]
+    E --> F[Owner types code into agent]
+    F --> G[POST /api/agent/pair]
+
+    G --> H{consumePairingCode}
+    H -->|Unknown, expired or used| I[401 + PAIRING_REJECTED audit event]
+    H -->|Valid| J[Server derives printer and shop FROM THE CODE]
+
+    J --> K[Device token issued: dvt_ + 32 random bytes]
+    K --> L[(Server stores SHA-256 only)]
+    K --> M[Agent stores token — DPAPI on Windows, 0600 file elsewhere]
+
+    M --> N[Authenticated calls: x-agent-device-token header]
+    N --> O{Device active?}
+    O -->|Revoked or expired| P[401 immediately]
+    O -->|Active| Q[Poll jobs, report status, heartbeat]
+
+    Q --> R{Job belongs to this printer?}
+    R -->|No| S[404 — cross-shop IDOR blocked]
+    R -->|Yes| T[Job proceeds]
+```
+
+### Agent config download
+
+The config file carries the printer's agent API key, and printer ids are public
+— they are on the QR poster. So the download is authorised per click, not by a
+standing URL.
+
+```mermaid
+graph TD
+    A[Merchant clicks Download appsettings.json] --> B[POST /printers/:id/agent-config-token]
+    B --> C{Merchant session valid?}
+    C -->|No| D[401]
+    C -->|Yes| E{Printer belongs to this shop?}
+    E -->|No| F[404 — no enumeration oracle]
+    E -->|Yes| G[Mint token: HMAC-SHA256, 2 min TTL, printer-bound, jti]
+
+    G --> H[Browser navigates to /agent-config?token=...]
+    H --> I{Signature valid?}
+    I -->|No| J[401]
+    I -->|Yes| K{Expired?}
+    K -->|Yes| J
+    K -->|No| L{claims.printerId matches URL?}
+    L -->|No| J
+    L -->|Yes| M{jti already burned?}
+    M -->|Yes| N[401 — replay refused]
+    M -->|No| O[Burn jti, audit AGENT_CONFIG_DOWNLOADED]
+    O --> P[appsettings.json returned]
+```
+
+### Request routing
+
+The frontend is a **multi-page static site**, not an SPA. There is no client-side
+router, so there must be no catch-all rewrite to `index.html`: an unmatched path
+has to reach `404.html` with a real 404 status.
+
+```mermaid
+graph TD
+    A[Incoming request] --> B{Path}
+    B -->|/ or /dashboard or /print or /privacy...| C[Its own .html file — 200]
+    B -->|/styles.css, /app.js, images| D[Static asset — 200]
+    B -->|/api/*| E[Separate origin: the Render API]
+    B -->|Anything else| F[404.html — status 404]
+
+    E --> G{Known API route?}
+    G -->|Yes| H[JSON response]
+    G -->|No| I[Real API 404 as JSON, never HTML]
+
+    F -.->|Must NOT happen| J[index.html with 200 — soft 404]
+```
+
+---
+
 ## Key design rules
 
 These are load-bearing. Breaking one has caused a production bug before.

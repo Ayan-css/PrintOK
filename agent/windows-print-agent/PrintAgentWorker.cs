@@ -104,6 +104,14 @@ public class PrintAgentWorker : BackgroundService
             try
             {
                 using var ws = new System.Net.WebSockets.ClientWebSocket();
+
+                // The credential goes in a header, never the URL, so the line
+                // logged below cannot carry it into a support request.
+                foreach (var header in _settings.WebSocketAuthHeaders())
+                {
+                    ws.Options.SetRequestHeader(header.Key, header.Value);
+                }
+
                 _logger.LogInformation("Connecting WebSocket push channel to {Uri}...", wsUri);
                 await ws.ConnectAsync(wsUri, cancellationToken);
                 _logger.LogInformation("WebSocket push channel connected.");
