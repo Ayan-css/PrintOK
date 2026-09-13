@@ -248,6 +248,31 @@ graph TD
     F -.->|Must NOT happen| J[index.html with 200 — soft 404]
 ```
 
+**Rules for the two `vercel.json` files.** `vercel.json` at the repo root applies
+when the Vercel project's Root Directory is the repository root;
+`apps/customer-web/vercel.json` applies when it is that folder. Only one is ever
+live, nobody can tell which from the code, so **keep them in step**.
+
+- **No `_comment` or any other invented key.** Vercel validates `vercel.json`
+  against a strict schema and fails the deploy with *"should NOT have additional
+  property"*. Only real properties are allowed (`cleanUrls`, `trailingSlash`,
+  `outputDirectory`, `rewrites`, `redirects`, `headers`, `routes`, …), which is
+  why this note lives here and not in the file.
+- **Never declare `routes`.** Vercel rejects `routes` alongside
+  `cleanUrls`/`trailingSlash`/`rewrites`, and an earlier attempt to mix them
+  returned 403 on every path in production.
+- **Never add a catch-all rewrite to `index.html`.** This is a multi-page static
+  site, not an SPA. An unmatched path must fall through to `404.html` with a real
+  404 status. If production serves the landing page for an unknown URL, the
+  catch-all is a project-level **Rewrite in the Vercel dashboard** — it is not in
+  this repo — and must be removed there.
+
+Check it with:
+
+```bash
+curl -o /dev/null -w "%{http_code}\n" https://print-ok-customer-web.vercel.app/nope   # expect 404
+```
+
 ---
 
 ## Key design rules
