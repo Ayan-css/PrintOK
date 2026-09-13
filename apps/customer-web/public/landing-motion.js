@@ -46,10 +46,20 @@
     var visual = document.querySelector('.landing-hero-visual');
     if (!copy) return;
 
-    var bits = copy.querySelectorAll('.eyebrow, h1, .lede, .landing-cta-row, .hero-stats');
     var tl = gsap.timeline({ defaults: { ease: 'power3.out', duration: 0.7 } });
 
-    tl.from(bits, { y: 18, opacity: 0, stagger: 0.08 });
+    // The headline is almost certainly this page's Largest Contentful Paint
+    // element, so it is never faded in: an element at opacity 0 has not been
+    // painted, and animating it from there pushes LCP out by the length of the
+    // animation. It moves, which costs nothing, and is legible from the first
+    // frame.
+    var headline = copy.querySelector('h1');
+    if (headline) tl.from(headline, { y: 14, duration: 0.6 }, 0);
+
+    // Everything else may fade — none of it is the largest paint, and none of
+    // it is the thing a visitor reads first.
+    var rest = copy.querySelectorAll('.eyebrow, .lede, .landing-cta-row, .hero-stats');
+    tl.from(rest, { y: 18, opacity: 0, stagger: 0.08 }, 0.1);
 
     if (visual) {
       tl.from(visual, { y: 28, opacity: 0, duration: 0.9 }, 0.15);
