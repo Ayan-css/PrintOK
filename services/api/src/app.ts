@@ -11,8 +11,15 @@ import { RazorpayRouteService } from './razorpayRoute';
 import { parsePrintState } from './jobStateMachine';
 import { classifyFailure } from './jobRecovery';
 import {
+  issueConfigDownloadToken,
+  verifyConfigDownloadToken,
+  CONFIG_DOWNLOAD_TTL_MS,
+  CONFIG_DOWNLOAD_SCOPE,
+} from './configDownloadToken';
+import {
   PLAN_CATALOGUE, PLAN_TIERS, getPlan,
   PAYMENT_GATEWAY_FEE_BPS, PAYMENT_GATEWAY_LABEL, calculateShopNetCents,
+  Printer,
 } from '@printok/shared-types';
 import {
   hashPassword, verifyPassword, validatePasswordStrength,
@@ -217,6 +224,41 @@ export function createApp(
     }
 
     return { ...payload, shopId: user.shopId };
+  }
+
+  /**
+   * Authorises a merchant to act on one specific printer.
+   *
+   * Printer ids are public by design — they are encoded in the QR poster and
+   * appear in the customer URL as ?printer=<id> — so every printer-scoped
+   * management route needs an ownership check, not merely a signed-in caller.
+   * Without this, knowing an id was authority over it: anyone could mint a
+   * pairing code for a shop they had never visited, revoke its agent, or
+   * regenerate the QR on its printed poster.
+   *
+   * A printer belonging to another shop answers 404, not 403, so this cannot be
+   * used to confirm that a guessed printer id exists.
+   *
+   * Responds and returns null on failure, so callers can `if (!ctx) return;`.
+   */
+  async function authorizePrinter(
+    req: Request,
+    res: Response,
+    options: { requireOwner?: boolean } = {}
+  ): Promise<{ merchant: AdminTokenPayload; printer: Printer } | null> {
+    const merchant = await authenticateMerchant(req, res, {
+      shopId: undefined,
+      requireOwner: options.requireOwner,
+    });
+    if (!merchant) return null;
+
+    const printer = await storage.getPrinter(req.params.printerId);
+    if (!printer || printer.shopId !== merchant.shopId) {
+      res.status(404).json({ error: 'Printer not found.' });
+      return null;
+    }
+
+    return { merchant, printer };
   }
 
   /**
@@ -551,22 +593,117 @@ export function createApp(
     try {
       const { printerId } = req.params;
       const telemetry = await storage.getPrinterTelemetry(printerId);
-      return res.json(telemetry);
+
+      // Necessarily public: the customer page checks this before taking an
+      // order, so a shop with a dead agent does not collect money it cannot
+      // fulfil. It therefore answers only "can this printer take a job right
+      // now", and not the agent version or device id it used to volunteer —
+      // that is fleet detail, useful for targeting and of no use to a customer.
+      return res.json({
+        isOnline: telemetry?.isOnline ?? false,
+        paperStatus: telemetry?.paperStatus ?? 'UNKNOWN',
+        lastHeartbeat: telemetry?.lastHeartbeat ?? null,
+      });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
   });
 
   /**
-   * Download Pre-Configured appsettings.json for Windows Print Agent
+   * Mints a short-lived, single-use, printer-scoped authorisation to download
+   * that printer's appsettings.json.
+   *
+   * This exists because the download itself is a browser navigation, which
+   * cannot carry an Authorization header. The session check happens here, where
+   * it can, and the download below carries only the resulting token — never the
+   * printer's permanent API key.
+   */
+  app.post('/api/printers/:printerId/agent-config-token', async (req: Request, res: Response) => {
+    try {
+      const ctx = await authorizePrinter(req, res);
+      if (!ctx) return;
+
+      const issued = issueConfigDownloadToken({
+        printerId: ctx.printer.id,
+        shopId: ctx.printer.shopId,
+        issuedTo: ctx.merchant.sub,
+      });
+
+      // The token itself is never logged: it is a bearer credential for the
+      // next two minutes, and an access log is exactly where it must not be.
+      return res.status(201).json({
+        token: issued.token,
+        expiresAt: issued.expiresAt.toISOString(),
+        expiresInSeconds: issued.expiresInSeconds,
+        url: `/api/printers/${encodeURIComponent(ctx.printer.id)}/agent-config?token=${encodeURIComponent(issued.token)}`,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Download Pre-Configured appsettings.json for Windows Print Agent.
+   *
+   * Authorised by a token from the endpoint above, not by a session, and not by
+   * nothing at all — which is what it was. The file contains the printer's
+   * agent API key, and printer ids are public (they are on the QR poster), so
+   * an unauthenticated version of this route handed a shop's agent credentials
+   * to anyone who scanned its poster.
    */
   app.get('/api/printers/:printerId/agent-config', async (req: Request, res: Response) => {
     try {
       const { printerId } = req.params;
+      const presented = typeof req.query.token === 'string' ? req.query.token : '';
+
+      if (!presented) {
+        return res.status(401).json({
+          error: 'A download authorisation is required. Use the download button in your dashboard.',
+        });
+      }
+
+      // Signature, expiry and the printer binding are all checked together, so
+      // a valid token for another printer cannot read this one.
+      const claims = verifyConfigDownloadToken(presented, printerId);
+      if (!claims) {
+        return res.status(401).json({
+          error: 'This download link is invalid or has expired. Use the download button in your dashboard again.',
+        });
+      }
+
+      // Single use. A link left in browser history or a proxy log cannot be
+      // replayed; the short expiry is the backstop if this store is unavailable.
+      const replayKey = `${CONFIG_DOWNLOAD_SCOPE}:${claims.jti}`;
+      if (await storage.getIdempotencyRecord(replayKey)) {
+        return res.status(401).json({
+          error: 'This download link has already been used. Use the download button in your dashboard again.',
+        });
+      }
+
       const printer = await storage.getPrinter(printerId);
-      if (!printer) {
+      if (!printer || printer.shopId !== claims.shopId) {
         return res.status(404).json({ error: 'Printer not found.' });
       }
+
+      await storage.saveIdempotencyRecord({
+        key: replayKey,
+        scope: CONFIG_DOWNLOAD_SCOPE,
+        // No request body is involved, and the jti already makes the key unique.
+        requestHash: claims.jti,
+        statusCode: 200,
+        responseBody: {},
+        createdAt: new Date().toISOString(),
+        // Outlives the token, so a burnt jti cannot come back before it expires.
+        expiresAt: new Date(Date.now() + CONFIG_DOWNLOAD_TTL_MS * 2).toISOString(),
+      });
+
+      await storage.recordSecurityEvent({
+        printerId: printer.id,
+        type: 'AGENT_CONFIG_DOWNLOADED',
+        severity: 'info',
+        // Who and which printer — never the key or the token.
+        detail: { issuedTo: claims.issuedTo },
+      });
 
       const apiBaseUrl = process.env.API_BASE_URL || 'https://prinok-api.onrender.com';
 
@@ -1315,16 +1452,21 @@ export function createApp(
    */
   app.post('/api/printers/:printerId/regenerate-qr', async (req: Request, res: Response) => {
     try {
+      // Authorise before anything else. Checking configuration first told an
+      // anonymous caller, through a 500, that the route existed and how it was
+      // deployed — a signed-in check must come before any other answer.
+      //
+      // Regenerating invalidates every poster already printed and stuck to a
+      // counter, so this has to be the shop's own decision.
+      const ctx = await authorizePrinter(req, res, { requireOwner: true });
+      if (!ctx) return;
+      const printer = ctx.printer;
+
       const configuredWebUrl = process.env.PUBLIC_WEB_URL;
       if (!configuredWebUrl) {
         return res.status(500).json({
           error: 'PUBLIC_WEB_URL is not configured; regenerating would reproduce the same broken URL.',
         });
-      }
-
-      const printer = await storage.getPrinter(req.params.printerId);
-      if (!printer) {
-        return res.status(404).json({ error: 'Printer not found.' });
       }
 
       const baseUrl = configuredWebUrl.replace(/\/$/, '');
@@ -1341,11 +1483,13 @@ export function createApp(
    */
   app.post('/api/printers/:printerId/pairing-code', async (req: Request, res: Response) => {
     try {
-      const { printerId } = req.params;
-      const printer = await storage.getPrinter(printerId);
-      if (!printer) {
-        return res.status(404).json({ error: 'Printer not found.' });
-      }
+      // A pairing code is exchanged for a device token that can read this
+      // shop's print jobs. Unauthenticated, this route was a complete
+      // authentication bypass: a printer id off a QR poster was enough to pair
+      // an attacker's own machine to the shop.
+      const ctx = await authorizePrinter(req, res);
+      if (!ctx) return;
+      const printerId = ctx.printer.id;
 
       const code = generatePairingCode();
       const expiresAt = new Date(Date.now() + PAIRING_CODE_TTL_MS);
@@ -1428,7 +1572,10 @@ export function createApp(
   /** Paired agent installs for a printer (PRD 7.1). */
   app.get('/api/printers/:printerId/devices', async (req: Request, res: Response) => {
     try {
-      const devices = await storage.listAgentDevices(req.params.printerId);
+      const ctx = await authorizePrinter(req, res);
+      if (!ctx) return;
+
+      const devices = await storage.listAgentDevices(ctx.printer.id);
       return res.json({ devices });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -1438,6 +1585,10 @@ export function createApp(
   /** Revoke one agent install without re-keying the printer (PRD 7.2). */
   app.post('/api/printers/:printerId/devices/:deviceId/revoke', async (req: Request, res: Response) => {
     try {
+      // Revoking stops a shop printing, so it must be the shop's own call.
+      const ctx = await authorizePrinter(req, res);
+      if (!ctx) return;
+
       const { printerId, deviceId } = req.params;
       const device = await storage.getAgentDevice(deviceId);
       if (!device || device.printerId !== printerId) {
@@ -1463,8 +1614,11 @@ export function createApp(
   /** Agent security audit trail for a printer (PRD 7.2). */
   app.get('/api/printers/:printerId/security-events', async (req: Request, res: Response) => {
     try {
+      const ctx = await authorizePrinter(req, res);
+      if (!ctx) return;
+
       const limit = Math.min(Number(req.query.limit) || 50, 200);
-      const events = await storage.listSecurityEvents(req.params.printerId, limit);
+      const events = await storage.listSecurityEvents(ctx.printer.id, limit);
       return res.json({ events });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -1851,6 +2005,15 @@ export function createApp(
       const { id } = req.params;
       const { printState, errorMessage } = req.body as AgentUpdateStatusDto;
       const deviceId = identity.deviceId || (req.headers['x-agent-device-id'] as string) || printer.id;
+
+      // The job must belong to the printer this agent authenticated as.
+      // Without this an agent in one shop could drive another shop's jobs to
+      // Printed or Failed — including marking a paid job printed that was never
+      // printed. 404 rather than 403, so job ids cannot be probed.
+      const target = await storage.getPrintJob(id);
+      if (!target || target.printerId !== printer.id) {
+        return res.status(404).json({ error: 'Job not found for this printer.' });
+      }
 
       const requestedState = parsePrintState(String(printState));
       if (!requestedState) {

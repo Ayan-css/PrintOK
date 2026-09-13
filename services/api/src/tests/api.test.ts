@@ -382,6 +382,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     // 1. Merchant generates a short-lived pairing code.
     const codeRes = await fetch(`${baseUrl}/api/printers/${createdPrinterId}/pairing-code`, {
       method: 'POST',
+      headers: merchantAuth,
     });
     assert.strictEqual(codeRes.status, 201);
     const { code } = (await codeRes.json()) as any;
@@ -427,7 +428,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
       `${baseUrl}/api/printers/${createdPrinterId}/devices/${paired.deviceId}/revoke`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: merchantAuth,
         body: JSON.stringify({ reason: 'Shop PC replaced' }),
       }
     );
@@ -449,7 +450,10 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(legacyStillWorks.status, 200);
 
     // 6. Everything above is auditable.
-    const auditRes = await fetch(`${baseUrl}/api/printers/${createdPrinterId}/security-events`);
+    const auditRes = await fetch(
+      `${baseUrl}/api/printers/${createdPrinterId}/security-events`,
+      { headers: merchantAuth }
+    );
     const { events } = (await auditRes.json()) as any;
     const types = events.map((e: any) => e.type);
     assert.ok(types.includes('PAIRED'), 'pairing must be audited');
@@ -1055,7 +1059,18 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
   });
 
   await t.test('11. Agent Config download uses keys the Windows agent actually binds', async () => {
-    const res = await fetch(`${baseUrl}/api/printers/${createdPrinterId}/agent-config`);
+    // The download is authorised by a short-lived token minted through the
+    // merchant session, because the file carries the printer's agent API key.
+    const minted = await fetch(
+      `${baseUrl}/api/printers/${createdPrinterId}/agent-config-token`,
+      { method: 'POST', headers: merchantAuth }
+    );
+    assert.strictEqual(minted.status, 201);
+    const { token } = (await minted.json()) as any;
+
+    const res = await fetch(
+      `${baseUrl}/api/printers/${createdPrinterId}/agent-config?token=${encodeURIComponent(token)}`
+    );
     assert.strictEqual(res.status, 200);
 
     const config = (await res.json()) as any;
@@ -1072,6 +1087,228 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(config.PrintOk.ApiBaseUrl, config.PrintOkApiUrl);
     assert.strictEqual(config.PrintOk.ApiKey, config.AgentApiKey);
     assert.strictEqual(config.PrintOk.PrinterId, createdPrinterId);
+  });
+
+  await t.test('39. Agent config is not downloadable without an authorisation', async () => {
+    // The file carries the printer's agent API key, and printer ids are public:
+    // they are encoded in the QR poster and appear in the customer URL as
+    // ?printer=<id>. This route used to answer 200 to anyone, so scanning a
+    // shop's poster yielded that shop's agent credentials.
+    const bare = await fetch(`${baseUrl}/api/printers/${createdPrinterId}/agent-config`);
+    assert.strictEqual(bare.status, 401, 'an unauthenticated download must be refused');
+
+    const body = (await bare.json()) as any;
+    assert.ok(!JSON.stringify(body).includes('prn_'), 'no key material may appear in the refusal');
+
+    // A forged token must not work either.
+    const forged = await fetch(
+      `${baseUrl}/api/printers/${createdPrinterId}/agent-config?token=not.a.real.token`
+    );
+    assert.strictEqual(forged.status, 401);
+
+    // Nor a token whose payload has been edited to keep the signature but claim
+    // another printer: the signature covers the payload, so this must fail.
+    const minted = await fetch(
+      `${baseUrl}/api/printers/${createdPrinterId}/agent-config-token`,
+      { method: 'POST', headers: merchantAuth }
+    );
+    const { token } = (await minted.json()) as any;
+    const [payload, signature] = token.split('.');
+    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    decoded.printerId = 'prn_someone_else';
+    const tampered = `${Buffer.from(JSON.stringify(decoded)).toString('base64url')}.${signature}`;
+
+    const tamperRes = await fetch(
+      `${baseUrl}/api/printers/${createdPrinterId}/agent-config?token=${encodeURIComponent(tampered)}`
+    );
+    assert.strictEqual(tamperRes.status, 401, 'an edited payload must fail the signature check');
+  });
+
+  await t.test('40. A config download token is single use and printer-scoped', async () => {
+    const minted = await fetch(
+      `${baseUrl}/api/printers/${createdPrinterId}/agent-config-token`,
+      { method: 'POST', headers: merchantAuth }
+    );
+    assert.strictEqual(minted.status, 201);
+    const { token, expiresInSeconds } = (await minted.json()) as any;
+    assert.ok(expiresInSeconds > 0 && expiresInSeconds <= 300, 'the window must be short');
+
+    const url = `${baseUrl}/api/printers/${createdPrinterId}/agent-config?token=${encodeURIComponent(token)}`;
+
+    const first = await fetch(url);
+    assert.strictEqual(first.status, 200, 'the first use must succeed');
+
+    // A link left in browser history or a proxy log must not be replayable.
+    const second = await fetch(url);
+    assert.strictEqual(second.status, 401, 'the second use must be refused');
+  });
+
+  await t.test('41. A config token for one printer cannot fetch another', async () => {
+    // Two shops, and the first one's token aimed at the second one's printer.
+    const other = await fetch(`${baseUrl}/api/shops/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopName: 'Rival Prints',
+        ownerEmail: 'rival@example.com',
+        printerName: 'Rival LaserJet',
+      }),
+    });
+    const rival = (await other.json()) as any;
+
+    const minted = await fetch(
+      `${baseUrl}/api/printers/${createdPrinterId}/agent-config-token`,
+      { method: 'POST', headers: merchantAuth }
+    );
+    const { token } = (await minted.json()) as any;
+
+    const crossed = await fetch(
+      `${baseUrl}/api/printers/${rival.printer.id}/agent-config?token=${encodeURIComponent(token)}`
+    );
+    assert.strictEqual(crossed.status, 401, 'a token names the printer it may read');
+
+    // And the merchant cannot mint one for a printer that is not theirs.
+    const mintOther = await fetch(
+      `${baseUrl}/api/printers/${rival.printer.id}/agent-config-token`,
+      { method: 'POST', headers: merchantAuth }
+    );
+    assert.strictEqual(mintOther.status, 404, 'another shop\'s printer must look absent');
+  });
+
+  await t.test('42. Printer management endpoints reject unauthenticated callers', async () => {
+    // Every one of these was reachable with nothing but a printer id, which is
+    // public. Pairing-code minting was the worst: a code can be exchanged for a
+    // device token, so this was a complete authentication bypass.
+    const pairing = await fetch(`${baseUrl}/api/printers/${createdPrinterId}/pairing-code`, {
+      method: 'POST',
+    });
+    assert.strictEqual(pairing.status, 401, 'anyone could pair their own PC to this shop');
+
+    const devices = await fetch(`${baseUrl}/api/printers/${createdPrinterId}/devices`);
+    assert.strictEqual(devices.status, 401);
+
+    const events = await fetch(`${baseUrl}/api/printers/${createdPrinterId}/security-events`);
+    assert.strictEqual(events.status, 401);
+
+    const regen = await fetch(`${baseUrl}/api/printers/${createdPrinterId}/regenerate-qr`, {
+      method: 'POST',
+    });
+    assert.strictEqual(regen.status, 401, 'anyone could invalidate the printed QR poster');
+
+    const revoke = await fetch(
+      `${baseUrl}/api/printers/${createdPrinterId}/devices/dev_whatever/revoke`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
+    );
+    assert.strictEqual(revoke.status, 401, 'anyone could stop this shop printing');
+  });
+
+  await t.test('43. A merchant cannot manage another shop\'s printer', async () => {
+    const other = await fetch(`${baseUrl}/api/shops/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopName: 'Third Party Copies',
+        ownerEmail: 'third@example.com',
+        printerName: 'Third Printer',
+      }),
+    });
+    const third = (await other.json()) as any;
+
+    // 404 rather than 403: a signed-in merchant must not be able to confirm
+    // that a guessed printer id exists.
+    for (const [method, path] of [
+      ['POST', `/api/printers/${third.printer.id}/pairing-code`],
+      ['GET', `/api/printers/${third.printer.id}/devices`],
+      ['GET', `/api/printers/${third.printer.id}/security-events`],
+    ] as const) {
+      const res = await fetch(`${baseUrl}${path}`, { method, headers: merchantAuth });
+      assert.strictEqual(res.status, 404, `${method} ${path} must not be reachable`);
+    }
+  });
+
+  await t.test('44. Public printer and telemetry routes leak nothing usable', async () => {
+    // These two stay public because the customer page needs them before an
+    // order is placed. That makes what they omit the security property.
+    const printer = await fetch(`${baseUrl}/api/printers/${createdPrinterId}`);
+    assert.strictEqual(printer.status, 200);
+    const printerBody = await printer.text();
+    assert.ok(!printerBody.includes('apiKey'), 'the agent key must never be public');
+    assert.ok(!printerBody.includes('ownerEmail'), 'the owner email must never be public');
+
+    const telemetry = await fetch(`${baseUrl}/api/printers/${createdPrinterId}/telemetry`);
+    assert.strictEqual(telemetry.status, 200);
+    const t2 = (await telemetry.json()) as any;
+    assert.ok('isOnline' in t2, 'the customer page needs to know if the shop can print');
+    assert.ok(!('deviceId' in t2), 'device ids are fleet detail, not customer detail');
+    assert.ok(!('agentVersion' in t2), 'agent version aids targeting and helps no customer');
+  });
+
+  await t.test('45. A pairing code works once, and only for its own printer', async () => {
+    const minted = await fetch(`${baseUrl}/api/printers/${createdPrinterId}/pairing-code`, {
+      method: 'POST',
+      headers: merchantAuth,
+    });
+    assert.strictEqual(minted.status, 201);
+    const { code } = (await minted.json()) as any;
+
+    const pair = async () => fetch(`${baseUrl}/api/agent/pair`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pairingCode: code, deviceName: 'Counter PC' }),
+    });
+
+    const first = await pair();
+    assert.strictEqual(first.status, 201);
+    const paired = (await first.json()) as any;
+
+    // The server decides which printer and shop the device belongs to, from the
+    // code it redeemed. A client cannot ask to be bound elsewhere.
+    assert.strictEqual(paired.printerId, createdPrinterId);
+    assert.strictEqual(paired.shopId, createdShopId);
+    assert.ok(paired.deviceToken.startsWith('dvt_'));
+
+    // Single use: a replayed code must not yield a second credential.
+    const second = await pair();
+    assert.strictEqual(second.status, 401, 'a pairing code must not be reusable');
+
+    // The issued token authenticates, and stops doing so once revoked.
+    const auth = { 'x-agent-device-token': paired.deviceToken };
+    const polled = await fetch(`${baseUrl}/api/agent/jobs/pending`, { headers: auth });
+    assert.strictEqual(polled.status, 200, 'a freshly paired device must be able to poll');
+
+    const revoked = await fetch(
+      `${baseUrl}/api/printers/${createdPrinterId}/devices/${paired.deviceId}/revoke`,
+      { method: 'POST', headers: merchantAuth, body: JSON.stringify({ reason: 'test' }) }
+    );
+    assert.strictEqual(revoked.status, 200);
+
+    const afterRevoke = await fetch(`${baseUrl}/api/agent/jobs/pending`, { headers: auth });
+    assert.strictEqual(afterRevoke.status, 401, 'a revoked device must lose access immediately');
+  });
+
+  await t.test('46. An agent cannot drive another printer\'s job', async () => {
+    // Two shops. The second shop's agent tries to mark the first shop's job
+    // printed — which, on a paid job, would mean money kept for nothing printed.
+    const other = await fetch(`${baseUrl}/api/shops/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopName: 'Cross Shop',
+        ownerEmail: 'cross@example.com',
+        printerName: 'Cross Printer',
+      }),
+    });
+    const cross = (await other.json()) as any;
+
+    const foreign = await fetch(`${baseUrl}/api/agent/jobs/${createdJobId}/status`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-agent-api-key': cross.printer.apiKey,
+      },
+      body: JSON.stringify({ printState: 'Printed' }),
+    });
+    assert.strictEqual(foreign.status, 404, 'a job outside this printer must not be reachable');
   });
 
   await t.test('28. A brand new shop can find itself from its session alone', async () => {

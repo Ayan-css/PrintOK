@@ -1,4 +1,5 @@
 {
+  "_comment": "Used when the Vercel project's Root Directory is the repository root; apps/customer-web/vercel.json covers the case where it is that folder. Keep both in step. Neither may declare `routes`: Vercel rejects `routes` alongside cleanUrls/trailingSlash/rewrites, which previously took the site down with a 403 on every path. There is deliberately NO catch-all rewrite to index.html — this is a multi-page static site, not an SPA, and an unmatched path must fall through to 404.html with a real 404 status rather than silently rendering the landing page.",
   "cleanUrls": true,
   "trailingSlash": false,
   "rewrites": [

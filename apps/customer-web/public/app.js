@@ -106,6 +106,37 @@ document.addEventListener('DOMContentLoaded', () => {
     },
   };
 
+  /**
+   * Starts an agent-config download.
+   *
+   * The file carries the printer's agent API key, so the link cannot simply be
+   * an href: a plain URL would be fetchable by anyone who knew the printer id,
+   * and printer ids are public. Instead the session mints a short-lived,
+   * single-use, printer-scoped token here and the browser then navigates to
+   * that. The permanent key is never in a URL.
+   */
+  async function downloadAgentConfig(printerId, button) {
+    if (!printerId) return;
+    const label = button ? button.textContent : null;
+    try {
+      if (button) { button.disabled = true; button.textContent = 'Preparing…'; }
+
+      const res = await shopFetch(`/api/printers/${encodeURIComponent(printerId)}/agent-config-token`, {
+        method: 'POST',
+      });
+      if (!res.ok) throw new Error('Could not authorise the download.');
+
+      const { url } = await res.json();
+      // Navigation rather than fetch+blob so the browser's own download UI
+      // handles it, including the filename the server sets.
+      window.location.assign(`${API_BASE}${url}`);
+    } catch (err) {
+      showToast('error', 'Download failed', err.message || 'Could not download the config file.');
+    } finally {
+      if (button) { button.disabled = false; if (label) button.textContent = label; }
+    }
+  }
+
   /** Shop-scoped fetch. A 401 drops straight back to sign-in. */
   async function shopFetch(path, options = {}) {
     const res = await fetch(`${API_BASE}${path}`, {
@@ -395,7 +426,14 @@ document.addEventListener('DOMContentLoaded', () => {
             const btnDownloadAgentConfig = document.getElementById('btnDownloadAgentConfig');
 
             if (btnDownloadAgentExe) btnDownloadAgentExe.href = `${API_BASE}/api/agent-installer`;
-            if (btnDownloadAgentConfig) btnDownloadAgentConfig.href = `${API_BASE}/api/printers/${data.printer.id}/agent-config`;
+            if (btnDownloadAgentConfig) {
+              // Authorised per click, not a standing URL. See downloadAgentConfig.
+              btnDownloadAgentConfig.removeAttribute('href');
+              btnDownloadAgentConfig.addEventListener('click', (e) => {
+                e.preventDefault();
+                downloadAgentConfig(data.printer.id, btnDownloadAgentConfig);
+              });
+            }
 
             const btnGoToDashboard = document.getElementById('btnGoToDashboard');
             if (btnGoToDashboard) btnGoToDashboard.href = `/dashboard?shop=${encodeURIComponent(data.shop.id)}&printer=${encodeURIComponent(data.printer.id)}`;
@@ -860,7 +898,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadPairedDevices() {
       if (!dashPrinterId) return;
       try {
-        const res = await fetch(`${API_BASE}/api/printers/${encodeURIComponent(dashPrinterId)}/devices`);
+        const res = await shopFetch(`/api/printers/${encodeURIComponent(dashPrinterId)}/devices`);
         if (!res.ok) return;
         const data = await res.json();
         renderPairedDevices(data.devices);
@@ -879,7 +917,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         btnPairAgent.disabled = true;
         try {
-          const res = await fetch(`${API_BASE}/api/printers/${encodeURIComponent(dashPrinterId)}/pairing-code`, {
+          const res = await shopFetch(`/api/printers/${encodeURIComponent(dashPrinterId)}/pairing-code`, {
             method: 'POST',
           });
           if (!res.ok) throw new Error('Could not generate a pairing code.');
@@ -930,11 +968,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         button.disabled = true;
         try {
-          const res = await fetch(
-            `${API_BASE}/api/printers/${encodeURIComponent(dashPrinterId)}/devices/${encodeURIComponent(deviceId)}/revoke`,
+          const res = await shopFetch(
+            `/api/printers/${encodeURIComponent(dashPrinterId)}/devices/${encodeURIComponent(deviceId)}/revoke`,
             {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ reason: 'Revoked from dashboard' }),
             }
           );
@@ -1150,7 +1187,15 @@ document.addEventListener('DOMContentLoaded', () => {
           const exeLink = document.getElementById('btnDownloadAgentExe');
           if (exeLink) exeLink.href = `${API_BASE}/api/agent-installer`;
           const cfgLink = document.getElementById('btnDownloadAgentConfigFile');
-          if (cfgLink) cfgLink.href = `${API_BASE}/api/printers/${encodeURIComponent(printer.id)}/agent-config`;
+          if (cfgLink && !cfgLink.dataset.wired) {
+            // Authorised per click, not a standing URL. See downloadAgentConfig.
+            cfgLink.dataset.wired = '1';
+            cfgLink.removeAttribute('href');
+            cfgLink.addEventListener('click', (e) => {
+              e.preventDefault();
+              downloadAgentConfig(dashPrinterId, cfgLink);
+            });
+          }
 
           loadPairedDevices();
         }
