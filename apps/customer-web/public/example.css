@@ -484,3 +484,199 @@ body.pp {
 
   .pp-perf::before, .pp-perf::after { display: none; }
 }
+
+/* ============================================================
+   FIVE DIRECTIONS, SAME CONTENT
+   ------------------------------------------------------------
+   Each specimen renders identical copy, the same token artefact,
+   the same four job states and the same money figure. Holding
+   content constant is the only way to compare design rather than
+   compare writing.
+
+   Every rule below is scoped to .d1 … .d5, so the directions
+   cannot leak into each other or into the full build further
+   down the page.
+   ============================================================ */
+
+.cmp-intro { padding: clamp(40px, 6vw, 72px) 0 8px; }
+
+.spec {
+  border-top: 1px solid var(--pp-rule);
+  padding: clamp(28px, 4vw, 46px) 0;
+}
+
+.spec-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 22px;
+}
+.spec-head h3 {
+  font-family: var(--pp-display);
+  font-size: 1.15rem;
+  margin: 0;
+  letter-spacing: -0.015em;
+}
+.spec-head .spec-tag {
+  font-family: var(--pp-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--pp-ink-3);
+}
+.spec-head p {
+  margin: 0;
+  flex: 1 1 320px;
+  color: var(--pp-ink-2);
+  font-size: 0.88rem;
+}
+
+/* The frame every specimen sits in, so each is judged as a screen
+   rather than as loose elements on the comparison page. */
+.sp {
+  padding: clamp(24px, 3.5vw, 44px);
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: clamp(22px, 4vw, 52px);
+  align-items: center;
+  overflow: hidden;
+}
+@media (max-width: 760px) { .sp { grid-template-columns: 1fr; } }
+
+.sp-title { margin: 0 0 12px; }
+.sp-lede { margin: 0 0 22px; }
+.sp-cta { display: flex; gap: 10px; flex-wrap: wrap; }
+.sp-btn { text-decoration: none; display: inline-block; cursor: pointer; }
+.sp-states { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
+.sp-artefact { align-self: center; }
+.sp-money { margin-top: 16px; }
+
+/* ---------- D1 · Swiss editorial ---------- */
+
+.d1 .sp { background: #f4f4f2; color: #101010; }
+.d1 .sp-eyebrow {
+  display: block; font-family: var(--pp-body); font-size: 0.7rem;
+  letter-spacing: 0.18em; text-transform: uppercase; color: #101010;
+  border-bottom: 2px solid #101010; padding-bottom: 6px; margin-bottom: 20px;
+  /* Wide enough for the line to stay on one row. At 14ch it broke into four,
+     which read as a stack of fragments rather than a rule under a label. */
+  max-width: 32ch;
+}
+.d1 .sp-title {
+  font-family: var(--pp-body); font-weight: 600;
+  font-size: clamp(1.6rem, 3.4vw, 2.5rem); line-height: 1.02;
+  letter-spacing: -0.035em;
+}
+.d1 .sp-lede { color: #3d3d3d; font-size: 0.94rem; max-width: 40ch; }
+.d1 .sp-btn {
+  font-size: 0.84rem; font-weight: 600; padding: 11px 20px;
+  background: #d92b1c; color: #fff; border: 0;
+}
+.d1 .sp-btn--2 { background: transparent; color: #101010; box-shadow: inset 0 0 0 1px #101010; }
+.d1 .sp-badge {
+  font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase;
+  border-bottom: 2px solid #101010; padding-bottom: 3px;
+}
+.d1 .sp-badge--live { border-bottom-color: #d92b1c; color: #d92b1c; }
+.d1 .sp-money { font-size: 1.6rem; font-weight: 600; letter-spacing: -0.02em; }
+.d1 .sp-money small { display: block; font-size: 0.7rem; letter-spacing: 0.14em; text-transform: uppercase; color: #6b6b6b; }
+.d1 .sp-slip { background: #fff; padding: 22px; }
+.d1 .sp-slip-num { font-size: 2.8rem; font-weight: 600; letter-spacing: -0.04em; margin: 0 0 4px; }
+.d1 .sp-slip-row { display: flex; justify-content: space-between; font-size: 0.8rem; padding: 7px 0; border-top: 1px solid #d8d8d5; }
+
+/* ---------- D2 · Paper & receipt ---------- */
+
+.d2 .sp { background: var(--pp-paper); color: var(--pp-ink); border: 1px solid var(--pp-rule); }
+.d2 .sp-eyebrow {
+  display: block; font-family: var(--pp-mono); font-size: 0.7rem;
+  letter-spacing: 0.2em; text-transform: uppercase; color: var(--pp-ink-3); margin-bottom: 18px;
+}
+.d2 .sp-title {
+  font-family: var(--pp-display); font-weight: 700;
+  font-size: clamp(1.6rem, 3.4vw, 2.5rem); line-height: 1; letter-spacing: -0.035em;
+}
+.d2 .sp-lede { color: var(--pp-ink-2); font-size: 0.94rem; max-width: 40ch; }
+.d2 .sp-btn { font-size: 0.86rem; font-weight: 600; padding: 12px 20px; background: var(--pp-ink); color: var(--pp-paper); border: 1px solid var(--pp-ink); }
+.d2 .sp-btn--2 { background: transparent; color: var(--pp-ink); border-color: var(--pp-rule); }
+.d2 .sp-badge {
+  font-family: var(--pp-mono); font-size: 0.65rem; letter-spacing: 0.13em;
+  text-transform: uppercase; padding: 4px 8px; border: 1px solid currentColor; color: var(--pp-ink-3);
+}
+.d2 .sp-badge--live { color: var(--pp-accent); }
+.d2 .sp-money { font-family: var(--pp-mono); font-size: 1.5rem; }
+.d2 .sp-money small { display: block; font-size: 0.72rem; color: var(--pp-ink-3); letter-spacing: 0.08em; }
+.d2 .sp-slip { background: #fff; border: 1px solid var(--pp-rule); padding: 22px; transform: rotate(-1.2deg); }
+.d2 .sp-slip-num { font-family: var(--pp-display); font-size: 2.8rem; font-weight: 700; letter-spacing: -0.03em; margin: 0 0 4px; }
+.d2 .sp-slip-row { display: flex; justify-content: space-between; font-family: var(--pp-mono); font-size: 0.78rem; padding: 7px 0; border-top: 1px dotted var(--pp-rule); color: var(--pp-ink-2); }
+
+/* ---------- D3 · Calm operational (shown dark) ---------- */
+
+.d3 .sp { background: #0e1013; color: #e7e9ec; border: 1px solid #23272e; border-radius: 10px; }
+.d3 .sp-eyebrow {
+  display: block; font-size: 0.72rem; letter-spacing: 0.06em; color: #8b939f; margin-bottom: 16px;
+}
+.d3 .sp-title { font-family: var(--pp-body); font-weight: 600; font-size: clamp(1.45rem, 3vw, 2.1rem); letter-spacing: -0.022em; line-height: 1.12; }
+.d3 .sp-lede { color: #9aa2ae; font-size: 0.92rem; max-width: 42ch; }
+.d3 .sp-btn { font-size: 0.84rem; font-weight: 500; padding: 9px 16px; border-radius: 7px; background: #5b6cff; color: #fff; border: 1px solid #5b6cff; }
+.d3 .sp-btn--2 { background: #171a1f; color: #d7dbe1; border-color: #2b3038; }
+.d3 .sp-badge {
+  font-size: 0.72rem; padding: 4px 9px 4px 7px; border-radius: 999px;
+  background: #171a1f; border: 1px solid #2b3038; color: #aeb6c2;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.d3 .sp-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #6b7280; }
+.d3 .sp-badge--live { color: #cdd4ff; }
+.d3 .sp-badge--live::before { background: #5b6cff; }
+.d3 .sp-money { font-size: 1.55rem; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.d3 .sp-money small { display: block; font-size: 0.74rem; font-weight: 400; color: #7d8794; letter-spacing: 0; }
+.d3 .sp-slip { background: #14171c; border: 1px solid #23272e; border-radius: 10px; padding: 20px; }
+.d3 .sp-slip-num { font-size: 2.4rem; font-weight: 600; letter-spacing: -0.03em; margin: 0 0 4px; }
+.d3 .sp-slip-row { display: flex; justify-content: space-between; font-size: 0.8rem; padding: 8px 0; border-top: 1px solid #23272e; color: #9aa2ae; font-variant-numeric: tabular-nums; }
+
+/* ---------- D4 · Vernacular signage ---------- */
+
+.d4 .sp { background: #0b3b6f; color: #fdf6e6; border: 4px solid #f2b705; }
+.d4 .sp-eyebrow {
+  display: inline-block; font-family: var(--pp-display); font-size: 0.68rem; font-weight: 700;
+  letter-spacing: 0.16em; text-transform: uppercase; background: #f2b705; color: #0b3b6f;
+  padding: 5px 10px; margin-bottom: 18px;
+}
+.d4 .sp-title {
+  font-family: var(--pp-display); font-weight: 700; text-transform: uppercase;
+  font-size: clamp(1.5rem, 3.3vw, 2.35rem); line-height: 0.98; letter-spacing: -0.01em;
+}
+.d4 .sp-lede { color: #d8e4f2; font-size: 0.92rem; max-width: 40ch; }
+.d4 .sp-btn { font-family: var(--pp-display); font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.82rem; padding: 12px 20px; background: #f2b705; color: #0b3b6f; border: 0; }
+.d4 .sp-btn--2 { background: transparent; color: #fdf6e6; box-shadow: inset 0 0 0 2px #fdf6e6; }
+.d4 .sp-badge { font-family: var(--pp-display); font-weight: 700; font-size: 0.66rem; letter-spacing: 0.1em; text-transform: uppercase; padding: 5px 9px; background: #fdf6e6; color: #0b3b6f; }
+.d4 .sp-badge--live { background: #e2483d; color: #fff; }
+.d4 .sp-money { font-family: var(--pp-display); font-weight: 700; font-size: 1.7rem; color: #f2b705; }
+.d4 .sp-money small { display: block; font-size: 0.7rem; color: #b9cde3; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; }
+.d4 .sp-slip { background: #fdf6e6; color: #0b3b6f; padding: 20px; border: 3px solid #0b3b6f; }
+.d4 .sp-slip-num { font-family: var(--pp-display); font-size: 2.7rem; font-weight: 700; margin: 0 0 4px; }
+.d4 .sp-slip-row { display: flex; justify-content: space-between; font-size: 0.8rem; font-weight: 500; padding: 7px 0; border-top: 2px dotted #0b3b6f; }
+
+/* ---------- D5 · Soft modern ---------- */
+
+.d5 .sp { background: #faf9ff; color: #1d1b2e; border-radius: 22px; border: 1px solid #e8e5f6; }
+.d5 .sp-eyebrow {
+  display: inline-block; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em;
+  background: #ece9fd; color: #5b46d9; padding: 6px 12px; border-radius: 999px; margin-bottom: 18px;
+}
+.d5 .sp-title { font-family: var(--pp-body); font-weight: 600; font-size: clamp(1.5rem, 3.2vw, 2.25rem); line-height: 1.12; letter-spacing: -0.02em; }
+.d5 .sp-lede { color: #5f5b7a; font-size: 0.94rem; max-width: 42ch; }
+.d5 .sp-btn { font-size: 0.88rem; font-weight: 600; padding: 12px 22px; border-radius: 999px; background: #6c4cf0; color: #fff; border: 0; box-shadow: 0 6px 16px rgba(108,76,240,0.24); }
+.d5 .sp-btn--2 { background: #fff; color: #3b3560; box-shadow: 0 2px 8px rgba(30,25,70,0.07); }
+.d5 .sp-badge { font-size: 0.72rem; font-weight: 600; padding: 5px 12px; border-radius: 999px; background: #eeecfb; color: #5f5b7a; }
+.d5 .sp-badge--live { background: #ddd6ff; color: #4a34c7; }
+.d5 .sp-money { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; }
+.d5 .sp-money small { display: block; font-size: 0.76rem; font-weight: 500; color: #837ea3; }
+.d5 .sp-slip { background: #fff; border-radius: 18px; padding: 22px; box-shadow: 0 10px 30px rgba(35,25,90,0.08); }
+.d5 .sp-slip-num { font-size: 2.6rem; font-weight: 700; letter-spacing: -0.03em; margin: 0 0 4px; }
+.d5 .sp-slip-row { display: flex; justify-content: space-between; font-size: 0.82rem; padding: 8px 0; border-top: 1px solid #efedf8; color: #5f5b7a; }
+
+/* Shared bits inside every slip. */
+.sp-slip-head { display: flex; justify-content: space-between; font-size: 0.66rem; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.6; margin-bottom: 14px; }
+.sp-slip-sub { font-size: 0.74rem; opacity: 0.62; margin: 0 0 16px; }
+.sp-slip-rows { display: grid; }
