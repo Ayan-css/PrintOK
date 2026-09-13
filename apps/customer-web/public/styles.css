@@ -3843,3 +3843,80 @@ body::before {
   background: var(--color-danger);
   color: var(--color-text-on-dark);
 }
+
+/* ============================================================
+   RESPONSIVE PASS — phones and small tablets
+   ------------------------------------------------------------
+   Nothing here overflowed horizontally; these are the places
+   the layout technically fitted but stopped being usable.
+   ============================================================ */
+
+/* The app header packs a brand, a live status pill and two buttons into one
+   row. On a phone that ran past the edge and clipped the last button, so the
+   "+ New Shop" action was simply unreachable. It wraps now, and the pill takes
+   the full width on its own line rather than squeezing the buttons out. */
+@media (max-width: 600px) {
+  .app-header {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: var(--space-3);
+  }
+
+  .app-header > * { min-width: 0; }
+
+  .brand { flex: 1 1 auto; }
+  .brand-name { font-size: 1rem; }
+  /* Two words on two lines above a 10px tagline is noise at this size. */
+  .brand-tagline { display: none; }
+
+  .agent-live-pill {
+    order: 3;
+    flex: 1 0 100%;
+    justify-content: center;
+  }
+}
+
+/* Six stat tiles, one per row, put the shop table three screens down. Two up
+   halves that without making any single figure hard to read. */
+@media (max-width: 640px) {
+  .stat-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+
+  .stat-tile { padding: 12px 12px; }
+  .stat-tile .stat-value { font-size: 1.35rem; }
+  /* The explanatory line under a figure is the first thing to go when there
+     are two tiles to a row. */
+  .stat-tile .stat-sub { display: none; }
+}
+
+/* A table that scrolls sideways with no edge is indistinguishable from one
+   that is simply cut off — which is how the shop network table read on a
+   phone. This fades the right edge only while there is more to scroll to. */
+.table-scroll {
+  -webkit-overflow-scrolling: touch;
+  background:
+    linear-gradient(to right, var(--color-surface) 30%, transparent),
+    linear-gradient(to left, var(--color-surface) 30%, transparent) 100% 0,
+    linear-gradient(to right, rgba(0,0,0,0.16), transparent 12px),
+    linear-gradient(to left, rgba(0,0,0,0.16), transparent 12px) 100% 0;
+  background-repeat: no-repeat;
+  background-size: 34px 100%, 34px 100%, 14px 100%, 14px 100%;
+  background-attachment: local, local, scroll, scroll;
+}
+
+/* The queue row is a token, a filename and a set of actions. Below this the
+   actions were being pushed onto a line of their own anyway, so let them. */
+@media (max-width: 520px) {
+  .queue-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .queue-row-actions {
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+}
