@@ -3920,3 +3920,161 @@ body::before {
     flex-wrap: wrap;
   }
 }
+
+/* ============================================================
+   THE FILE'S JOURNEY — scroll-driven, degrades to static
+   ------------------------------------------------------------
+   The illustration sticks while the three explanations scroll
+   past it. Written so the section is complete before any script
+   runs: every step is visible, the sheet rests in the printer
+   tray, and JS only adds the travelling.
+   ============================================================ */
+
+.journey-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 420px) minmax(0, 1fr);
+  gap: clamp(24px, 5vw, 72px);
+  align-items: start;
+}
+
+.journey-stage { position: relative; }
+
+.journey-stage-inner {
+  position: sticky;
+  /* Centres the illustration in the viewport while the steps pass it. */
+  top: max(12vh, 80px);
+  border: 3px solid var(--color-border);
+  border-radius: 18px;
+  background: var(--color-surface);
+  box-shadow: 8px 8px 0 var(--color-border);
+  padding: clamp(14px, 3vw, 26px);
+}
+
+.journey-svg { width: 100%; height: auto; display: block; }
+
+/* --- the illustration --- */
+
+.jr-rail {
+  stroke: var(--color-border-muted);
+  stroke-width: 3;
+  stroke-dasharray: 7 9;
+  stroke-linecap: round;
+  fill: none;
+}
+
+.jr-body {
+  fill: var(--color-surface);
+  stroke: var(--color-border);
+  stroke-width: 3;
+}
+
+.jr-screen { fill: var(--color-surface-muted); stroke: var(--color-border); stroke-width: 2.5; }
+.jr-notch  { fill: var(--color-border); }
+.jr-tray   { fill: var(--color-surface-muted); stroke: var(--color-border); stroke-width: 2.5; }
+.jr-line   { fill: var(--color-border-muted); }
+.jr-accent { fill: var(--color-primary); }
+.jr-chip   { fill: var(--color-secondary); stroke: var(--color-border); stroke-width: 2.5; }
+.jr-dot    { fill: var(--color-text-muted); }
+
+/* A station lifts and colours only while it is the one being explained.
+   Transform on a group, so this composites rather than repaints. */
+.jr-station {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: opacity 400ms ease, transform 400ms cubic-bezier(.22,1,.36,1);
+}
+
+/* Only dim the others once the script is driving; without JS all three
+   stations stay at full strength. */
+.js-journey .jr-station { opacity: 0.42; }
+.js-journey .jr-station.is-active { opacity: 1; transform: scale(1.04); }
+.js-journey .jr-station.is-active .jr-dot { fill: var(--color-success); }
+
+.jr-paper-body {
+  fill: #fff;
+  stroke: var(--color-border);
+  stroke-width: 2.5;
+}
+.jr-paper-line { fill: var(--color-border-muted); }
+
+.jr-paper {
+  /* Resting place with no JS: delivered, in the tray. */
+  transform: translate(180px, 470px);
+}
+.js-journey .jr-paper { transform: translate(180px, 79px); }
+
+/* --- the steps --- */
+
+.journey-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: clamp(18px, 6vh, 56px);
+}
+
+.journey-step {
+  border: 3px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface);
+  box-shadow: 5px 5px 0 var(--color-border);
+  padding: clamp(18px, 3vw, 28px);
+  position: relative;
+  transition: transform 400ms cubic-bezier(.22,1,.36,1), box-shadow 400ms ease;
+}
+
+.js-journey .journey-step.is-active {
+  transform: translateY(-4px);
+  box-shadow: 8px 8px 0 var(--color-primary);
+}
+
+.journey-num {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 3px solid var(--color-border);
+  border-radius: 50%;
+  background: var(--color-secondary);
+  color: var(--color-black);
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.05rem;
+  margin-bottom: 12px;
+}
+
+.journey-step h3 { margin: 0 0 8px; font-size: clamp(1.1rem, 2.4vw, 1.4rem); }
+
+.journey-step > p {
+  margin: 0 0 14px;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+
+.journey-points { margin: 0; padding-left: 20px; }
+.journey-points li {
+  color: var(--color-text-secondary);
+  font-size: 0.9rem;
+  margin-bottom: 5px;
+}
+
+.journey-footnote { margin-top: 28px; }
+
+/* Below this the sticky illustration would take the whole screen and the
+   steps would scroll behind it, so it stops sticking and simply leads. */
+@media (max-width: 860px) {
+  .journey-grid { grid-template-columns: 1fr; }
+
+  .journey-stage-inner {
+    position: static;
+    max-width: 300px;
+    margin-inline: auto;
+  }
+}
+
+/* Motion is the enhancement, never the information. */
+@media (prefers-reduced-motion: reduce) {
+  .jr-station,
+  .jr-paper,
+  .journey-step { transition: none; }
+}
