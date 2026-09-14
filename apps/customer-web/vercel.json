@@ -1,47 +1,27 @@
 {
-  "cleanUrls": true,
-  "trailingSlash": false,
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "outputDirectory": "public",
-  "rewrites": [
-    {
-      "source": "/admin",
-      "destination": "/admin.html"
-    },
-    {
-      "source": "/register",
-      "destination": "/register.html"
-    },
-    {
-      "source": "/registration",
-      "destination": "/register.html"
-    },
-    {
-      "source": "/dashboard",
-      "destination": "/dashboard.html"
-    },
-    {
-      "source": "/print",
-      "destination": "/print.html"
-    },
-    {
-      "source": "/p/:printerId",
-      "destination": "/print.html"
-    },
-    {
-      "source": "/privacy",
-      "destination": "/privacy.html"
-    },
-    {
-      "source": "/terms",
-      "destination": "/terms.html"
-    },
-    {
-      "source": "/refund",
-      "destination": "/refund.html"
-    },
-    {
-      "source": "/example",
-      "destination": "/example.html"
-    }
+  "routes": [
+    { "src": "/(.+)/$", "status": 308, "headers": { "Location": "/$1" } },
+
+    { "src": "/index\\.html", "status": 308, "headers": { "Location": "/" } },
+    { "src": "/(.+)\\.html", "status": 308, "headers": { "Location": "/$1" } },
+
+    { "src": "/", "dest": "/index.html" },
+    { "src": "/admin", "dest": "/admin.html" },
+    { "src": "/register", "dest": "/register.html" },
+    { "src": "/registration", "dest": "/register.html" },
+    { "src": "/dashboard", "dest": "/dashboard.html" },
+    { "src": "/print", "dest": "/print.html" },
+    { "src": "/p/[^/]+", "dest": "/print.html" },
+    { "src": "/privacy", "dest": "/privacy.html" },
+    { "src": "/terms", "dest": "/terms.html" },
+    { "src": "/refund", "dest": "/refund.html" },
+    { "src": "/example", "dest": "/example.html" },
+    { "src": "/404", "dest": "/404.html" },
+
+    { "handle": "filesystem" },
+
+    { "src": "/.*", "status": 404, "dest": "/404.html" }
   ]
 }
