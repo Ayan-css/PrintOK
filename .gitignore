@@ -82,3 +82,6 @@ taskFyou.prd
 printCatalyst/
 docs/competitor-print-catalyst.md
 docs/plan-match-and-exceed-print-catalyst.md
+
+# Agent build output staged for the installer.
+agent/dist/

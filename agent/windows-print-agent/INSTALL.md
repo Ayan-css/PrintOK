@@ -1,7 +1,97 @@
-# PrintOk Windows Print Agent — Setup
+# PrintOk Print Agent — Setup
 
-The agent connects your shop PC to PrintOk and prints customer jobs automatically.
-It is self-contained: you do **not** need to install .NET first.
+The agent connects your shop PC to PrintOk and prints customer jobs
+automatically. It is self-contained: you do **not** need to install .NET first.
+
+There are two ways to run it. **Almost every shop wants the first.**
+
+| | Desktop agent | Console agent |
+|---|---|---|
+| Download | `PrintOkAgentSetup-x.y.z.exe` | `PrintAgent-win-x64.zip` |
+| Looks like | A tray icon near the clock | A black terminal window |
+| Starts with Windows | Yes, automatically | Only if you arrange it |
+| If it stops | Restarts itself | Stays stopped |
+| Closing the window | Keeps printing | **Stops printing** |
+| Pairing | A dialog in the window | A command line argument |
+| Best for | A shop counter | Servers, scripted installs |
+
+---
+
+# The desktop agent (recommended)
+
+## 1. Install
+
+Run `PrintOkAgentSetup-x.y.z.exe`. It installs for your Windows user only, so
+there is no administrator prompt.
+
+Leave **Start PrintOk automatically when this PC starts** ticked. That registers
+a Windows task which starts the agent when you sign in and restarts it if it
+ever stops.
+
+> Windows may warn that the publisher is unknown. That is because the installer
+> is not yet code-signed; see *Signing* at the bottom of this file.
+
+## 2. Pair this PC
+
+The window opens by itself the first time, because a new install has no
+credential yet.
+
+1. Open your PrintOk dashboard and go to the **QR Poster & Agent** tab.
+2. Click **Pair New Agent** to get a code like `K7MP-3QRT`. It is single use and
+   expires in 15 minutes.
+3. In the agent window, open **This PC** and click **Pair this PC…**, then type
+   the code.
+
+The dialog shows the server it is about to contact. If pairing fails it tells
+you which of two things happened — the server rejected the code, or it could not
+be reached at all. Those need opposite fixes, so it never tells you to fetch a
+fresh code when the code was never sent.
+
+Pairing gives this machine its own credential, so you can revoke one PC from the
+dashboard without disturbing any others. The token is encrypted with Windows
+DPAPI under your user account in `%LOCALAPPDATA%\PrintOk\credentials.dat`, and
+is never written to `appsettings.json` — so that file stays safe to screenshot
+for support.
+
+> The credential is tied to the Windows user account that paired. If you later
+> sign in as a different user, pair again.
+
+## 3. Day to day
+
+Once paired, **you never need to open it**. It starts with Windows, sits in the
+tray, and prints.
+
+The tray icon carries a coloured dot:
+
+| Dot | Meaning |
+|---|---|
+| Green | Connected and printing |
+| Amber | Connected, but live updates are down — jobs still arrive, slightly slower |
+| Amber, "Not paired" | No credential; open the window and pair |
+| Red | Cannot reach PrintOk. **Nothing will print.** |
+
+Windows shows a notification when it goes offline and again when it recovers, so
+a shop finds out from the machine rather than from a customer.
+
+**Double-click the icon** to open the window:
+
+- **Status** — connection, last contact, and jobs printed this session
+- **Printers** — every printer Windows can see, which is the default, and
+  whether each supports colour and double-sided
+- **This PC** — device, printer, shop and credential expiry; pair or re-pair
+- **Settings** — start-with-Windows, which printer to print to, server address
+- **Logs** — the recent log, with a button to copy it for a support request
+
+**Closing the window does not stop the agent.** It returns to the tray and keeps
+printing. To actually stop it, use **Quit** on the tray menu — it asks first,
+because quitting takes the shop offline.
+
+---
+
+# The console agent
+
+The original headless build. Use it for a server, an unattended install, or when
+you want the agent under your own process supervision.
 
 ## 1. Extract
 
@@ -12,28 +102,16 @@ If you downloaded only `WindowsPrintAgent.exe`, that is fine — it knows the
 PrintOk cloud address on its own. `appsettings.json` is only needed to point the
 agent somewhere else, or to name a specific printer.
 
-## 2. Pair this PC (recommended)
-
-Pairing gives this machine its own credential, so you can revoke one PC from the
-dashboard without disturbing any of your other machines.
-
-1. Open your PrintOk dashboard and go to the **QR Poster & Agent** tab.
-2. Click **Pair New Agent** to get a code like `K7MP-3QRT`. It is single use and
-   expires in 15 minutes.
-3. Run the agent once with the code:
+## 2. Pair this PC
 
 ```
 WindowsPrintAgent.exe --PairingCode=K7MP-3QRT
 ```
 
-The agent stores its device token encrypted with Windows DPAPI under your user
-account, in `%LOCALAPPDATA%\PrintOk\credentials.dat`. The token is never written
-to `appsettings.json`, so sharing that file or a screenshot of it is harmless.
+From then on, run `WindowsPrintAgent.exe` with no arguments.
 
-From then on, just run `WindowsPrintAgent.exe` with no arguments.
-
-> The credential is tied to the Windows user account that paired. If you later run
-> the agent as a different user, pair again.
+**The window must stay open.** Closing it stops the agent and the shop goes
+offline — which is the main reason the desktop agent exists.
 
 ### Alternative: settings file (legacy)
 
@@ -59,7 +137,7 @@ Double-click `WindowsPrintAgent.exe`. A console window opens and should log:
 
 ```
   ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-  ┃ PrintOk · print agent                                1.2.1 ┃
+  ┃ PrintOk · print agent                                1.3.0 ┃
   ┃ Windows · X64                                              ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
@@ -111,8 +189,10 @@ link.
 
 ## Start automatically on boot
 
-Press `Win+R`, type `shell:startup`, and drop a shortcut to
-`WindowsPrintAgent.exe` into the folder that opens.
+The desktop agent does this for you. For the console agent, press `Win+R`, type
+`shell:startup`, and drop a shortcut to `WindowsPrintAgent.exe` into the folder
+that opens. Note that this only starts it at sign-in; nothing restarts it if it
+crashes.
 
 ## Troubleshooting
 
@@ -224,3 +304,16 @@ The console styling matches the dashboard's palette and job-state badges, and
 switches itself off when it would not render — redirected output, `NO_COLOR`,
 `TERM=dumb`, or a Windows console that will not enable virtual terminal
 processing. The log file never contains escape codes.
+
+---
+
+## Signing
+
+The installer and both executables are currently unsigned, so Windows
+SmartScreen shows *"Windows protected your PC"* and the publisher reads as
+unknown. A shop owner has to click **More info → Run anyway**, which is exactly
+the habit security training tells them not to form.
+
+Before this is handed to shops at any scale it needs an authenticode
+certificate, and the CI publish steps need a signing step added after each
+`dotnet publish` and after Inno Setup produces the installer.

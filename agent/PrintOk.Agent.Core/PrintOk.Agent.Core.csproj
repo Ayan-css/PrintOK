@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Everything the agent actually does: pairing, credential storage, job
+       polling, printing, telemetry. No user interface of any kind.
+
+       Deliberately plain net8.0 with no Windows-specific target, because both
+       hosts build on top of it:
+
+         windows-print-agent   console, runs on Windows, Linux and macOS
+         PrintOk.Agent.Tray    net8.0-windows, the WinForms desktop agent
+
+       If this project ever gains a WinForms or WPF reference, the Linux build
+       dies with it - which is the whole reason the split exists. -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>PrintOk.WindowsPrintAgent</RootNamespace>
+    <AssemblyName>PrintOk.Agent.Core</AssemblyName>
+    <Product>PrintOk Print Agent Core</Product>
+    <Company>PrintOk</Company>
+    <Version>1.3.0</Version>
+    <!-- No symbols in the shipped folder: the published agent is a single file
+         and a stray .pdb beside it is confusing rather than useful. -->
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.0" />
+    <!-- DPAPI, for encrypting the device token at rest on Windows (PRD 7.2). -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>

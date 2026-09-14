@@ -16,11 +16,18 @@ public class PrintAgentWorker : BackgroundService
     private readonly string _apiKey;
     private readonly int _pollIntervalMs;
 
+    /// <summary>
+    /// Shared status, so a host with a window can show what this loop is doing.
+    /// Optional: the console host passes none and the worker behaves as before.
+    /// </summary>
+    private readonly AgentStatus? _status;
+
     public PrintAgentWorker(
         ILogger<PrintAgentWorker> logger,
         IHttpClientFactory httpClientFactory,
         IPrinterSpooler spooler,
-        AgentSettings settings)
+        AgentSettings settings,
+        AgentStatus? status = null)
     {
         _logger = logger;
         _httpClient = httpClientFactory.CreateClient("PrintOkApi");
@@ -28,6 +35,7 @@ public class PrintAgentWorker : BackgroundService
         _settings = settings;
         _apiKey = settings.ApiKey;
         _pollIntervalMs = settings.PollIntervalMs;
+        _status = status;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -48,10 +56,12 @@ public class PrintAgentWorker : BackgroundService
             }
             catch (HttpRequestException ex)
             {
+                _status?.SetState(ConnectionState.Offline, ex.Message);
                 _logger.LogWarning("Network interruption while contacting Cloud API: {Message}. Reconnecting in {Interval}ms...", ex.Message, _pollIntervalMs);
             }
             catch (Exception ex)
             {
+                _status?.SetState(ConnectionState.Offline, ex.Message);
                 _logger.LogError(ex, "Unexpected error in Print Agent loop.");
             }
 
@@ -74,10 +84,16 @@ public class PrintAgentWorker : BackgroundService
                 using var response = await _httpClient.SendAsync(request, cancellationToken);
                 if (response.IsSuccessStatusCode)
                 {
+                    _status?.RecordHeartbeat();
+                    _status?.SetState(ConnectionState.Connected);
                     _logger.LogDebug("Heartbeat telemetry successfully sent to Cloud API.");
                 }
                 else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
                 {
+                    _status?.SetState(ConnectionState.NotPaired,
+                        _settings.HasDeviceToken
+                            ? "This PC's credential was rejected. It may have been revoked from the dashboard."
+                            : "The agent API key was rejected.");
                     _logger.LogError(
                         _settings.HasDeviceToken
                             ? "Cloud API rejected this device's token. It may have been revoked from the dashboard. Re-pair with a new pairing code."
@@ -86,6 +102,7 @@ public class PrintAgentWorker : BackgroundService
             }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
+                _status?.SetState(ConnectionState.Offline, ex.Message);
                 _logger.LogWarning("Heartbeat send failed: {Message}", ex.Message);
             }
 
@@ -115,6 +132,7 @@ public class PrintAgentWorker : BackgroundService
                 _logger.LogInformation("Connecting WebSocket push channel to {Uri}...", wsUri);
                 await ws.ConnectAsync(wsUri, cancellationToken);
                 _logger.LogInformation("WebSocket push channel connected.");
+                _status?.RecordPush(true);
                 backoffMs = 1000; // Reset backoff on successful connection
 
                 var buffer = new byte[4096];
@@ -144,6 +162,7 @@ public class PrintAgentWorker : BackgroundService
             }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
+                _status?.RecordPush(false);
                 _logger.LogWarning("WebSocket push connection lost ({Message}). Reconnecting in {Backoff}ms...", ex.Message, backoffMs);
                 await Task.Delay(backoffMs, cancellationToken);
                 backoffMs = Math.Min(backoffMs * 2, 30000); // Max backoff 30 seconds
@@ -219,10 +238,12 @@ public class PrintAgentWorker : BackgroundService
             if (printSuccess)
             {
                 _logger.LogInformation("Job '{JobId}' printed successfully.", job.Id);
+                _status?.RecordJob(printed: true);
                 await UpdateJobStatusAsync(job.Id, "Completed", cancellationToken: cancellationToken);
             }
             else
             {
+                _status?.RecordJob(printed: false);
                 await UpdateJobStatusAsync(job.Id, "Failed", "Spooler failed to print document.", cancellationToken);
             }
         }
