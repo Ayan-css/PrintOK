@@ -65,65 +65,58 @@ nothing is exposed on the shop's network.
 Three deployment targets, one database, and a shop PC that only ever dials out.
 
 ```mermaid
-graph TD
-    subgraph Customer["Customer — phone browser"]
-        QR[Scan QR poster] --> PRINT["/p/:printerId — print.html"]
-        PRINT --> UPLOAD[Upload document]
-        UPLOAD --> QUOTE[Price quote from shop rate card]
-        QUOTE --> PAY[Razorpay Checkout]
+flowchart TD
+    CUST["Customer phone"]
+    OWNER["Shop owner"]
+    RZP["Razorpay"]
+
+    subgraph VERCEL["Vercel — static multi-page site"]
+        PRINT["/p/:printerId — upload and pay"]
+        DASH["/dashboard — merchant console"]
+        NF["404.html — real 404, no SPA fallback"]
     end
 
-    subgraph Merchant["Merchant — desktop browser"]
-        LOGIN["/dashboard — merchant session"] --> QUEUE[Job queue]
-        LOGIN --> RATES[Rate card]
-        LOGIN --> AGENTTAB[QR poster and agent]
-    end
-
-    subgraph Vercel["Vercel — static multi-page site"]
-        PRINT
-        LOGIN
-        NOTFOUND["404.html — real 404, no SPA fallback"]
-    end
-
-    subgraph Render["Render — Express + TypeScript API"]
-        API[REST API]
+    subgraph RENDER["Render — Express and TypeScript API"]
+        API["REST API"]
         WS["WebSocket /ws/agent"]
         HOOK["POST /api/payments/webhook"]
     end
 
-    subgraph Supabase["Supabase"]
-        PG[(PostgreSQL — Prisma)]
-        S3[(S3 object storage — documents)]
+    subgraph SUPABASE["Supabase"]
+        PG[("PostgreSQL via Prisma")]
+        S3[("Object storage — documents")]
     end
 
-    subgraph Shop["Shop PC — .NET 8 agent, outbound only"]
-        AGENT[PrintAgentWorker]
-        SPOOL{Host OS}
-        WINSPOOL[WindowsPrinterSpooler]
-        CUPS[CupsPrinterSpooler]
-        PRINTER[[Physical printer]]
+    subgraph SHOP["Shop PC — .NET 8 agent, outbound only"]
+        AGENT["Print agent"]
+        SPOOL{"Host OS"}
+        WINS["WindowsPrinterSpooler"]
+        CUPS["CupsPrinterSpooler"]
+        PRINTER["Physical printer"]
     end
 
-    PAY --> API
-    Razorpay[[Razorpay]] -->|payment.captured| HOOK
-    PAY -->|checkout| Razorpay
-    QUEUE --> API
-    RATES --> API
-    AGENTTAB --> API
+    CUST -->|"scan QR poster"| PRINT
+    OWNER --> DASH
+
+    PRINT -->|"create job"| API
+    PRINT -->|"checkout"| RZP
+    RZP -->|"payment.captured"| HOOK
+    DASH -->|"queue, rates, pairing"| API
 
     API --> PG
     API --> S3
     HOOK --> PG
 
-    AGENT -->|poll every 3s| API
-    WS -.->|JOB_QUEUED push| AGENT
-    AGENT -->|download document| S3
+    AGENT -->|"poll every 3s"| API
+    WS -.->|"JOB_QUEUED push"| AGENT
+    AGENT -->|"download document"| S3
+    AGENT -->|"status and heartbeat"| API
+
     AGENT --> SPOOL
-    SPOOL -->|Windows| WINSPOOL
-    SPOOL -->|Linux / macOS| CUPS
-    WINSPOOL --> PRINTER
+    SPOOL -->|"Windows"| WINS
+    SPOOL -->|"Linux or macOS"| CUPS
+    WINS --> PRINTER
     CUPS --> PRINTER
-    AGENT -->|status + heartbeat| API
 ```
 
 ### Order lifecycle
@@ -133,139 +126,136 @@ transition tables — a paid job is not a printed job, and neither is ever deriv
 from the other. Every transition is appended to `JobEvent`.
 
 ```mermaid
-graph TD
-    A[Customer uploads document] --> B[Server extracts page count]
-    B --> C[Price computed from shop rate card]
-    C --> D[Job created — priceSnapshot and printConfig frozen]
-    D --> E{Payment route}
+flowchart TD
+    A["Customer uploads document"] --> B["Server extracts page count"]
+    B --> C["Price computed from the shop rate card"]
+    C --> D["Job created — price and config frozen"]
+    D --> E{"Payment route"}
 
-    E -->|Online| F[Razorpay order created]
-    E -->|Cash at counter| G[PaymentState: PendingCash]
+    E -->|"online"| F["Razorpay order created"]
+    E -->|"cash at counter"| G["PaymentState PendingCash"]
 
-    F --> H{Webhook event}
-    H -->|payment.captured or order.paid| I[PaymentState: Paid]
-    H -->|payment.failed| J[PaymentState: Failed — never printed]
+    F --> H{"Webhook event"}
+    H -->|"payment.captured or order.paid"| I["PaymentState Paid"]
+    H -->|"payment.failed"| J["PaymentState Failed — never printed"]
 
-    I --> K[PrintState: Queued]
-    G -->|Merchant confirms| K
+    I --> K["PrintState Queued"]
+    G -->|"merchant confirms"| K
 
-    K --> L[Agent claims job — assignJobToDevice]
-    L --> M[PrintState: Assigned → Downloading]
-    M --> N{Spool to printer}
+    K --> L["Agent claims the job"]
+    L --> M["PrintState Assigned then Downloading"]
+    M --> N{"Spool to printer"}
 
-    N -->|Success| O[PrintState: Printed → Completed]
-    N -->|Hard failure| P[PrintState: Failed]
-    N -->|Ambiguous| Q[RequiresShopAction — never auto-reprint]
+    N -->|"success"| O["PrintState Printed then Completed"]
+    N -->|"hard failure"| P["PrintState Failed"]
+    N -->|"ambiguous"| Q["RequiresShopAction — never auto-reprint"]
 
-    O --> R[Document purged, deletion recorded]
-    P --> S{Merchant decision}
+    O --> R["Document purged, deletion recorded"]
+    P --> S{"Merchant decision"}
     Q --> S
-    S -->|Decline| T[Razorpay refund issued]
+    S -->|"decline"| T["Razorpay refund issued"]
     T --> R
 
-    I --> U[Route transfer — shop's share after fees]
+    I --> U["Route transfer — the shop share, after fees"]
 ```
 
 ### Agent credential lifecycle
 
-The shop PC never holds the printer's shared key. It earns its own revocable,
+The shop PC never holds the printer shared key. It earns its own revocable,
 device-scoped token, and the server stores only that token's SHA-256.
 
 ```mermaid
-graph TD
-    A[Merchant signs in to dashboard] --> B{Authorised for this printer?}
-    B -->|No — another shop's printer| C[404, so ids cannot be probed]
-    B -->|Yes| D[POST /printers/:id/pairing-code]
+flowchart TD
+    A["Merchant signs in to the dashboard"] --> B{"Authorised for this printer?"}
+    B -->|"no — another shop printer"| C["404, so ids cannot be probed"]
+    B -->|"yes"| D["POST /printers/:id/pairing-code"]
 
-    D --> E[Code: 8 chars, single use, 15 min TTL]
-    E --> F[Owner types code into agent]
-    F --> G[POST /api/agent/pair]
+    D --> E["Code: 8 characters, single use, 15 minute TTL"]
+    E --> F["Owner types the code into the agent"]
+    F --> G["POST /api/agent/pair"]
 
-    G --> H{consumePairingCode}
-    H -->|Unknown, expired or used| I[401 + PAIRING_REJECTED audit event]
-    H -->|Valid| J[Server derives printer and shop FROM THE CODE]
+    G --> H{"Redeem the code"}
+    H -->|"unknown, expired or used"| I["401 and a PAIRING_REJECTED audit event"]
+    H -->|"valid"| J["Server derives printer and shop from the code"]
 
-    J --> K[Device token issued: dvt_ + 32 random bytes]
-    K --> L[(Server stores SHA-256 only)]
-    K --> M[Agent stores token — DPAPI on Windows, 0600 file elsewhere]
+    J --> K["Device token issued"]
+    K --> L[("Server stores the SHA-256 only")]
+    K --> M["Agent stores it — DPAPI on Windows, 0600 file elsewhere"]
 
-    M --> N[Authenticated calls: x-agent-device-token header]
-    N --> O{Device active?}
-    O -->|Revoked or expired| P[401 immediately]
-    O -->|Active| Q[Poll jobs, report status, heartbeat]
+    M --> N["Authenticated calls use the x-agent-device-token header"]
+    N --> O{"Device still active?"}
+    O -->|"revoked or expired"| P["401 immediately"]
+    O -->|"active"| Q["Poll jobs, report status, heartbeat"]
 
-    Q --> R{Job belongs to this printer?}
-    R -->|No| S[404 — cross-shop IDOR blocked]
-    R -->|Yes| T[Job proceeds]
+    Q --> R{"Does the job belong to this printer?"}
+    R -->|"no"| S["404 — cross-shop access blocked"]
+    R -->|"yes"| T["Job proceeds"]
 ```
 
 ### Agent config download
 
-The config file carries the printer's agent API key, and printer ids are public
-— they are on the QR poster. So the download is authorised per click, not by a
+The config file carries the printer agent API key, and printer ids are public —
+they are on the QR poster. So the download is authorised per click, never by a
 standing URL.
 
 ```mermaid
-graph TD
-    A[Merchant clicks Download appsettings.json] --> B[POST /printers/:id/agent-config-token]
-    B --> C{Merchant session valid?}
-    C -->|No| D[401]
-    C -->|Yes| E{Printer belongs to this shop?}
-    E -->|No| F[404 — no enumeration oracle]
-    E -->|Yes| G[Mint token: HMAC-SHA256, 2 min TTL, printer-bound, jti]
+flowchart TD
+    A["Merchant clicks Download appsettings.json"] --> B["POST /printers/:id/agent-config-token"]
+    B --> C{"Merchant session valid?"}
+    C -->|"no"| D["401"]
+    C -->|"yes"| E{"Printer belongs to this shop?"}
+    E -->|"no"| F["404 — no enumeration oracle"]
+    E -->|"yes"| G["Mint token: HMAC-SHA256, 2 minute TTL, printer-bound"]
 
-    G --> H[Browser navigates to /agent-config?token=...]
-    H --> I{Signature valid?}
-    I -->|No| J[401]
-    I -->|Yes| K{Expired?}
-    K -->|Yes| J
-    K -->|No| L{claims.printerId matches URL?}
-    L -->|No| J
-    L -->|Yes| M{jti already burned?}
-    M -->|Yes| N[401 — replay refused]
-    M -->|No| O[Burn jti, audit AGENT_CONFIG_DOWNLOADED]
-    O --> P[appsettings.json returned]
+    G --> H["Browser navigates to the download URL"]
+    H --> I{"Signature valid?"}
+    I -->|"no"| J["401"]
+    I -->|"yes"| K{"Expired?"}
+    K -->|"yes"| J
+    K -->|"no"| L{"Token printer matches the URL?"}
+    L -->|"no"| J
+    L -->|"yes"| M{"Already used once?"}
+    M -->|"yes"| N["401 — replay refused"]
+    M -->|"no"| O["Burn the token, audit the download"]
+    O --> P["appsettings.json returned"]
 ```
 
 ### Request routing
 
-The frontend is a **multi-page static site**, not an SPA. There is no client-side
-router, so there must be no catch-all rewrite to `index.html`: an unmatched path
-has to reach `404.html` with a real 404 status.
+The frontend is a **multi-page static site**, not an SPA. There is no
+client-side router, so there must be no catch-all rewrite to `index.html`: an
+unmatched path has to reach `404.html` with a real 404 status.
 
 ```mermaid
-graph TD
-    A[Incoming request] --> B{Path}
-    B -->|/ or /dashboard or /print or /privacy...| C[Its own .html file — 200]
-    B -->|/styles.css, /app.js, images| D[Static asset — 200]
-    B -->|/api/*| E[Separate origin: the Render API]
-    B -->|Anything else| F[404.html — status 404]
+flowchart TD
+    A["Incoming request"] --> B{"Path"}
+    B -->|"/ or /dashboard or /print or /privacy"| C["Its own .html file — 200"]
+    B -->|"/styles.css, /app.js, images"| D["Static asset — 200"]
+    B -->|"/api/*"| E["Separate origin: the Render API"]
+    B -->|"anything else"| F["404.html — status 404"]
 
-    E --> G{Known API route?}
-    G -->|Yes| H[JSON response]
-    G -->|No| I[Real API 404 as JSON, never HTML]
-
-    F -.->|Must NOT happen| J[index.html with 200 — soft 404]
+    E --> G{"Known API route?"}
+    G -->|"yes"| H["JSON response"]
+    G -->|"no"| I["Real API 404 as JSON, never HTML"]
 ```
 
 **Rules for the two `vercel.json` files.** `vercel.json` at the repo root applies
-when the Vercel project's Root Directory is the repository root;
+when the Vercel project Root Directory is the repository root;
 `apps/customer-web/vercel.json` applies when it is that folder. Only one is ever
-live, nobody can tell which from the code, so **keep them in step**.
+live — currently the second, since the build runs `@printok/customer-web` — so
+**keep them in step**.
 
 - **No `_comment` or any other invented key.** Vercel validates `vercel.json`
   against a strict schema and fails the deploy with *"should NOT have additional
-  property"*. Only real properties are allowed (`cleanUrls`, `trailingSlash`,
-  `outputDirectory`, `rewrites`, `redirects`, `headers`, `routes`, …), which is
-  why this note lives here and not in the file.
-- **Never declare `routes`.** Vercel rejects `routes` alongside
-  `cleanUrls`/`trailingSlash`/`rewrites`, and an earlier attempt to mix them
-  returned 403 on every path in production.
-- **Never add a catch-all rewrite to `index.html`.** This is a multi-page static
-  site, not an SPA. An unmatched path must fall through to `404.html` with a real
-  404 status. If production serves the landing page for an unknown URL, the
-  catch-all is a project-level **Rewrite in the Vercel dashboard** — it is not in
-  this repo — and must be removed there.
+  property"*. Only real properties are allowed, which is why this note lives here
+  and not in the file.
+- **`routes` may not be combined with `cleanUrls`, `trailingSlash` or
+  `rewrites`.** Mixing them returned 403 on every path in production once.
+- **A `rewrite` cannot set a status code.** Only `routes` can, via
+  `{ "status": 404 }` — which is the only way to serve a real 404 here.
+- **Never add a catch-all rewrite to `index.html`.** If production serves the
+  landing page for an unknown URL, the catch-all is a project-level rewrite in
+  the Vercel dashboard, not in this repo.
 
 Check it with:
 
