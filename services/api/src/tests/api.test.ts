@@ -1311,6 +1311,82 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(foreign.status, 404, 'a job outside this printer must not be reachable');
   });
 
+  await t.test('47. CORS allows the frontends and refuses everyone else', async () => {
+    // The API answered Access-Control-Allow-Origin: * to every caller, so any
+    // page on the internet could script requests against it from a visitor's
+    // browser. These pin the allowlist, and more importantly pin what must
+    // still get through.
+    const check = async (origin?: string) => {
+      const res = await fetch(`${baseUrl}/health`, {
+        headers: origin ? { Origin: origin } : {},
+      });
+      return res.headers.get('access-control-allow-origin');
+    };
+
+    // The live frontends.
+    assert.strictEqual(await check('https://printok.vercel.app'), 'https://printok.vercel.app');
+    // Kept because printed QR posters still encode it.
+    assert.strictEqual(
+      await check('https://print-ok-customer-web.vercel.app'),
+      'https://print-ok-customer-web.vercel.app'
+    );
+
+    // Vercel preview deployments have generated hostnames and cannot be listed.
+    assert.strictEqual(
+      await check('https://print-ok-customer-pcdmqv16f-ayan-s-rcf.vercel.app'),
+      'https://print-ok-customer-pcdmqv16f-ayan-s-rcf.vercel.app'
+    );
+
+    // Local development, on whatever port.
+    assert.strictEqual(await check('http://localhost:3000'), 'http://localhost:3000');
+
+    // Anyone else gets no header, so the browser withholds the response.
+    assert.strictEqual(await check('https://evil.example.com'), null);
+    // Including a lookalike that merely contains an allowed host.
+    assert.strictEqual(await check('https://printok.vercel.app.evil.com'), null);
+    assert.strictEqual(await check('https://notprintok.vercel.app'), null);
+  });
+
+  await t.test('48. A blocked origin is refused, not broken', async () => {
+    // Rejecting by passing an Error to the cors callback answers 500, which
+    // makes a disallowed origin look like an API outage and sends people
+    // debugging the wrong thing. The request must still succeed.
+    const res = await fetch(`${baseUrl}/health`, {
+      headers: { Origin: 'https://evil.example.com' },
+    });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.headers.get('access-control-allow-origin'), null);
+  });
+
+  await t.test('49. Callers with no Origin are never blocked', async () => {
+    // The print agent, Razorpay's webhooks and Render's health checks all send
+    // no Origin header. CORS does not apply to them, and refusing them would
+    // stop every shop in the network printing.
+    const res = await fetch(`${baseUrl}/health`);
+    assert.strictEqual(res.status, 200);
+
+    // The agent's own authenticated call must work with no Origin too.
+    const poll = await fetch(`${baseUrl}/api/agent/jobs/pending`, {
+      headers: { 'x-agent-api-key': agentApiKey },
+    });
+    assert.strictEqual(poll.status, 200, 'the agent must not be blocked by CORS');
+  });
+
+  await t.test('50. ALLOWED_ORIGINS adds an origin without a code change', async () => {
+    // A new frontend domain must be allowable without waiting for a deploy.
+    const previous = process.env.ALLOWED_ORIGINS;
+    process.env.ALLOWED_ORIGINS = 'https://staging.printok.in, https://printok.in';
+    try {
+      const res = await fetch(`${baseUrl}/health`, {
+        headers: { Origin: 'https://printok.in' },
+      });
+      assert.strictEqual(res.headers.get('access-control-allow-origin'), 'https://printok.in');
+    } finally {
+      if (previous === undefined) delete process.env.ALLOWED_ORIGINS;
+      else process.env.ALLOWED_ORIGINS = previous;
+    }
+  });
+
   await t.test('28. A brand new shop can find itself from its session alone', async () => {
     // The dashboard has no shop id of its own when a merchant signs in: not in
     // the URL, and nothing in localStorage on a fresh browser. It asks this

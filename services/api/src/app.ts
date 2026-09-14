@@ -10,6 +10,7 @@ import { RazorpayService, MIN_ORDER_AMOUNT_PAISE } from './razorpayService';
 import { RazorpayRouteService } from './razorpayRoute';
 import { parsePrintState } from './jobStateMachine';
 import { classifyFailure } from './jobRecovery';
+import { corsOptions } from './corsPolicy';
 import {
   issueConfigDownloadToken,
   verifyConfigDownloadToken,
@@ -119,7 +120,9 @@ export function createApp(
   const razorpayService = new RazorpayService();
   const routeService = new RazorpayRouteService();
 
-  app.use(cors());
+  // An allowlist, not a wildcard. Requests with no Origin (the print agent,
+  // Razorpay webhooks, health checks) are unaffected — see corsPolicy.ts.
+  app.use(cors(corsOptions()));
   app.use(express.json({
     limit: '50mb',
     // Webhook signatures are computed over the exact bytes received; a

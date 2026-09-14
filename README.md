@@ -24,6 +24,10 @@ against the PRD.
 | Admin | `/admin` | Platform operator console |
 | API | `prinok-api.onrender.com` | Backend |
 
+The site answers on `printok.vercel.app` and, because printed QR posters encode
+it, also on the older `print-ok-customer-web.vercel.app`. Both are live; new QR
+posters use whichever `PUBLIC_WEB_URL` names.
+
 Existing QR posters encode `/?printer=<id>`; the root forwards those to `/print`
 before rendering, so printed posters keep working.
 
@@ -260,7 +264,7 @@ live — currently the second, since the build runs `@printok/customer-web` — 
 Check it with:
 
 ```bash
-curl -o /dev/null -w "%{http_code}\n" https://print-ok-customer-web.vercel.app/nope   # expect 404
+curl -o /dev/null -w "%{http_code}\n" https://printok.vercel.app/nope   # expect 404
 ```
 
 ---

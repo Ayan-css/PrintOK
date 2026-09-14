@@ -52,6 +52,13 @@ services:
       # without it, rather than printing a code that could never be scanned.
       - key: PUBLIC_WEB_URL
         sync: false
+      # Extra browser origins allowed to call this API, comma separated.
+      # Optional: printok.vercel.app, the older print-ok-customer-web.vercel.app
+      # that printed QR posters still encode, this project's Vercel previews and
+      # localhost are allowed without it. Set this when a new frontend domain
+      # needs to work before a deploy can ship — see services/api/src/corsPolicy.ts.
+      - key: ALLOWED_ORIGINS
+        sync: false
       # Set to "true" only once Razorpay has activated Route on the account.
       # Until then the API keeps taking payments through the single-account
       # flow, so leaving this unset is safe.
