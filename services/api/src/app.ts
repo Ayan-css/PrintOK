@@ -10,6 +10,7 @@ import { RazorpayService, MIN_ORDER_AMOUNT_PAISE } from './razorpayService';
 import { RazorpayRouteService } from './razorpayRoute';
 import { parsePrintState } from './jobStateMachine';
 import { classifyFailure } from './jobRecovery';
+import { buildDefaultRateCard } from './pricing';
 import { corsOptions } from './corsPolicy';
 import {
   issueConfigDownloadToken,
@@ -20,7 +21,8 @@ import {
 import {
   PLAN_CATALOGUE, PLAN_TIERS, getPlan,
   PAYMENT_GATEWAY_FEE_BPS, PAYMENT_GATEWAY_LABEL, calculateShopNetCents,
-  Printer,
+  Printer, ShopPortalConfig, CUSTOMER_NAME_MAX, CUSTOMER_PHONE_MAX,
+  ShopRate, ShopRateCard,
 } from '@printok/shared-types';
 import {
   hashPassword, verifyPassword, validatePasswordStrength,
@@ -262,6 +264,46 @@ export function createApp(
     }
 
     return { merchant, printer };
+  }
+
+  /**
+   * Decides what customer identity, if any, is stored with a job.
+   *
+   * The shop's configuration is the authority, never the request. A caller who
+   * posts a name to a shop that does not collect names gets it dropped rather
+   * than stored: that shop's customers were told nothing of the sort is kept,
+   * and an API that quietly honours the field would make the notice false.
+   *
+   * Returns the values to store, or the message to refuse with.
+   */
+  function readCustomerIdentity(
+    portal: ShopPortalConfig,
+    submitted: { customerName?: unknown; customerPhone?: unknown }
+  ): { value: { customerName?: string; customerPhone?: string } } | { error: string } {
+    const clean = (raw: unknown, max: number): string | undefined => {
+      if (raw === undefined || raw === null) return undefined;
+      // Collapse runs of whitespace so a name pasted across two lines stores flat.
+      const text = String(raw).replace(/\s+/g, ' ').trim();
+      return text ? text.slice(0, max) : undefined;
+    };
+
+    const name = portal.collectCustomerName ? clean(submitted.customerName, CUSTOMER_NAME_MAX) : undefined;
+    const phone = portal.collectCustomerPhone ? clean(submitted.customerPhone, CUSTOMER_PHONE_MAX) : undefined;
+
+    if (portal.collectCustomerName && portal.customerNameRequired && !name) {
+      return { error: 'This shop needs your name for the order.' };
+    }
+    if (portal.collectCustomerPhone && portal.customerPhoneRequired && !phone) {
+      return { error: 'This shop needs your mobile number for the order.' };
+    }
+
+    // Deliberately permissive: enough to reject an obvious mistake, not enough
+    // to argue with a customer about the shape of their own phone number.
+    if (phone && !/^[0-9+][0-9 ()+-]{5,}$/.test(phone)) {
+      return { error: 'That mobile number does not look right.' };
+    }
+
+    return { value: { customerName: name, customerPhone: phone } };
   }
 
   /**
@@ -512,6 +554,27 @@ export function createApp(
     try {
       const { shopId } = req.params;
       const updatedPricing = await storage.updateShopPricing(shopId, req.body || {});
+
+      // Write through to the grid, which is what jobs are actually priced from.
+      //
+      // Without this, a merchant editing the four flat rates would change a row
+      // nothing reads and see no effect on what customers are charged — the
+      // same silent no-op this endpoint already had once, when pricing came
+      // from hardcoded constants instead of the shop's card.
+      //
+      // Only the base rate of each cell is rewritten. Per-configuration
+      // discounts and the enabled flags are the grid editor's to own, and a
+      // merchant setting a flat rate has not asked to discard them.
+      const derived = buildDefaultRateCard(updatedPricing);
+      await storage.updateShopRateCard(shopId, {
+        rates: derived.rates.map((r) => ({
+          paperSize: r.paperSize,
+          isColor: r.isColor,
+          isDuplex: r.isDuplex,
+          perPageCents: r.perPageCents,
+        })) as ShopRate[],
+      });
+
       return res.json({ pricing: updatedPricing });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -521,6 +584,122 @@ export function createApp(
   /**
    * Get Shop Performance Stats & Analytics
    */
+  /**
+   * The shop's rate grid: one rate per paper size, colour mode and sided-ness,
+   * plus the two discount switches.
+   *
+   * Public, because the customer page quotes a price before anyone signs in.
+   * It carries rates and nothing else — no shop, owner or payout detail.
+   */
+  app.get('/api/shops/:shopId/rates', async (req: Request, res: Response) => {
+    try {
+      return res.json(await storage.getShopRateCard(req.params.shopId));
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/shops/:shopId/rates', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res, { requireOwner: true });
+    if (!merchant) return;
+
+    try {
+      const body = req.body || {};
+      const update: Partial<ShopRateCard> = {};
+
+      if (Array.isArray(body.rates)) {
+        const cleaned: ShopRate[] = [];
+        for (const raw of body.rates) {
+          if (!raw || typeof raw.paperSize !== 'string') continue;
+
+          // A rate is money. Reject anything that is not a whole, non-negative
+          // number of paise rather than coercing it into one — a NaN that
+          // becomes 0 is a shop giving printing away.
+          const money = (v: unknown, field: string): number | null | undefined => {
+            if (v === null || v === undefined || v === '') return null;
+            const n = Number(v);
+            if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+              throw new Error(`${field} must be a whole number of paise, or blank.`);
+            }
+            return n;
+          };
+
+          const perPage = money(raw.perPageCents, 'perPageCents');
+          if (perPage === null || perPage === undefined) {
+            throw new Error('Every configuration needs a per-page rate.');
+          }
+
+          cleaned.push({
+            paperSize: String(raw.paperSize),
+            isColor: !!raw.isColor,
+            isDuplex: !!raw.isDuplex,
+            perPageCents: perPage,
+            bulkPerPageCents: money(raw.bulkPerPageCents, 'bulkPerPageCents'),
+            additionalCopyPerPageCents: money(raw.additionalCopyPerPageCents, 'additionalCopyPerPageCents'),
+            enabled: raw.enabled === undefined ? true : !!raw.enabled,
+          });
+        }
+        update.rates = cleaned;
+      }
+
+      if (typeof body.bulkEnabled === 'boolean') update.bulkEnabled = body.bulkEnabled;
+      if (typeof body.additionalCopyEnabled === 'boolean') update.additionalCopyEnabled = body.additionalCopyEnabled;
+
+      if (body.bulkThresholdCents !== undefined) {
+        const t = Number(body.bulkThresholdCents);
+        if (!Number.isInteger(t) || t < 1) {
+          return res.status(400).json({ error: 'The discount threshold must be a whole number of paise, at least 1.' });
+        }
+        update.bulkThresholdCents = t;
+      }
+
+      return res.json(await storage.updateShopRateCard(req.params.shopId, update));
+    } catch (err: any) {
+      // Validation failures above are the merchant's to fix, not a server fault.
+      return res.status(400).json({ error: err.message });
+    }
+  });
+
+  /**
+   * What this shop's portal asks a customer for.
+   *
+   * Public, because the customer page must render the right fields before
+   * anyone has signed in. It exposes only booleans — no shop detail.
+   */
+  app.get('/api/shops/:shopId/portal-config', async (req: Request, res: Response) => {
+    try {
+      return res.json(await storage.getShopPortalConfig(req.params.shopId));
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/shops/:shopId/portal-config', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res);
+    if (!merchant) return;
+
+    try {
+      const body = req.body || {};
+      const bool = (v: unknown) => (typeof v === 'boolean' ? v : undefined);
+
+      const next: Partial<ShopPortalConfig> = {};
+      if (bool(body.collectCustomerName) !== undefined) next.collectCustomerName = body.collectCustomerName;
+      if (bool(body.customerNameRequired) !== undefined) next.customerNameRequired = body.customerNameRequired;
+      if (bool(body.collectCustomerPhone) !== undefined) next.collectCustomerPhone = body.collectCustomerPhone;
+      if (bool(body.customerPhoneRequired) !== undefined) next.customerPhoneRequired = body.customerPhoneRequired;
+
+      // Required without collected is unsatisfiable: the portal would never
+      // show the field, and every order would then be refused for missing it.
+      const merged = { ...(await storage.getShopPortalConfig(req.params.shopId)), ...next };
+      if (merged.customerNameRequired && !merged.collectCustomerName) next.customerNameRequired = false;
+      if (merged.customerPhoneRequired && !merged.collectCustomerPhone) next.customerPhoneRequired = false;
+
+      return res.json(await storage.updateShopPortalConfig(req.params.shopId, next));
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/shops/:shopId/stats', async (req: Request, res: Response) => {
     const merchant = await authenticateMerchant(req, res);
     if (!merchant) return;
@@ -1656,7 +1835,10 @@ export function createApp(
    */
   app.post('/api/print-jobs', async (req: Request, res: Response) => {
     try {
-      const { printerId, fileName, fileBase64, copies, isColor, isDuplex, paperSize } = req.body as CreatePrintJobDto;
+      const {
+        printerId, fileName, fileBase64, copies, isColor, isDuplex, paperSize,
+        customerName, customerPhone,
+      } = req.body as CreatePrintJobDto;
       const autoApprove = req.query.autoApprove !== 'false';
 
       if (!printerId || !fileName || !fileBase64) {
@@ -1666,6 +1848,18 @@ export function createApp(
       const printer = await storage.getPrinter(printerId);
       if (!printer) {
         return res.status(404).json({ error: 'Target printer not found.' });
+      }
+
+      // Customer identity, only if this shop asked for it.
+      //
+      // Read from the shop's config rather than trusted from the request: a
+      // caller must not be able to attach a name and phone to a job at a shop
+      // that never asked for one, because the privacy policy tells that shop's
+      // customers nothing of the sort is collected.
+      const portal = await storage.getShopPortalConfig(printer.shopId);
+      const identity = readCustomerIdentity(portal, { customerName, customerPhone });
+      if ('error' in identity) {
+        return res.status(400).json({ error: identity.error });
       }
 
       // Multi-format document inspection & server-side page count verification
@@ -1688,7 +1882,8 @@ export function createApp(
         !!isColor,
         autoApprove,
         !!isDuplex,
-        paperSize || 'A4'
+        paperSize || 'A4',
+        identity.value
       );
 
       // If job is immediately queued, push notification to active WebSocket agent

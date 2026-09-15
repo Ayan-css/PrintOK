@@ -64,6 +64,20 @@ export interface PriceSnapshot {
   totalPriceInCents: number;
   rateCard: MerchantPricingConfig;
   calculatedAt: string;
+
+  // --- Grid pricing ---
+  /** The cell used, so a dispute can be settled without guessing which applied. */
+  appliedRate?: ShopRate;
+  /** What the order would have cost at normal rates, before any discount. */
+  normalValueCents?: number;
+  /** Whether the order cleared the bulk threshold, and what it was at the time. */
+  bulkApplied?: boolean;
+  bulkThresholdCents?: number;
+  /** Rate charged for copy 1, and for copies 2+. */
+  firstCopyRateCents?: number;
+  additionalCopyRateCents?: number;
+  /** The whole rate card as it stood, so the quote is reproducible. */
+  rateCardSnapshot?: ShopRateCard;
 }
 
 /**
@@ -153,6 +167,62 @@ export interface PrinterTelemetry {
   paperStatus?: string;
 }
 
+/** One cell of the rate grid: what this exact configuration costs. */
+export interface ShopRate {
+  paperSize: string;
+  isColor: boolean;
+  isDuplex: boolean;
+  perPageCents: number;
+  /** Rate once the order clears the bulk threshold. Null/undefined = no discount here. */
+  bulkPerPageCents?: number | null;
+  /** Rate for copies 2+. Null/undefined = same as copy 1. */
+  additionalCopyPerPageCents?: number | null;
+  /** Whether a customer may choose this combination. */
+  enabled: boolean;
+}
+
+/**
+ * Everything needed to price a job at one shop.
+ *
+ * The grid plus the two discount switches. Stored whole on each job, so a later
+ * edit to a shop's rates can never restate what a past customer was quoted.
+ */
+export interface ShopRateCard {
+  rates: ShopRate[];
+  /** Lower rates once an order's normal value crosses the threshold. */
+  bulkEnabled: boolean;
+  bulkThresholdCents: number;
+  /** Copy 1 at the normal rate, copies 2+ at the per-configuration rate. */
+  additionalCopyEnabled: boolean;
+}
+
+/** Paper sizes the portal offers. A shop enables or prices the ones it stocks. */
+export const PAPER_SIZES = ['A4', 'A3', 'Letter'] as const;
+
+/** Every combination a rate grid covers, in the order a merchant reads them. */
+export function rateGridKeys(): Array<{ paperSize: string; isColor: boolean; isDuplex: boolean }> {
+  const keys: Array<{ paperSize: string; isColor: boolean; isDuplex: boolean }> = [];
+  for (const paperSize of PAPER_SIZES) {
+    for (const isColor of [false, true]) {
+      for (const isDuplex of [false, true]) {
+        keys.push({ paperSize, isColor, isDuplex });
+      }
+    }
+  }
+  return keys;
+}
+
+export function findRate(
+  card: ShopRateCard,
+  paperSize: string,
+  isColor: boolean,
+  isDuplex: boolean
+): ShopRate | undefined {
+  return card.rates.find(
+    (r) => r.paperSize === paperSize && r.isColor === isColor && r.isDuplex === isDuplex
+  );
+}
+
 export interface MerchantPricingConfig {
   bwSinglePerPageCents: number;
   bwDuplexPerPageCents: number;
@@ -186,6 +256,15 @@ export interface PrintJob {
   /** Agent device that claimed the job; unset until assignment. */
   deviceId?: string;
   tokenNumber?: string;
+
+  /**
+   * Customer identity, present only when the shop asked for it.
+   *
+   * Undefined is the normal case: collection is opt-in per shop, because the
+   * published privacy policy promises anonymity by default.
+   */
+  customerName?: string;
+  customerPhone?: string;
 
   // Document reference
   fileName: string;
@@ -279,7 +358,34 @@ export interface CreatePrintJobDto {
   isColor: boolean;
   isDuplex?: boolean;
   paperSize?: string;
+  /** Sent only when the shop's portal asks for them. */
+  customerName?: string;
+  customerPhone?: string;
 }
+
+/**
+ * What the customer portal asks for, decided by the shop.
+ *
+ * Every field defaults to false. A shop that has not opted in collects nothing,
+ * which is what the privacy policy tells its customers.
+ */
+export interface ShopPortalConfig {
+  collectCustomerName: boolean;
+  customerNameRequired: boolean;
+  collectCustomerPhone: boolean;
+  customerPhoneRequired: boolean;
+}
+
+export const DEFAULT_PORTAL_CONFIG: ShopPortalConfig = {
+  collectCustomerName: false,
+  customerNameRequired: false,
+  collectCustomerPhone: false,
+  customerPhoneRequired: false,
+};
+
+/** Longest we will store for either field, so a paste of a whole address is refused. */
+export const CUSTOMER_NAME_MAX = 80;
+export const CUSTOMER_PHONE_MAX = 20;
 
 /**
  * DTO: Create Print Job Output

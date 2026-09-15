@@ -80,6 +80,8 @@ model Shop {
   printers          Printer[]
   jobs              PrintJob[]
   pricing           ShopPricing?
+  rates             ShopRate[]
+  portalConfig      ShopPortalConfig?
   merchants         MerchantUser[]
 
   @@index([ownerEmail])
@@ -99,14 +101,76 @@ model ShopPricing {
   colorSinglePerPageCents Int     @default(1000)
   colorDuplexPerPageCents Int     @default(800)
 
+  /// Legacy. Superseded by ShopRate, which stores A3 as its own rate rather
+  /// than deriving it. Kept so the compatibility facade on /api/shops/:id/pricing
+  /// keeps answering, and so a rate card written before the grid is readable.
   a3Multiplier           Float    @default(2.0)
   bulkDiscountThreshold  Int      @default(50)
   bulkDiscountPercent    Int      @default(10)
+
+  // --- Discounts (the grid's, not the legacy ones above) ---
+  /// Lower per-page rates once an order's normal value crosses the threshold.
+  bulkEnabled            Boolean  @default(false)
+  /// Order value in paise at which the bulk rates take over.
+  bulkThresholdCents     Int      @default(10000)
+  /// Copy 1 at the normal rate, copies 2+ at the per-configuration rate.
+  additionalCopyEnabled  Boolean  @default(false)
   enableSeparatorPage    Boolean  @default(false)
   separatorMinPages      Int      @default(5)
 
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt @default(now())
+}
+
+/// What the customer portal asks for and offers, decided by the shop.
+///
+/// Separate from ShopPricing because this is about what the customer *sees*,
+/// not what they are charged, and the two are configured on different screens.
+/// One rate per print configuration.
+///
+/// Replaces four global rates plus an A3 multiplier, which could not express
+/// "A3 colour costs the same as A4 colour" or "Letter is cheaper than A4" —
+/// both of which are ordinary things for a shop to want.
+model ShopRate {
+  id                         String   @id
+  shopId                     String
+  shop                       Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  paperSize                  String
+  isColor                    Boolean
+  isDuplex                   Boolean
+
+  perPageCents               Int
+  /// Rate once the order clears the bulk threshold. Null means no discount for
+  /// this configuration — distinct from a discounted rate that happens to be 0.
+  bulkPerPageCents           Int?
+  /// Rate for copies 2 and beyond. Null means they cost the same as copy 1.
+  additionalCopyPerPageCents Int?
+
+  /// Whether a customer may choose this combination at all.
+  enabled                    Boolean  @default(true)
+
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt @default(now())
+
+  @@unique([shopId, paperSize, isColor, isDuplex])
+  @@index([shopId])
+}
+
+model ShopPortalConfig {
+  shopId                String   @id
+  shop                  Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  /// Whether the portal asks for a name, and whether it insists.
+  /// Default false: a shop that has not opted in collects nothing, which is
+  /// what its customers were promised.
+  collectCustomerName   Boolean  @default(false)
+  customerNameRequired  Boolean  @default(false)
+  collectCustomerPhone  Boolean  @default(false)
+  customerPhoneRequired Boolean  @default(false)
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt @default(now())
 }
 
 model Printer {
@@ -162,6 +226,13 @@ model PrintJob {
 
   /// Counter shown to the customer at the counter, e.g. "001".
   tokenNumber       String?
+
+  // ---- Customer identity (optional, opt-in per shop) ----
+  /// Only set when the shop has asked for it. The published privacy policy
+  /// promises anonymity by default, and that holds for any shop that leaves
+  /// collection off — see ShopPortalConfig.
+  customerName      String?
+  customerPhone     String?
 
   // ---- Document reference ----
   fileName          String
