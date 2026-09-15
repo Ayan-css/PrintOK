@@ -2,10 +2,10 @@ import crypto from 'crypto';
 import {
   Shop, Printer, PrintJob, PaymentState, PrintState, PrinterTelemetry,
   MerchantPricingConfig, MerchantStats, JobEvent, FailureCategory, PlanTier, getPlan,
-  ShopContactDetails, ShopPortalConfig, DEFAULT_PORTAL_CONFIG,
+  ShopContactDetails, ShopPortalConfig, DEFAULT_PORTAL_CONFIG, ShopRateCard, ShopRate,
 } from '@printok/shared-types';
 import { S3StorageService } from './s3Storage';
-import { calculateJobPriceBreakdown, DEFAULT_PRICING_CONFIG } from './pricing';
+import { calculateJobPriceBreakdown, calculateGridPriceBreakdown, buildDefaultRateCard, DEFAULT_PRICING_CONFIG } from './pricing';
 import { canTransitionPrintState, canTransitionPaymentState, isDocumentPurgeable } from './jobStateMachine';
 import { isStale, recoveryActionFor } from './jobRecovery';
 
@@ -366,6 +366,10 @@ export interface IStorageProvider {
   /** What the shop's customer portal asks for. Defaults to collecting nothing. */
   getShopPortalConfig(shopId: string): Promise<ShopPortalConfig>;
   updateShopPortalConfig(shopId: string, config: Partial<ShopPortalConfig>): Promise<ShopPortalConfig>;
+
+  /** The shop's rate grid and discount switches. Seeded from its flat rates. */
+  getShopRateCard(shopId: string): Promise<ShopRateCard>;
+  updateShopRateCard(shopId: string, card: Partial<ShopRateCard>): Promise<ShopRateCard>;
   getShopStats(shopId: string): Promise<MerchantStats>;
 }
 
@@ -379,6 +383,7 @@ export class MemoryStorage implements IStorageProvider {
   private jobEvents = new Map<string, JobEvent[]>();
   private idempotencyRecords = new Map<string, StoredIdempotencyRecord>();
   private portalConfigs = new Map<string, ShopPortalConfig>();
+  private rateCards = new Map<string, ShopRateCard>();
   private agentDevices = new Map<string, AgentDeviceRecord & { tokenHash: string }>();
   private pairingCodes = new Map<string, PairingCodeRecord>();
   private securityEvents: AgentSecurityEventRecord[] = [];
@@ -544,10 +549,15 @@ export class MemoryStorage implements IStorageProvider {
 
     const printer = await this.getPrinter(printerId);
     const pricingConfig = printer ? await this.getShopPricing(printer.shopId) : DEFAULT_PRICING_CONFIG;
+    // Priced from the grid, which carries A3 as its own rate and both discount
+    // models. Falls back to the flat card when the shop has no grid.
+    const rateCard = printer ? await this.getShopRateCard(printer.shopId) : buildDefaultRateCard(pricingConfig);
 
     const storageResult = await this.s3Service.storeDocument(id, fileName, fileBase64);
 
-    const priceSnapshot = calculateJobPriceBreakdown(pageCount, copies, isColor, isDuplex, paperSize, pricingConfig);
+    const priceSnapshot = calculateGridPriceBreakdown(
+      pageCount, copies, isColor, isDuplex, paperSize, rateCard, pricingConfig
+    );
     const tokenNumber = this.getNextTokenNumber(printerId);
     const nowIso = new Date().toISOString();
     const printState = autoApprovePayment ? PrintState.Queued : PrintState.AwaitingPayment;
@@ -1243,6 +1253,34 @@ export class MemoryStorage implements IStorageProvider {
     };
   }
 
+  public async getShopRateCard(shopId: string): Promise<ShopRateCard> {
+    const existing = this.rateCards.get(shopId);
+    if (existing) return existing;
+
+    // Seeded from the shop's flat rates, so a grid that has never been edited
+    // prices exactly as the flat card did.
+    const seeded = buildDefaultRateCard(await this.getShopPricing(shopId));
+    this.rateCards.set(shopId, seeded);
+    return seeded;
+  }
+
+  public async updateShopRateCard(shopId: string, card: Partial<ShopRateCard>): Promise<ShopRateCard> {
+    const current = await this.getShopRateCard(shopId);
+
+    // Rates are merged cell by cell rather than replaced wholesale: a screen
+    // that edits one paper size must not silently delete the others.
+    const merged: ShopRateCard = {
+      ...current,
+      ...card,
+      rates: card.rates
+        ? mergeRates(current.rates, card.rates)
+        : current.rates,
+    };
+
+    this.rateCards.set(shopId, merged);
+    return merged;
+  }
+
   public async getShopPortalConfig(shopId: string): Promise<ShopPortalConfig> {
     return { ...DEFAULT_PORTAL_CONFIG, ...(this.portalConfigs.get(shopId) ?? {}) };
   }
@@ -1392,3 +1430,20 @@ export class MemoryStorage implements IStorageProvider {
 }
 
 
+
+/**
+ * Applies incoming rate cells over the existing grid.
+ *
+ * Keyed on the combination rather than position, because a merchant screen may
+ * send only the rows it changed and the rest must survive untouched.
+ */
+export function mergeRates(current: ShopRate[], incoming: ShopRate[]): ShopRate[] {
+  const key = (r: { paperSize: string; isColor: boolean; isDuplex: boolean }) =>
+    `${r.paperSize}|${r.isColor}|${r.isDuplex}`;
+
+  const byKey = new Map(current.map((r) => [key(r), r]));
+  for (const rate of incoming) {
+    byKey.set(key(rate), { ...(byKey.get(key(rate)) ?? {}), ...rate });
+  }
+  return [...byKey.values()];
+}

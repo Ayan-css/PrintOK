@@ -64,6 +64,20 @@ export interface PriceSnapshot {
   totalPriceInCents: number;
   rateCard: MerchantPricingConfig;
   calculatedAt: string;
+
+  // --- Grid pricing ---
+  /** The cell used, so a dispute can be settled without guessing which applied. */
+  appliedRate?: ShopRate;
+  /** What the order would have cost at normal rates, before any discount. */
+  normalValueCents?: number;
+  /** Whether the order cleared the bulk threshold, and what it was at the time. */
+  bulkApplied?: boolean;
+  bulkThresholdCents?: number;
+  /** Rate charged for copy 1, and for copies 2+. */
+  firstCopyRateCents?: number;
+  additionalCopyRateCents?: number;
+  /** The whole rate card as it stood, so the quote is reproducible. */
+  rateCardSnapshot?: ShopRateCard;
 }
 
 /**
@@ -151,6 +165,62 @@ export interface PrinterTelemetry {
   lastHeartbeat: string;
   isOnline: boolean;
   paperStatus?: string;
+}
+
+/** One cell of the rate grid: what this exact configuration costs. */
+export interface ShopRate {
+  paperSize: string;
+  isColor: boolean;
+  isDuplex: boolean;
+  perPageCents: number;
+  /** Rate once the order clears the bulk threshold. Null/undefined = no discount here. */
+  bulkPerPageCents?: number | null;
+  /** Rate for copies 2+. Null/undefined = same as copy 1. */
+  additionalCopyPerPageCents?: number | null;
+  /** Whether a customer may choose this combination. */
+  enabled: boolean;
+}
+
+/**
+ * Everything needed to price a job at one shop.
+ *
+ * The grid plus the two discount switches. Stored whole on each job, so a later
+ * edit to a shop's rates can never restate what a past customer was quoted.
+ */
+export interface ShopRateCard {
+  rates: ShopRate[];
+  /** Lower rates once an order's normal value crosses the threshold. */
+  bulkEnabled: boolean;
+  bulkThresholdCents: number;
+  /** Copy 1 at the normal rate, copies 2+ at the per-configuration rate. */
+  additionalCopyEnabled: boolean;
+}
+
+/** Paper sizes the portal offers. A shop enables or prices the ones it stocks. */
+export const PAPER_SIZES = ['A4', 'A3', 'Letter'] as const;
+
+/** Every combination a rate grid covers, in the order a merchant reads them. */
+export function rateGridKeys(): Array<{ paperSize: string; isColor: boolean; isDuplex: boolean }> {
+  const keys: Array<{ paperSize: string; isColor: boolean; isDuplex: boolean }> = [];
+  for (const paperSize of PAPER_SIZES) {
+    for (const isColor of [false, true]) {
+      for (const isDuplex of [false, true]) {
+        keys.push({ paperSize, isColor, isDuplex });
+      }
+    }
+  }
+  return keys;
+}
+
+export function findRate(
+  card: ShopRateCard,
+  paperSize: string,
+  isColor: boolean,
+  isDuplex: boolean
+): ShopRate | undefined {
+  return card.rates.find(
+    (r) => r.paperSize === paperSize && r.isColor === isColor && r.isDuplex === isDuplex
+  );
 }
 
 export interface MerchantPricingConfig {

@@ -4,7 +4,7 @@ import {
   Shop, Printer, PrintJob, PaymentState, PrintState, PrinterTelemetry,
   MerchantPricingConfig, MerchantStats, JobEvent, PriceSnapshot, PrintConfigSnapshot,
   FailureCategory,
-  ShopContactDetails, ShopPortalConfig, DEFAULT_PORTAL_CONFIG,
+  ShopContactDetails, ShopPortalConfig, DEFAULT_PORTAL_CONFIG, ShopRateCard,
 } from '@printok/shared-types';
 import {
   IStorageProvider, CreateJobOptions, TransitionMeta, StateChangeResult, StoredIdempotencyRecord,
@@ -14,7 +14,8 @@ import {
   ContactEnquiryRecord, CreateContactEnquiryInput, MerchantUserRecord,
 } from './storage';
 import { S3StorageService } from './s3Storage';
-import { calculateJobPriceBreakdown, DEFAULT_PRICING_CONFIG } from './pricing';
+import { calculateJobPriceBreakdown, calculateGridPriceBreakdown, buildDefaultRateCard, DEFAULT_PRICING_CONFIG } from './pricing';
+import { mergeRates } from './storage';
 import { canTransitionPrintState, canTransitionPaymentState, isDocumentPurgeable } from './jobStateMachine';
 import {
   recoveryActionFor, ASSIGNED_STALE_MS, DOWNLOADING_STALE_MS, PRINTING_STALE_MS,
@@ -186,7 +187,12 @@ export class PrismaStorage implements IStorageProvider {
     // Price from the shop's own rate card. This previously used hardcoded
     // constants, which made every merchant's configured rates a no-op.
     const pricingConfig = await this.getShopPricing(printer.shopId);
-    const priceSnapshot = calculateJobPriceBreakdown(pageCount, copies, isColor, isDuplex, paperSize, pricingConfig);
+    // Priced from the grid: A3 is its own rate rather than a multiplier, and
+    // both discount models live here. Falls back to the flat card if unseeded.
+    const rateCard = await this.getShopRateCard(printer.shopId);
+    const priceSnapshot = calculateGridPriceBreakdown(
+      pageCount, copies, isColor, isDuplex, paperSize, rateCard, pricingConfig
+    );
 
     const storageResult = await this.s3Service.storeDocument(id, fileName, fileBase64);
 
@@ -1350,6 +1356,80 @@ export class PrismaStorage implements IStorageProvider {
   }
 
   // -------------------------------------------------------------- pricing ---
+
+  public async getShopRateCard(shopId: string): Promise<ShopRateCard> {
+    const [rows, pricing] = await Promise.all([
+      this.prisma.shopRate.findMany({ where: { shopId }, orderBy: [{ paperSize: 'asc' }, { isColor: 'asc' }, { isDuplex: 'asc' }] }),
+      this.prisma.shopPricing.findUnique({ where: { shopId } }),
+    ]);
+
+    // A shop whose grid was never seeded still has to be able to sell, so it
+    // gets one derived from its flat rates rather than an empty card.
+    if (rows.length === 0) {
+      return buildDefaultRateCard(await this.getShopPricing(shopId));
+    }
+
+    return {
+      rates: rows.map((r) => ({
+        paperSize: r.paperSize,
+        isColor: r.isColor,
+        isDuplex: r.isDuplex,
+        perPageCents: r.perPageCents,
+        bulkPerPageCents: r.bulkPerPageCents,
+        additionalCopyPerPageCents: r.additionalCopyPerPageCents,
+        enabled: r.enabled,
+      })),
+      bulkEnabled: pricing?.bulkEnabled ?? false,
+      bulkThresholdCents: pricing?.bulkThresholdCents ?? 10000,
+      additionalCopyEnabled: pricing?.additionalCopyEnabled ?? false,
+    };
+  }
+
+  public async updateShopRateCard(shopId: string, card: Partial<ShopRateCard>): Promise<ShopRateCard> {
+    // Seed first if the grid is empty, so a partial edit does not create a card
+    // containing only the cells that happened to be on screen.
+    const current = await this.getShopRateCard(shopId);
+    const rates = card.rates ? mergeRates(current.rates, card.rates) : current.rates;
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const r of rates) {
+        const data = {
+          perPageCents: r.perPageCents,
+          bulkPerPageCents: r.bulkPerPageCents ?? null,
+          additionalCopyPerPageCents: r.additionalCopyPerPageCents ?? null,
+          enabled: r.enabled,
+        };
+
+        await tx.shopRate.upsert({
+          where: {
+            shopId_paperSize_isColor_isDuplex: {
+              shopId, paperSize: r.paperSize, isColor: r.isColor, isDuplex: r.isDuplex,
+            },
+          },
+          create: {
+            id: `${shopId}_${r.paperSize}_${r.isColor ? 'c' : 'b'}${r.isDuplex ? 'd' : 's'}`,
+            shopId, paperSize: r.paperSize, isColor: r.isColor, isDuplex: r.isDuplex, ...data,
+          },
+          update: data,
+        });
+      }
+
+      const switches: Record<string, unknown> = {};
+      if (card.bulkEnabled !== undefined) switches.bulkEnabled = card.bulkEnabled;
+      if (card.bulkThresholdCents !== undefined) switches.bulkThresholdCents = card.bulkThresholdCents;
+      if (card.additionalCopyEnabled !== undefined) switches.additionalCopyEnabled = card.additionalCopyEnabled;
+
+      if (Object.keys(switches).length > 0) {
+        await tx.shopPricing.upsert({
+          where: { shopId },
+          create: { shopId, ...switches },
+          update: switches,
+        });
+      }
+    });
+
+    return this.getShopRateCard(shopId);
+  }
 
   public async getShopPortalConfig(shopId: string): Promise<ShopPortalConfig> {
     const row = await this.prisma.shopPortalConfig.findUnique({ where: { shopId } });

@@ -10,6 +10,7 @@ import { RazorpayService, MIN_ORDER_AMOUNT_PAISE } from './razorpayService';
 import { RazorpayRouteService } from './razorpayRoute';
 import { parsePrintState } from './jobStateMachine';
 import { classifyFailure } from './jobRecovery';
+import { buildDefaultRateCard } from './pricing';
 import { corsOptions } from './corsPolicy';
 import {
   issueConfigDownloadToken,
@@ -21,6 +22,7 @@ import {
   PLAN_CATALOGUE, PLAN_TIERS, getPlan,
   PAYMENT_GATEWAY_FEE_BPS, PAYMENT_GATEWAY_LABEL, calculateShopNetCents,
   Printer, ShopPortalConfig, CUSTOMER_NAME_MAX, CUSTOMER_PHONE_MAX,
+  ShopRate, ShopRateCard,
 } from '@printok/shared-types';
 import {
   hashPassword, verifyPassword, validatePasswordStrength,
@@ -552,6 +554,27 @@ export function createApp(
     try {
       const { shopId } = req.params;
       const updatedPricing = await storage.updateShopPricing(shopId, req.body || {});
+
+      // Write through to the grid, which is what jobs are actually priced from.
+      //
+      // Without this, a merchant editing the four flat rates would change a row
+      // nothing reads and see no effect on what customers are charged — the
+      // same silent no-op this endpoint already had once, when pricing came
+      // from hardcoded constants instead of the shop's card.
+      //
+      // Only the base rate of each cell is rewritten. Per-configuration
+      // discounts and the enabled flags are the grid editor's to own, and a
+      // merchant setting a flat rate has not asked to discard them.
+      const derived = buildDefaultRateCard(updatedPricing);
+      await storage.updateShopRateCard(shopId, {
+        rates: derived.rates.map((r) => ({
+          paperSize: r.paperSize,
+          isColor: r.isColor,
+          isDuplex: r.isDuplex,
+          perPageCents: r.perPageCents,
+        })) as ShopRate[],
+      });
+
       return res.json({ pricing: updatedPricing });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -561,6 +584,82 @@ export function createApp(
   /**
    * Get Shop Performance Stats & Analytics
    */
+  /**
+   * The shop's rate grid: one rate per paper size, colour mode and sided-ness,
+   * plus the two discount switches.
+   *
+   * Public, because the customer page quotes a price before anyone signs in.
+   * It carries rates and nothing else — no shop, owner or payout detail.
+   */
+  app.get('/api/shops/:shopId/rates', async (req: Request, res: Response) => {
+    try {
+      return res.json(await storage.getShopRateCard(req.params.shopId));
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/shops/:shopId/rates', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res, { requireOwner: true });
+    if (!merchant) return;
+
+    try {
+      const body = req.body || {};
+      const update: Partial<ShopRateCard> = {};
+
+      if (Array.isArray(body.rates)) {
+        const cleaned: ShopRate[] = [];
+        for (const raw of body.rates) {
+          if (!raw || typeof raw.paperSize !== 'string') continue;
+
+          // A rate is money. Reject anything that is not a whole, non-negative
+          // number of paise rather than coercing it into one — a NaN that
+          // becomes 0 is a shop giving printing away.
+          const money = (v: unknown, field: string): number | null | undefined => {
+            if (v === null || v === undefined || v === '') return null;
+            const n = Number(v);
+            if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+              throw new Error(`${field} must be a whole number of paise, or blank.`);
+            }
+            return n;
+          };
+
+          const perPage = money(raw.perPageCents, 'perPageCents');
+          if (perPage === null || perPage === undefined) {
+            throw new Error('Every configuration needs a per-page rate.');
+          }
+
+          cleaned.push({
+            paperSize: String(raw.paperSize),
+            isColor: !!raw.isColor,
+            isDuplex: !!raw.isDuplex,
+            perPageCents: perPage,
+            bulkPerPageCents: money(raw.bulkPerPageCents, 'bulkPerPageCents'),
+            additionalCopyPerPageCents: money(raw.additionalCopyPerPageCents, 'additionalCopyPerPageCents'),
+            enabled: raw.enabled === undefined ? true : !!raw.enabled,
+          });
+        }
+        update.rates = cleaned;
+      }
+
+      if (typeof body.bulkEnabled === 'boolean') update.bulkEnabled = body.bulkEnabled;
+      if (typeof body.additionalCopyEnabled === 'boolean') update.additionalCopyEnabled = body.additionalCopyEnabled;
+
+      if (body.bulkThresholdCents !== undefined) {
+        const t = Number(body.bulkThresholdCents);
+        if (!Number.isInteger(t) || t < 1) {
+          return res.status(400).json({ error: 'The discount threshold must be a whole number of paise, at least 1.' });
+        }
+        update.bulkThresholdCents = t;
+      }
+
+      return res.json(await storage.updateShopRateCard(req.params.shopId, update));
+    } catch (err: any) {
+      // Validation failures above are the merchant's to fix, not a server fault.
+      return res.status(400).json({ error: err.message });
+    }
+  });
+
   /**
    * What this shop's portal asks a customer for.
    *

@@ -1488,6 +1488,222 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(anon.status, 401, 'an anonymous caller must not reconfigure a shop');
   });
 
+  await t.test('55. A seeded grid prices exactly as the flat rate card did', async () => {
+    // The point of the whole change: a shop that has never touched the grid
+    // must charge every customer what it charged them yesterday. A pricing
+    // migration that quietly moves a price is the worst kind of silent bug.
+    const { DEFAULT_PRICING_CONFIG, calculateJobPriceBreakdown, calculateGridPriceBreakdown, buildDefaultRateCard } =
+      await import('../pricing');
+
+    const card = buildDefaultRateCard(DEFAULT_PRICING_CONFIG);
+    const raised: string[] = [];
+    let compared = 0;
+
+    for (const paperSize of ['A4', 'A3', 'Letter']) {
+      for (const isColor of [false, true]) {
+        for (const isDuplex of [false, true]) {
+          for (const pages of [1, 5, 10, 49, 50, 51, 200]) {
+            for (const copies of [1, 2, 5]) {
+              const before = calculateJobPriceBreakdown(pages, copies, isColor, isDuplex, paperSize, DEFAULT_PRICING_CONFIG);
+              const after = calculateGridPriceBreakdown(pages, copies, isColor, isDuplex, paperSize, card, DEFAULT_PRICING_CONFIG);
+              compared++;
+              if (after.totalPriceInCents > before.totalPriceInCents) {
+                raised.push(`${paperSize} colour=${isColor} duplex=${isDuplex} ${pages}p x${copies}: ${before.totalPriceInCents} -> ${after.totalPriceInCents}`);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    assert.ok(compared > 200, 'the comparison must actually cover the grid');
+    assert.deepStrictEqual(raised, [], 'no configuration may cost more than it did before');
+  });
+
+  await t.test('56. The grid prices A3 directly instead of multiplying', async () => {
+    const res = await fetch(`${baseUrl}/api/shops/${createdShopId}/rates`);
+    assert.strictEqual(res.status, 200);
+
+    const card = (await res.json()) as any;
+    assert.ok(Array.isArray(card.rates));
+    assert.strictEqual(card.rates.length, 12, 'three papers x colour x sided');
+
+    // Asserted as a relationship, not a constant: an earlier test changes this
+    // shop's rates, and a test that hardcodes 200 is really testing the order
+    // the suite happens to run in.
+    const flat = (await (await fetch(`${baseUrl}/api/shops/${createdShopId}/pricing`, { headers: merchantAuth })).json() as any).pricing;
+
+    const a4 = card.rates.find((r: any) => r.paperSize === 'A4' && !r.isColor && !r.isDuplex);
+    const a3 = card.rates.find((r: any) => r.paperSize === 'A3' && !r.isColor && !r.isDuplex);
+    const letter = card.rates.find((r: any) => r.paperSize === 'Letter' && !r.isColor && !r.isDuplex);
+
+    assert.strictEqual(a4.perPageCents, flat.bwSinglePerPageCents, 'A4 carries the flat rate');
+    assert.strictEqual(letter.perPageCents, flat.bwSinglePerPageCents, 'Letter was never multiplied');
+    assert.strictEqual(
+      a3.perPageCents,
+      Math.round(flat.bwSinglePerPageCents * flat.a3Multiplier),
+      'A3 is seeded at the multiplied rate, and from then on stands alone'
+    );
+  });
+
+  await t.test('57. A shop can price one cell without disturbing the rest', async () => {
+    const before = await (await fetch(`${baseUrl}/api/shops/${createdShopId}/rates`)).json() as any;
+
+    const res = await fetch(`${baseUrl}/api/shops/${createdShopId}/rates`, {
+      method: 'POST',
+      headers: merchantAuth,
+      body: JSON.stringify({
+        rates: [{ paperSize: 'A3', isColor: false, isDuplex: false, perPageCents: 250, enabled: true }],
+      }),
+    });
+    assert.strictEqual(res.status, 200);
+
+    const after = (await res.json()) as any;
+    assert.strictEqual(after.rates.length, before.rates.length, 'sending one row must not delete the others');
+
+    const a3 = after.rates.find((r: any) => r.paperSize === 'A3' && !r.isColor && !r.isDuplex);
+    assert.strictEqual(a3.perPageCents, 250);
+
+    // Compared against what it was, not a literal, so the assertion survives
+    // whatever earlier tests did to this shop's rates.
+    const a4Before = before.rates.find((r: any) => r.paperSize === 'A4' && !r.isColor && !r.isDuplex);
+    const a4After = after.rates.find((r: any) => r.paperSize === 'A4' && !r.isColor && !r.isDuplex);
+    assert.strictEqual(a4After.perPageCents, a4Before.perPageCents, 'an untouched cell keeps its rate');
+  });
+
+  await t.test('58. Both discounts apply in the right order', async () => {
+    const shopRes = await fetch(`${baseUrl}/api/shops/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopName: 'Discount Test', ownerEmail: 'disc@example.com', printerName: 'P' }),
+    });
+    const shop = (await shopRes.json()) as any;
+
+    const claim = await fetch(`${baseUrl}/api/merchant/claim`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId: shop.shop.id, ownerEmail: 'disc@example.com', password: 'DiscountPass1', name: 'D' }),
+    });
+    const auth = {
+      Authorization: `Bearer ${((await claim.json()) as any).token}`,
+      'Content-Type': 'application/json',
+    };
+
+    // ₹2 normally, ₹1.50 in bulk over ₹100, and ₹1 for copies 2+.
+    await fetch(`${baseUrl}/api/shops/${shop.shop.id}/rates`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({
+        bulkEnabled: true,
+        bulkThresholdCents: 10000,
+        additionalCopyEnabled: true,
+        rates: [{
+          paperSize: 'A4', isColor: false, isDuplex: false,
+          perPageCents: 200, bulkPerPageCents: 150, additionalCopyPerPageCents: 100, enabled: true,
+        }],
+      }),
+    });
+
+    const { calculateGridPriceBreakdown } = await import('../pricing');
+    const card = await (await fetch(`${baseUrl}/api/shops/${shop.shop.id}/rates`)).json() as any;
+
+    // Under the threshold: 10 pages x ₹2 = ₹20. No discount anywhere.
+    const small = calculateGridPriceBreakdown(10, 1, false, false, 'A4', card);
+    assert.strictEqual(small.totalPriceInCents, 2000);
+    assert.strictEqual(small.bulkApplied, false);
+
+    // Over it: 100 pages x ₹2 = ₹200 normal, so bulk swaps in ₹1.50.
+    const bulk = calculateGridPriceBreakdown(100, 1, false, false, 'A4', card);
+    assert.strictEqual(bulk.bulkApplied, true);
+    assert.strictEqual(bulk.totalPriceInCents, 15000);
+
+    // Copies: copy 1 at the bulk rate, copies 2 and 3 at the copy rate.
+    // 100x150 + 200x100 = 35000.
+    const copies = calculateGridPriceBreakdown(100, 3, false, false, 'A4', card);
+    assert.strictEqual(copies.firstCopyRateCents, 150);
+    assert.strictEqual(copies.additionalCopyRateCents, 100);
+    assert.strictEqual(copies.totalPriceInCents, 35000);
+
+    // The threshold is tested on the NORMAL value, not the discounted one.
+    // 10 pages x 5 copies x ₹2 = ₹100 normal, which qualifies. Were it tested
+    // after discounting, the cheaper rate would drop it back under the bar.
+    const edge = calculateGridPriceBreakdown(10, 5, false, false, 'A4', card);
+    assert.strictEqual(edge.normalValueCents, 10000);
+    assert.strictEqual(edge.bulkApplied, true);
+  });
+
+  await t.test('59. Rates are refused rather than coerced', async () => {
+    const bad = async (rates: unknown) => {
+      const res = await fetch(`${baseUrl}/api/shops/${createdShopId}/rates`, {
+        method: 'POST', headers: merchantAuth, body: JSON.stringify({ rates }),
+      });
+      return res.status;
+    };
+
+    // A NaN silently becoming 0 is a shop giving printing away.
+    assert.strictEqual(await bad([{ paperSize: 'A4', isColor: false, isDuplex: false, perPageCents: 'free' }]), 400);
+    assert.strictEqual(await bad([{ paperSize: 'A4', isColor: false, isDuplex: false, perPageCents: -50 }]), 400);
+    assert.strictEqual(await bad([{ paperSize: 'A4', isColor: false, isDuplex: false, perPageCents: 1.5 }]), 400);
+    assert.strictEqual(await bad([{ paperSize: 'A4', isColor: false, isDuplex: false }]), 400);
+
+    // And only the owner may set them at all.
+    const anon = await fetch(`${baseUrl}/api/shops/${createdShopId}/rates`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rates: [] }),
+    });
+    assert.strictEqual(anon.status, 401);
+  });
+
+  await t.test('60. Editing the flat rates still changes what a customer pays', async () => {
+    // Jobs price from the grid now. The dashboard's rate editor still posts the
+    // four flat rates, so that endpoint has to write through — otherwise a
+    // merchant raises their prices, sees a success message, and keeps charging
+    // the old amount. This endpoint has had exactly that bug before.
+    const shopRes = await fetch(`${baseUrl}/api/shops/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopName: 'Writethrough', ownerEmail: 'wt@example.com', printerName: 'WT' }),
+    });
+    const shop = (await shopRes.json()) as any;
+
+    const claim = await fetch(`${baseUrl}/api/merchant/claim`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId: shop.shop.id, ownerEmail: 'wt@example.com', password: 'WriteThru123', name: 'W' }),
+    });
+    const auth = {
+      Authorization: `Bearer ${((await claim.json()) as any).token}`,
+      'Content-Type': 'application/json',
+    };
+
+    const priceOneMonoPage = async () => {
+      const res = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          printerId: shop.printer.id,
+          fileName: 'rate.pdf',
+          fileBase64: Buffer.from('%PDF-1.4 rate').toString('base64'),
+          copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+        }),
+      });
+      return ((await res.json()) as any).job.totalPriceInCents;
+    };
+
+    assert.strictEqual(await priceOneMonoPage(), 200, 'the default rate');
+
+    const raise = await fetch(`${baseUrl}/api/shops/${shop.shop.id}/pricing`, {
+      method: 'POST', headers: auth, body: JSON.stringify({ bwSinglePerPageCents: 500 }),
+    });
+    assert.strictEqual(raise.status, 200);
+
+    assert.strictEqual(await priceOneMonoPage(), 500, 'the new rate must reach the customer');
+
+    // And the grid agrees, rather than the two drifting apart.
+    const card = await (await fetch(`${baseUrl}/api/shops/${shop.shop.id}/rates`)).json() as any;
+    const a4 = card.rates.find((r: any) => r.paperSize === 'A4' && !r.isColor && !r.isDuplex);
+    assert.strictEqual(a4.perPageCents, 500);
+  });
+
   await t.test('28. A brand new shop can find itself from its session alone', async () => {
     // The dashboard has no shop id of its own when a merchant signs in: not in
     // the URL, and nothing in localStorage on a fresh browser. It asks this

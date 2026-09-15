@@ -1,4 +1,7 @@
-import { MerchantPricingConfig, PriceSnapshot } from '@printok/shared-types';
+import {
+  MerchantPricingConfig, PriceSnapshot, ShopRate, ShopRateCard,
+  rateGridKeys, findRate,
+} from '@printok/shared-types';
 
 export const DEFAULT_PRICING_CONFIG: MerchantPricingConfig = {
   bwSinglePerPageCents: 200,    // ₹2.00
@@ -108,5 +111,140 @@ export function calculateJobPriceBreakdown(
     totalPriceInCents,
     rateCard: { ...pricingConfig },
     calculatedAt: new Date().toISOString(),
+  };
+}
+
+// ---------------------------------------------------------------- grid pricing ---
+
+/**
+ * Prices a job from the shop's rate grid.
+ *
+ * The grid replaces four global rates and an A3 multiplier. Two discounts sit
+ * on top, and the order they apply in is the part worth being precise about:
+ *
+ *   1. **Bulk** is tested against the order's *normal* value — what it would
+ *      cost at undiscounted rates. Testing it against the discounted value
+ *      would make the discount self-triggering near the threshold, where a
+ *      cheaper rate drops the total back under the bar it just cleared.
+ *   2. **Additional copies** then apply to copies 2 and beyond. Copy 1 always
+ *      pays the rate the bulk test settled on, which is what "copy 1 uses the
+ *      normal price" means once bulk is also in play.
+ *
+ * A missing cell falls back to the legacy flat calculation rather than
+ * refusing: a shop whose grid has not been seeded must still be able to sell.
+ */
+export function calculateGridPriceBreakdown(
+  pages: number,
+  copies: number,
+  isColor: boolean,
+  isDuplex: boolean,
+  paperSize: string,
+  card: ShopRateCard,
+  legacy: MerchantPricingConfig = DEFAULT_PRICING_CONFIG
+): PriceSnapshot {
+  const safePages = Math.max(1, pages);
+  const safeCopies = Math.max(1, copies);
+
+  const cell = findRate(card, paperSize, isColor, isDuplex);
+  if (!cell) {
+    return calculateJobPriceBreakdown(safePages, safeCopies, isColor, isDuplex, paperSize, legacy);
+  }
+
+  const normalRate = cell.perPageCents;
+  const billableSheets = safePages * safeCopies;
+  const normalValueCents = billableSheets * normalRate;
+
+  const bulkAvailable =
+    card.bulkEnabled &&
+    cell.bulkPerPageCents !== null &&
+    cell.bulkPerPageCents !== undefined;
+  const bulkApplied = bulkAvailable && normalValueCents >= card.bulkThresholdCents;
+
+  const firstCopyRateCents = bulkApplied ? cell.bulkPerPageCents! : normalRate;
+
+  const additionalCopyRateCents =
+    card.additionalCopyEnabled &&
+    cell.additionalCopyPerPageCents !== null &&
+    cell.additionalCopyPerPageCents !== undefined
+      ? cell.additionalCopyPerPageCents
+      : firstCopyRateCents;
+
+  const totalPriceInCents =
+    safePages * firstCopyRateCents + safePages * (safeCopies - 1) * additionalCopyRateCents;
+
+  const discountCents = Math.max(0, normalValueCents - totalPriceInCents);
+
+  return {
+    // Kept for every existing reader of a snapshot. It reports the rate copy 1
+    // paid, which is the one a customer sees quoted.
+    perPageRateCents: firstCopyRateCents,
+    pages: safePages,
+    copies: safeCopies,
+    billableSheets,
+    subtotalCents: normalValueCents,
+    bulkDiscountPercent:
+      normalValueCents > 0 ? Math.round((discountCents / normalValueCents) * 100) : 0,
+    bulkDiscountCents: discountCents,
+    // The grid prices A3 directly, so nothing is multiplied any more.
+    paperSizeMultiplier: 1,
+    totalPriceInCents,
+    rateCard: legacy,
+    calculatedAt: new Date().toISOString(),
+
+    appliedRate: cell,
+    normalValueCents,
+    bulkApplied,
+    bulkThresholdCents: card.bulkThresholdCents,
+    firstCopyRateCents,
+    additionalCopyRateCents,
+    rateCardSnapshot: card,
+  };
+}
+
+/**
+ * The grid a shop starts with, derived from a flat rate card.
+ *
+ * Used to seed a new shop and to answer for one whose grid predates this, and
+ * it reproduces the old calculator exactly — A4 and Letter at the stated rate,
+ * A3 multiplied and rounded the same way the old code rounded it.
+ */
+export function buildDefaultRateCard(
+  config: MerchantPricingConfig = DEFAULT_PRICING_CONFIG
+): ShopRateCard {
+  const rates: ShopRate[] = rateGridKeys().map(({ paperSize, isColor, isDuplex }) => {
+    const base = isColor
+      ? (isDuplex ? config.colorDuplexPerPageCents : config.colorSinglePerPageCents)
+      : (isDuplex ? config.bwDuplexPerPageCents : config.bwSinglePerPageCents);
+
+    const perPageCents =
+      paperSize === 'A3' ? Math.round(base * (config.a3Multiplier || 2)) : base;
+
+    const percent = config.bulkDiscountPercent ?? 0;
+
+    return {
+      paperSize,
+      isColor,
+      isDuplex,
+      perPageCents,
+      bulkPerPageCents: percent > 0 ? Math.round((perPageCents * (100 - percent)) / 100) : null,
+      additionalCopyPerPageCents: null,
+      enabled: true,
+    };
+  });
+
+  const threshold = config.bulkDiscountThreshold ?? 0;
+  const percent = config.bulkDiscountPercent ?? 0;
+
+  // Derived from the cheapest rate in the grid, not an arbitrary one. Any
+  // dearer basis would put the threshold beyond the reach of the cheapest
+  // configurations, so an order that qualified for a discount under the old
+  // sheet-count rule would quietly cost more under this one.
+  const cheapestRate = rates.reduce((min, r) => Math.min(min, r.perPageCents), Infinity);
+
+  return {
+    rates,
+    bulkEnabled: percent > 0 && threshold > 0,
+    bulkThresholdCents: Math.max(1, threshold * (Number.isFinite(cheapestRate) ? cheapestRate : config.bwSinglePerPageCents)),
+    additionalCopyEnabled: false,
   };
 }
