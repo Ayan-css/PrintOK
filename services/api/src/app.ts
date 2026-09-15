@@ -20,7 +20,7 @@ import {
 import {
   PLAN_CATALOGUE, PLAN_TIERS, getPlan,
   PAYMENT_GATEWAY_FEE_BPS, PAYMENT_GATEWAY_LABEL, calculateShopNetCents,
-  Printer,
+  Printer, ShopPortalConfig, CUSTOMER_NAME_MAX, CUSTOMER_PHONE_MAX,
 } from '@printok/shared-types';
 import {
   hashPassword, verifyPassword, validatePasswordStrength,
@@ -262,6 +262,46 @@ export function createApp(
     }
 
     return { merchant, printer };
+  }
+
+  /**
+   * Decides what customer identity, if any, is stored with a job.
+   *
+   * The shop's configuration is the authority, never the request. A caller who
+   * posts a name to a shop that does not collect names gets it dropped rather
+   * than stored: that shop's customers were told nothing of the sort is kept,
+   * and an API that quietly honours the field would make the notice false.
+   *
+   * Returns the values to store, or the message to refuse with.
+   */
+  function readCustomerIdentity(
+    portal: ShopPortalConfig,
+    submitted: { customerName?: unknown; customerPhone?: unknown }
+  ): { value: { customerName?: string; customerPhone?: string } } | { error: string } {
+    const clean = (raw: unknown, max: number): string | undefined => {
+      if (raw === undefined || raw === null) return undefined;
+      // Collapse runs of whitespace so a name pasted across two lines stores flat.
+      const text = String(raw).replace(/\s+/g, ' ').trim();
+      return text ? text.slice(0, max) : undefined;
+    };
+
+    const name = portal.collectCustomerName ? clean(submitted.customerName, CUSTOMER_NAME_MAX) : undefined;
+    const phone = portal.collectCustomerPhone ? clean(submitted.customerPhone, CUSTOMER_PHONE_MAX) : undefined;
+
+    if (portal.collectCustomerName && portal.customerNameRequired && !name) {
+      return { error: 'This shop needs your name for the order.' };
+    }
+    if (portal.collectCustomerPhone && portal.customerPhoneRequired && !phone) {
+      return { error: 'This shop needs your mobile number for the order.' };
+    }
+
+    // Deliberately permissive: enough to reject an obvious mistake, not enough
+    // to argue with a customer about the shape of their own phone number.
+    if (phone && !/^[0-9+][0-9 ()+-]{5,}$/.test(phone)) {
+      return { error: 'That mobile number does not look right.' };
+    }
+
+    return { value: { customerName: name, customerPhone: phone } };
   }
 
   /**
@@ -521,6 +561,46 @@ export function createApp(
   /**
    * Get Shop Performance Stats & Analytics
    */
+  /**
+   * What this shop's portal asks a customer for.
+   *
+   * Public, because the customer page must render the right fields before
+   * anyone has signed in. It exposes only booleans — no shop detail.
+   */
+  app.get('/api/shops/:shopId/portal-config', async (req: Request, res: Response) => {
+    try {
+      return res.json(await storage.getShopPortalConfig(req.params.shopId));
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/shops/:shopId/portal-config', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res);
+    if (!merchant) return;
+
+    try {
+      const body = req.body || {};
+      const bool = (v: unknown) => (typeof v === 'boolean' ? v : undefined);
+
+      const next: Partial<ShopPortalConfig> = {};
+      if (bool(body.collectCustomerName) !== undefined) next.collectCustomerName = body.collectCustomerName;
+      if (bool(body.customerNameRequired) !== undefined) next.customerNameRequired = body.customerNameRequired;
+      if (bool(body.collectCustomerPhone) !== undefined) next.collectCustomerPhone = body.collectCustomerPhone;
+      if (bool(body.customerPhoneRequired) !== undefined) next.customerPhoneRequired = body.customerPhoneRequired;
+
+      // Required without collected is unsatisfiable: the portal would never
+      // show the field, and every order would then be refused for missing it.
+      const merged = { ...(await storage.getShopPortalConfig(req.params.shopId)), ...next };
+      if (merged.customerNameRequired && !merged.collectCustomerName) next.customerNameRequired = false;
+      if (merged.customerPhoneRequired && !merged.collectCustomerPhone) next.customerPhoneRequired = false;
+
+      return res.json(await storage.updateShopPortalConfig(req.params.shopId, next));
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/shops/:shopId/stats', async (req: Request, res: Response) => {
     const merchant = await authenticateMerchant(req, res);
     if (!merchant) return;
@@ -1656,7 +1736,10 @@ export function createApp(
    */
   app.post('/api/print-jobs', async (req: Request, res: Response) => {
     try {
-      const { printerId, fileName, fileBase64, copies, isColor, isDuplex, paperSize } = req.body as CreatePrintJobDto;
+      const {
+        printerId, fileName, fileBase64, copies, isColor, isDuplex, paperSize,
+        customerName, customerPhone,
+      } = req.body as CreatePrintJobDto;
       const autoApprove = req.query.autoApprove !== 'false';
 
       if (!printerId || !fileName || !fileBase64) {
@@ -1666,6 +1749,18 @@ export function createApp(
       const printer = await storage.getPrinter(printerId);
       if (!printer) {
         return res.status(404).json({ error: 'Target printer not found.' });
+      }
+
+      // Customer identity, only if this shop asked for it.
+      //
+      // Read from the shop's config rather than trusted from the request: a
+      // caller must not be able to attach a name and phone to a job at a shop
+      // that never asked for one, because the privacy policy tells that shop's
+      // customers nothing of the sort is collected.
+      const portal = await storage.getShopPortalConfig(printer.shopId);
+      const identity = readCustomerIdentity(portal, { customerName, customerPhone });
+      if ('error' in identity) {
+        return res.status(400).json({ error: identity.error });
       }
 
       // Multi-format document inspection & server-side page count verification
@@ -1688,7 +1783,8 @@ export function createApp(
         !!isColor,
         autoApprove,
         !!isDuplex,
-        paperSize || 'A4'
+        paperSize || 'A4',
+        identity.value
       );
 
       // If job is immediately queued, push notification to active WebSocket agent

@@ -1387,6 +1387,107 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     }
   });
 
+  await t.test('51. A shop collects no customer identity until it opts in', async () => {
+    // The published privacy policy tells customers we do not collect their name
+    // or phone number. That has to stay true for every shop that has not turned
+    // collection on, whatever the request contains.
+    const cfg = await (await fetch(`${baseUrl}/api/shops/${createdShopId}/portal-config`)).json() as any;
+    assert.strictEqual(cfg.collectCustomerName, false, 'collection must default to off');
+    assert.strictEqual(cfg.collectCustomerPhone, false);
+
+    const res = await fetch(`${baseUrl}/api/print-jobs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: createdPrinterId,
+        fileName: 'anonymous.pdf',
+        fileBase64: Buffer.from('%PDF-1.4 anonymous').toString('base64'),
+        copies: 1,
+        isColor: false,
+        // Submitted anyway. A shop that never asked must never receive it.
+        customerName: 'Should Not Be Stored',
+        customerPhone: '9999999999',
+      }),
+    });
+    assert.strictEqual(res.status, 201);
+
+    const { job } = (await res.json()) as any;
+    assert.strictEqual(job.customerName, undefined, 'a name must not be stored by a shop that never asked');
+    assert.strictEqual(job.customerPhone, undefined, 'nor a phone number');
+  });
+
+  await t.test('52. Once a shop opts in, identity is captured and enforced', async () => {
+    const enable = await fetch(`${baseUrl}/api/shops/${createdShopId}/portal-config`, {
+      method: 'POST',
+      headers: merchantAuth,
+      body: JSON.stringify({
+        collectCustomerName: true,
+        customerNameRequired: true,
+        collectCustomerPhone: true,
+        customerPhoneRequired: false,
+      }),
+    });
+    assert.strictEqual(enable.status, 200);
+
+    const submit = (body: Record<string, unknown>) => fetch(`${baseUrl}/api/print-jobs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: createdPrinterId,
+        fileName: 'named.pdf',
+        fileBase64: Buffer.from('%PDF-1.4 named').toString('base64'),
+        copies: 1,
+        isColor: false,
+        ...body,
+      }),
+    });
+
+    // Required and missing is refused, with a message a customer can act on.
+    const missing = await submit({});
+    assert.strictEqual(missing.status, 400);
+    assert.match(((await missing.json()) as any).error, /name/i);
+
+    // A phone that is plainly not one is refused.
+    const badPhone = await submit({ customerName: 'Asha', customerPhone: 'call me' });
+    assert.strictEqual(badPhone.status, 400);
+
+    // The happy path stores both, whitespace collapsed.
+    const ok = await submit({ customerName: '  Asha   Menon ', customerPhone: '+91 98200 12345' });
+    assert.strictEqual(ok.status, 201);
+    const { job } = (await ok.json()) as any;
+    assert.strictEqual(job.customerName, 'Asha Menon');
+    assert.strictEqual(job.customerPhone, '+91 98200 12345');
+
+    // Phone was optional, so an order without one still goes through.
+    const nameOnly = await submit({ customerName: 'Ravi' });
+    assert.strictEqual(nameOnly.status, 201);
+    assert.strictEqual(((await nameOnly.json()) as any).job.customerPhone, undefined);
+  });
+
+  await t.test('53. Portal config cannot be set to an unsatisfiable state', async () => {
+    // Required-but-not-collected would hide the field and then refuse every
+    // order for missing it — a shop could take itself offline from a checkbox.
+    const res = await fetch(`${baseUrl}/api/shops/${createdShopId}/portal-config`, {
+      method: 'POST',
+      headers: merchantAuth,
+      body: JSON.stringify({ collectCustomerName: false, customerNameRequired: true }),
+    });
+    assert.strictEqual(res.status, 200);
+
+    const cfg = (await res.json()) as any;
+    assert.strictEqual(cfg.collectCustomerName, false);
+    assert.strictEqual(cfg.customerNameRequired, false, 'required must be cleared with collection');
+  });
+
+  await t.test('54. Only the shop itself can change what its portal asks', async () => {
+    const anon = await fetch(`${baseUrl}/api/shops/${createdShopId}/portal-config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ collectCustomerPhone: true }),
+    });
+    assert.strictEqual(anon.status, 401, 'an anonymous caller must not reconfigure a shop');
+  });
+
   await t.test('28. A brand new shop can find itself from its session alone', async () => {
     // The dashboard has no shop id of its own when a merchant signs in: not in
     // the URL, and nothing in localStorage on a fresh browser. It asks this

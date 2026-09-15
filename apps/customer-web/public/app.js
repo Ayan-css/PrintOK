@@ -181,6 +181,26 @@ document.addEventListener('DOMContentLoaded', () => {
     },
   };
 
+  /**
+   * Who placed the order, when the shop asked.
+   *
+   * Absent for shops that collect nothing, which is most of them — so this
+   * renders nothing at all rather than an empty row of dashes. The number is a
+   * tel: link because the entire reason for collecting it is to ring someone
+   * about an uncollected or wrong printout, usually from a phone.
+   */
+  function customerLine(job) {
+    const name = job.customerName ? escapeHtml(job.customerName) : '';
+    const phone = job.customerPhone ? escapeHtml(job.customerPhone) : '';
+    if (!name && !phone) return '';
+
+    const parts = [];
+    if (name) parts.push(`<strong>${name}</strong>`);
+    if (phone) parts.push(`<a href="tel:${encodeURIComponent(job.customerPhone)}">${phone}</a>`);
+
+    return `<div class="queue-customer">${parts.join(' · ')}</div>`;
+  }
+
   // Human-facing labels for the backend PrintState enum
   const PRINT_STATE_LABELS = {
     Created: 'Created',
@@ -1309,6 +1329,7 @@ document.addEventListener('DOMContentLoaded', () => {
               <span class="queue-token">${escapeHtml(job.tokenNumber || '#--')}</span>
               <div style="min-width:0;">
                 <div class="queue-file">${escapeHtml(job.fileName)}</div>
+                ${customerLine(job)}
                 <div class="queue-meta">${escapeHtml(detail)}</div>
               </div>
             </div>
@@ -1903,10 +1924,92 @@ document.addEventListener('DOMContentLoaded', () => {
       startPollingJobStatus(job.id);
     }
 
+    /**
+     * What the shop asks a customer for. Empty until portal-config is read,
+     * which is the safe default: no fields shown, nothing sent.
+     */
+    let portalConfig = {
+      collectCustomerName: false, customerNameRequired: false,
+      collectCustomerPhone: false, customerPhoneRequired: false,
+    };
+
+    async function loadPortalConfig(shopId) {
+      if (!shopId) return;
+      try {
+        const res = await fetch(`${API_BASE}/api/shops/${encodeURIComponent(shopId)}/portal-config`);
+        if (!res.ok) return;
+        portalConfig = { ...portalConfig, ...(await res.json()) };
+        renderCustomerDetails();
+      } catch {
+        // Leave the fields hidden. A shop that wanted a phone number will chase
+        // it at the counter; a broken form would lose the order outright.
+      }
+    }
+
+    function renderCustomerDetails() {
+      const box = document.getElementById('customerDetailsBox');
+      const nameField = document.getElementById('customerNameField');
+      const phoneField = document.getElementById('customerPhoneField');
+      if (!box) return;
+
+      const wantsName = !!portalConfig.collectCustomerName;
+      const wantsPhone = !!portalConfig.collectCustomerPhone;
+
+      box.hidden = !(wantsName || wantsPhone);
+      if (nameField) nameField.hidden = !wantsName;
+      if (phoneField) phoneField.hidden = !wantsPhone;
+
+      // The asterisk is the only signal a customer gets before submitting, so
+      // it has to match what the server will actually enforce.
+      const nameLabel = document.getElementById('labelCustomerName');
+      if (nameLabel) nameLabel.textContent = portalConfig.customerNameRequired ? 'Name *' : 'Name (optional)';
+      const phoneLabel = document.getElementById('labelCustomerPhone');
+      if (phoneLabel) {
+        phoneLabel.textContent = portalConfig.customerPhoneRequired
+          ? 'Mobile number *' : 'Mobile number (optional)';
+      }
+    }
+
+    /** Returns the values to send, or null having shown why it cannot. */
+    function readCustomerDetails() {
+      const errorBox = document.getElementById('customerDetailsError');
+      const show = (message) => {
+        if (errorBox) { errorBox.textContent = message; errorBox.hidden = false; }
+        return null;
+      };
+      if (errorBox) errorBox.hidden = true;
+
+      const name = (document.getElementById('inputCustomerName')?.value || '').replace(/\s+/g, ' ').trim();
+      const phone = (document.getElementById('inputCustomerPhone')?.value || '').trim();
+
+      if (portalConfig.collectCustomerName && portalConfig.customerNameRequired && !name) {
+        return show('This shop needs your name for the order.');
+      }
+      if (portalConfig.collectCustomerPhone && portalConfig.customerPhoneRequired && !phone) {
+        return show('This shop needs your mobile number for the order.');
+      }
+      if (phone && !/^[0-9+][0-9 ()+-]{5,}$/.test(phone)) {
+        return show('That mobile number does not look right.');
+      }
+
+      return {
+        ...(portalConfig.collectCustomerName && name ? { customerName: name } : {}),
+        ...(portalConfig.collectCustomerPhone && phone ? { customerPhone: phone } : {}),
+      };
+    }
+
     async function submitCustomerPrintJob(method) {
       if (submitting) return; // guard against a double tap creating two paid jobs
       if (!selectedFile || !fileBase64) {
         showToast('warning', 'Still Preparing', 'Your document is still being read. Try again in a moment.');
+        return;
+      }
+
+      // Checked here rather than after upload: a customer should not wait for a
+      // document to transfer only to be told their name is missing.
+      const customer = readCustomerDetails();
+      if (customer === null) {
+        document.getElementById('customerDetailsBox')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         return;
       }
 
@@ -1930,6 +2033,7 @@ document.addEventListener('DOMContentLoaded', () => {
             isDuplex,
             paperSize,
             pageRange: pageRangeMode === 'custom' ? customPageRange : null,
+            ...customer,
           }),
         });
 
@@ -2259,8 +2363,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const shopNameDisplay = document.getElementById('shopNameDisplay');
         if (shopNameDisplay) shopNameDisplay.textContent = data.shop ? data.shop.name : 'PrintOk Shop';
 
-        // Quote the shop's own rates rather than the hardcoded defaults.
-        if (data.shop && data.shop.id) await fetchShopPricing(data.shop.id);
+        // Quote the shop's own rates rather than the hardcoded defaults, and
+        // ask the same shop what it wants from the customer.
+        if (data.shop && data.shop.id) {
+          await fetchShopPricing(data.shop.id);
+          await loadPortalConfig(data.shop.id);
+        }
       } else {
         const shopNameDisplay = document.getElementById('shopNameDisplay');
         if (shopNameDisplay) shopNameDisplay.textContent = 'Shop Not Found';

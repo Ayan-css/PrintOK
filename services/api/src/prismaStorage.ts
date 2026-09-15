@@ -4,7 +4,7 @@ import {
   Shop, Printer, PrintJob, PaymentState, PrintState, PrinterTelemetry,
   MerchantPricingConfig, MerchantStats, JobEvent, PriceSnapshot, PrintConfigSnapshot,
   FailureCategory,
-  ShopContactDetails,
+  ShopContactDetails, ShopPortalConfig, DEFAULT_PORTAL_CONFIG,
 } from '@printok/shared-types';
 import {
   IStorageProvider, CreateJobOptions, TransitionMeta, StateChangeResult, StoredIdempotencyRecord,
@@ -216,6 +216,8 @@ export class PrismaStorage implements IStorageProvider {
         isDuplex,
         paperSize,
         pageRange: options.pageRange,
+        customerName: options.customerName ?? null,
+        customerPhone: options.customerPhone ?? null,
         printConfig: printConfig as unknown as Prisma.InputJsonValue,
         totalPriceInCents: priceSnapshot.totalPriceInCents,
         priceSnapshot: priceSnapshot as unknown as Prisma.InputJsonValue,
@@ -1349,6 +1351,33 @@ export class PrismaStorage implements IStorageProvider {
 
   // -------------------------------------------------------------- pricing ---
 
+  public async getShopPortalConfig(shopId: string): Promise<ShopPortalConfig> {
+    const row = await this.prisma.shopPortalConfig.findUnique({ where: { shopId } });
+    if (!row) return { ...DEFAULT_PORTAL_CONFIG };
+
+    return {
+      collectCustomerName: row.collectCustomerName,
+      customerNameRequired: row.customerNameRequired,
+      collectCustomerPhone: row.collectCustomerPhone,
+      customerPhoneRequired: row.customerPhoneRequired,
+    };
+  }
+
+  public async updateShopPortalConfig(
+    shopId: string,
+    config: Partial<ShopPortalConfig>
+  ): Promise<ShopPortalConfig> {
+    const merged = { ...(await this.getShopPortalConfig(shopId)), ...config };
+
+    await this.prisma.shopPortalConfig.upsert({
+      where: { shopId },
+      create: { shopId, ...merged },
+      update: merged,
+    });
+
+    return merged;
+  }
+
   public async getShopPricing(shopId: string): Promise<MerchantPricingConfig> {
     const row = await this.prisma.shopPricing.findUnique({ where: { shopId } });
     if (!row) return { ...DEFAULT_PRICING_CONFIG };
@@ -1474,6 +1503,9 @@ export class PrismaStorage implements IStorageProvider {
       printerId: j.printerId,
       deviceId: j.deviceId ?? undefined,
       tokenNumber: j.tokenNumber ?? undefined,
+
+      customerName: j.customerName ?? undefined,
+      customerPhone: j.customerPhone ?? undefined,
 
       fileName: j.fileName,
       fileUrl: j.fileUrl,

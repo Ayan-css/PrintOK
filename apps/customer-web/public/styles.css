@@ -2445,6 +2445,26 @@ body::before {
   margin-top: 1px;
 }
 
+/*
+  Who placed the order. Sits between the file name and the print settings
+  because that is the reading order a shop owner actually uses: what to print,
+  who for, then how.
+*/
+.queue-customer {
+  font-size: 12px;
+  color: var(--color-text-primary);
+  margin-top: 2px;
+}
+
+.queue-customer a {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.queue-customer a:hover {
+  text-decoration: underline;
+}
+
 .queue-row-actions {
   display: flex;
   align-items: center;

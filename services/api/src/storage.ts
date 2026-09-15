@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import {
   Shop, Printer, PrintJob, PaymentState, PrintState, PrinterTelemetry,
   MerchantPricingConfig, MerchantStats, JobEvent, FailureCategory, PlanTier, getPlan,
-  ShopContactDetails,
+  ShopContactDetails, ShopPortalConfig, DEFAULT_PORTAL_CONFIG,
 } from '@printok/shared-types';
 import { S3StorageService } from './s3Storage';
 import { calculateJobPriceBreakdown, DEFAULT_PRICING_CONFIG } from './pricing';
@@ -15,6 +15,9 @@ export interface CreateJobOptions {
   /** Client-supplied key that deduplicates repeated submissions. */
   idempotencyKey?: string;
   fileSizeBytes?: number;
+  /** Present only when the shop's portal asked for them. */
+  customerName?: string;
+  customerPhone?: string;
 }
 
 /** Extra context recorded alongside a print state change. */
@@ -359,6 +362,10 @@ export interface IStorageProvider {
   getPrinterTelemetry(printerId: string): Promise<PrinterTelemetry>;
   getShopPricing(shopId: string): Promise<MerchantPricingConfig>;
   updateShopPricing(shopId: string, config: Partial<MerchantPricingConfig>): Promise<MerchantPricingConfig>;
+
+  /** What the shop's customer portal asks for. Defaults to collecting nothing. */
+  getShopPortalConfig(shopId: string): Promise<ShopPortalConfig>;
+  updateShopPortalConfig(shopId: string, config: Partial<ShopPortalConfig>): Promise<ShopPortalConfig>;
   getShopStats(shopId: string): Promise<MerchantStats>;
 }
 
@@ -371,6 +378,7 @@ export class MemoryStorage implements IStorageProvider {
   private dailyTokenCounters = new Map<string, { dateStr: string; counter: number }>();
   private jobEvents = new Map<string, JobEvent[]>();
   private idempotencyRecords = new Map<string, StoredIdempotencyRecord>();
+  private portalConfigs = new Map<string, ShopPortalConfig>();
   private agentDevices = new Map<string, AgentDeviceRecord & { tokenHash: string }>();
   private pairingCodes = new Map<string, PairingCodeRecord>();
   private securityEvents: AgentSecurityEventRecord[] = [];
@@ -560,6 +568,8 @@ export class MemoryStorage implements IStorageProvider {
       isDuplex,
       paperSize,
       pageRange: options.pageRange,
+      customerName: options.customerName,
+      customerPhone: options.customerPhone,
       printConfig: { pageCount, copies, isColor, isDuplex, paperSize, pageRange: options.pageRange },
       totalPriceInCents: priceSnapshot.totalPriceInCents,
       priceSnapshot,
@@ -1231,6 +1241,19 @@ export class MemoryStorage implements IStorageProvider {
       isOnline,
       paperStatus: record.paperStatus || 'OK',
     };
+  }
+
+  public async getShopPortalConfig(shopId: string): Promise<ShopPortalConfig> {
+    return { ...DEFAULT_PORTAL_CONFIG, ...(this.portalConfigs.get(shopId) ?? {}) };
+  }
+
+  public async updateShopPortalConfig(
+    shopId: string,
+    config: Partial<ShopPortalConfig>
+  ): Promise<ShopPortalConfig> {
+    const next = { ...(await this.getShopPortalConfig(shopId)), ...config };
+    this.portalConfigs.set(shopId, next);
+    return next;
   }
 
   public async getShopPricing(shopId: string): Promise<MerchantPricingConfig> {

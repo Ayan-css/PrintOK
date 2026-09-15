@@ -80,6 +80,7 @@ model Shop {
   printers          Printer[]
   jobs              PrintJob[]
   pricing           ShopPricing?
+  portalConfig      ShopPortalConfig?
   merchants         MerchantUser[]
 
   @@index([ownerEmail])
@@ -107,6 +108,26 @@ model ShopPricing {
 
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt @default(now())
+}
+
+/// What the customer portal asks for and offers, decided by the shop.
+///
+/// Separate from ShopPricing because this is about what the customer *sees*,
+/// not what they are charged, and the two are configured on different screens.
+model ShopPortalConfig {
+  shopId                String   @id
+  shop                  Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  /// Whether the portal asks for a name, and whether it insists.
+  /// Default false: a shop that has not opted in collects nothing, which is
+  /// what its customers were promised.
+  collectCustomerName   Boolean  @default(false)
+  customerNameRequired  Boolean  @default(false)
+  collectCustomerPhone  Boolean  @default(false)
+  customerPhoneRequired Boolean  @default(false)
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt @default(now())
 }
 
 model Printer {
@@ -162,6 +183,13 @@ model PrintJob {
 
   /// Counter shown to the customer at the counter, e.g. "001".
   tokenNumber       String?
+
+  // ---- Customer identity (optional, opt-in per shop) ----
+  /// Only set when the shop has asked for it. The published privacy policy
+  /// promises anonymity by default, and that holds for any shop that leaves
+  /// collection off — see ShopPortalConfig.
+  customerName      String?
+  customerPhone     String?
 
   // ---- Document reference ----
   fileName          String

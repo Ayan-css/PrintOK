@@ -258,6 +258,33 @@
             </div>
           </div>
 
+          <!--
+            Customer details. Hidden unless the shop has asked for them, so a
+            shop that collects nothing shows a form with nothing extra on it.
+            Populated from /api/shops/:id/portal-config at boot.
+          -->
+          <div id="customerDetailsBox" class="form-group" style="margin-top: 14px;" hidden>
+            <span class="form-label">Your details</span>
+            <p class="form-help" id="customerDetailsWhy" style="margin-top: 0;">
+              The shop uses this to contact you about this order.
+            </p>
+
+            <div id="customerNameField" hidden style="margin-top: 8px;">
+              <label class="form-label" for="inputCustomerName" id="labelCustomerName">Name</label>
+              <input type="text" id="inputCustomerName" class="form-input"
+                     maxlength="80" autocomplete="name" placeholder="Your name">
+            </div>
+
+            <div id="customerPhoneField" hidden style="margin-top: 8px;">
+              <label class="form-label" for="inputCustomerPhone" id="labelCustomerPhone">Mobile number</label>
+              <input type="tel" id="inputCustomerPhone" class="form-input"
+                     maxlength="20" inputmode="tel" autocomplete="tel" placeholder="e.g. 98200 12345">
+            </div>
+
+            <div id="customerDetailsError" class="form-help" role="alert"
+                 style="color: var(--color-danger); margin-top: 6px;" hidden></div>
+          </div>
+
           <!-- Cost Calculation Summary Box -->
           <div class="cost-summary-box">
             <div>

@@ -187,6 +187,15 @@ export interface PrintJob {
   deviceId?: string;
   tokenNumber?: string;
 
+  /**
+   * Customer identity, present only when the shop asked for it.
+   *
+   * Undefined is the normal case: collection is opt-in per shop, because the
+   * published privacy policy promises anonymity by default.
+   */
+  customerName?: string;
+  customerPhone?: string;
+
   // Document reference
   fileName: string;
   fileUrl: string;
@@ -279,7 +288,34 @@ export interface CreatePrintJobDto {
   isColor: boolean;
   isDuplex?: boolean;
   paperSize?: string;
+  /** Sent only when the shop's portal asks for them. */
+  customerName?: string;
+  customerPhone?: string;
 }
+
+/**
+ * What the customer portal asks for, decided by the shop.
+ *
+ * Every field defaults to false. A shop that has not opted in collects nothing,
+ * which is what the privacy policy tells its customers.
+ */
+export interface ShopPortalConfig {
+  collectCustomerName: boolean;
+  customerNameRequired: boolean;
+  collectCustomerPhone: boolean;
+  customerPhoneRequired: boolean;
+}
+
+export const DEFAULT_PORTAL_CONFIG: ShopPortalConfig = {
+  collectCustomerName: false,
+  customerNameRequired: false,
+  collectCustomerPhone: false,
+  customerPhoneRequired: false,
+};
+
+/** Longest we will store for either field, so a paste of a whole address is refused. */
+export const CUSTOMER_NAME_MAX = 80;
+export const CUSTOMER_PHONE_MAX = 20;
 
 /**
  * DTO: Create Print Job Output
