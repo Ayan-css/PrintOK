@@ -167,6 +167,84 @@ export interface PrinterTelemetry {
   paperStatus?: string;
 }
 
+/**
+ * A print capability a shop can offer.
+ *
+ * The catalogue is code and the shop's selection is data — a list of keys — so
+ * adding a capability is a deploy rather than a migration, and a key left
+ * behind by a rename is ignored on read rather than breaking a portal.
+ */
+export interface ServiceCapability {
+  key: string;
+  label: string;
+  /** Which section of the setup screen it sits in. */
+  group: 'popular' | 'advanced' | 'physical';
+  /** Shown under the label where the name alone is not enough. */
+  hint?: string;
+  /**
+   * Whether a shop that has never configured anything offers it.
+   *
+   * Deliberately conservative: colour and automatic duplex are off, because a
+   * shop promising them on a mono simplex printer takes money for something it
+   * cannot produce and has to refund.
+   */
+  defaultOn: boolean;
+}
+
+export const SERVICE_CATALOGUE: readonly ServiceCapability[] = [
+  // --- Popular: what nearly every counter does ---
+  { key: 'bw',              label: 'Black & white',       group: 'popular', defaultOn: true },
+  { key: 'colour',          label: 'Colour',              group: 'popular', defaultOn: false, hint: 'Only if this printer really prints colour' },
+  { key: 'single-sided',    label: 'Single-sided',        group: 'popular', defaultOn: true },
+  { key: 'duplex-auto',     label: 'Back-to-back',        group: 'popular', defaultOn: false, hint: 'Automatic — the printer turns the page itself' },
+  { key: 'duplex-manual',   label: 'Back-to-back',        group: 'popular', defaultOn: false, hint: 'Manual — two passes on a single-sided printer' },
+  { key: 'paper-a4',        label: 'A4',                  group: 'popular', defaultOn: true },
+  { key: 'paper-a3',        label: 'A3',                  group: 'popular', defaultOn: false },
+  { key: 'paper-letter',    label: 'Letter',              group: 'popular', defaultOn: false },
+  { key: 'multiple-copies', label: 'Multiple copies',     group: 'popular', defaultOn: true },
+  { key: 'page-selection',  label: 'Page selection',      group: 'popular', defaultOn: true, hint: 'Customer picks a page range' },
+
+  // --- Advanced: layout the customer chooses ---
+  { key: 'auto-orientation', label: 'Auto orientation',   group: 'advanced', defaultOn: true },
+  { key: 'portrait',         label: 'Portrait',           group: 'advanced', defaultOn: true },
+  { key: 'landscape',        label: 'Landscape',          group: 'advanced', defaultOn: true },
+  { key: 'fit-to-page',      label: 'Fit to page',        group: 'advanced', defaultOn: true },
+  { key: 'actual-size',      label: 'Actual size',        group: 'advanced', defaultOn: true },
+  { key: 'pages-per-sheet',  label: 'Pages per sheet',    group: 'advanced', defaultOn: false, hint: 'Two or four pages on one side' },
+  { key: 'collated',         label: 'Collated printing',  group: 'advanced', defaultOn: true },
+
+  // --- Physical: media and finishing the hardware or staff must do ---
+  { key: 'paper-plain',   label: 'Plain paper',    group: 'physical', defaultOn: true },
+  { key: 'paper-glossy',  label: 'Glossy paper',   group: 'physical', defaultOn: false },
+  { key: 'photo-4x6',     label: '4×6 photo',      group: 'physical', defaultOn: false },
+  { key: 'photo-5x7',     label: '5×7 photo',      group: 'physical', defaultOn: false },
+  { key: 'stapling',      label: 'Stapling',       group: 'physical', defaultOn: false, hint: 'Someone has to staple it' },
+];
+
+export const SERVICE_GROUPS: ReadonlyArray<{ id: ServiceCapability['group']; label: string; blurb: string }> = [
+  { id: 'popular',  label: 'Popular services',  blurb: 'What most counters do. Turn off anything this shop cannot.' },
+  { id: 'advanced', label: 'Advanced services', blurb: 'Layout choices the customer makes before paying.' },
+  { id: 'physical', label: 'Physical services', blurb: 'Media and finishing that the printer or a person has to handle.' },
+];
+
+/** The selection a shop starts with, in catalogue order. */
+export function defaultEnabledServices(): string[] {
+  return SERVICE_CATALOGUE.filter((c) => c.defaultOn).map((c) => c.key);
+}
+
+/**
+ * The shop's selection, resolved against the catalogue.
+ *
+ * An empty stored list means "never configured", not "offers nothing" — a shop
+ * that has not opened the setup screen must still be able to sell. Unknown keys
+ * are dropped, so a renamed capability degrades instead of breaking the portal.
+ */
+export function resolveEnabledServices(stored: string[] | undefined | null): string[] {
+  if (!stored || stored.length === 0) return defaultEnabledServices();
+  const known = new Set(SERVICE_CATALOGUE.map((c) => c.key));
+  return stored.filter((k) => known.has(k));
+}
+
 /** One cell of the rate grid: what this exact configuration costs. */
 export interface ShopRate {
   paperSize: string;
@@ -374,6 +452,8 @@ export interface ShopPortalConfig {
   customerNameRequired: boolean;
   collectCustomerPhone: boolean;
   customerPhoneRequired: boolean;
+  /** Capability keys offered, in display order. Empty means the defaults. */
+  enabledServices: string[];
 }
 
 export const DEFAULT_PORTAL_CONFIG: ShopPortalConfig = {
@@ -381,6 +461,7 @@ export const DEFAULT_PORTAL_CONFIG: ShopPortalConfig = {
   customerNameRequired: false,
   collectCustomerPhone: false,
   customerPhoneRequired: false,
+  enabledServices: [],
 };
 
 /** Longest we will store for either field, so a paste of a whole address is refused. */

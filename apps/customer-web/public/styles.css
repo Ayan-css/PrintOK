@@ -4121,3 +4121,210 @@ body::before {
   .jr-paper,
   .journey-step { transition: none; }
 }
+
+/* ===========================================================================
+   Business Setup
+
+   Six tabs over one save. The tab chips carry per-tab validity so an
+   incomplete section is visible without opening it — which is the whole reason
+   a shop notices it has no rates before a customer does.
+   =========================================================================== */
+
+.setup-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 18px 0 14px;
+}
+
+.setup-title {
+  font-family: var(--font-display, 'Space Grotesk', sans-serif);
+  font-size: 26px;
+  margin: 2px 0 4px;
+}
+
+.setup-sub {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  margin: 0;
+  max-width: 56ch;
+}
+
+.setup-tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 2px solid var(--color-border);
+  /* The bar scrolls sideways on a phone rather than wrapping into three rows
+     that push the content below the fold. */
+  scrollbar-width: none;
+}
+.setup-tabs::-webkit-scrollbar { display: none; }
+
+.setup-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  padding: 12px 14px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+}
+
+.setup-tab:hover { color: var(--color-text-primary); }
+
+.setup-tab.active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+.setup-tab-chip {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.setup-tab-chip.is-valid   { background: var(--color-success); }
+.setup-tab-chip.is-invalid { background: var(--color-warning); }
+
+.setup-pane { display: none; padding: 18px; }
+.setup-pane.active { display: block; }
+
+.setup-pane-title {
+  font-size: 16px;
+  margin: 0 0 4px;
+}
+
+.setup-pane-sub {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  margin: 0 0 16px;
+  max-width: 64ch;
+}
+
+.setup-block {
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+
+.switch-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.switch-row + .switch-row { margin-top: 10px; }
+
+.switch-row--nested {
+  margin-left: 26px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.switch-row input { margin-top: 3px; }
+
+/* --- service catalogue --- */
+
+.service-group + .service-group { margin-top: 22px; }
+
+.service-group-title { font-size: 14px; margin: 0 0 2px; }
+
+.service-group-blurb {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  margin: 0 0 10px;
+}
+
+.service-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.service-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  cursor: pointer;
+  background: var(--color-surface, transparent);
+}
+
+.service-item.is-on {
+  border-color: var(--color-success);
+  /* A tint rather than a fill: a grid of solid green blocks reads as an error
+     state, not as a list of things that are switched on. */
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
+}
+
+.service-item input { margin-top: 2px; }
+
+.service-label { display: block; font-size: 13px; font-weight: 600; }
+
+.service-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  margin-top: 1px;
+}
+
+/* --- rate grid --- */
+
+.table-scroll { overflow-x: auto; }
+
+.rate-grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 620px;
+}
+
+.rate-grid th,
+.rate-grid td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+}
+
+.rate-grid th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary);
+}
+
+.rate-grid .num { text-align: right; }
+
+.rate-input {
+  width: 92px;
+  text-align: right;
+  padding: 5px 7px;
+  font-size: 13px;
+}
+
+/* A refused value stays on screen so it can be corrected, rather than being
+   reverted under the cursor. */
+.rate-input.is-invalid,
+.form-input.is-invalid {
+  border-color: var(--color-danger);
+  outline: 2px solid color-mix(in srgb, var(--color-danger) 25%, transparent);
+}

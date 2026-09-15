@@ -23,6 +23,7 @@ import {
   PAYMENT_GATEWAY_FEE_BPS, PAYMENT_GATEWAY_LABEL, calculateShopNetCents,
   Printer, ShopPortalConfig, CUSTOMER_NAME_MAX, CUSTOMER_PHONE_MAX,
   ShopRate, ShopRateCard,
+  SERVICE_CATALOGUE, SERVICE_GROUPS, defaultEnabledServices, resolveEnabledServices,
 } from '@printok/shared-types';
 import {
   hashPassword, verifyPassword, validatePasswordStrength,
@@ -666,9 +667,24 @@ export function createApp(
    * Public, because the customer page must render the right fields before
    * anyone has signed in. It exposes only booleans — no shop detail.
    */
+  /**
+   * The capability catalogue itself: what a shop may offer, and what it starts
+   * with. Static, so the setup screen renders before any shop is loaded.
+   */
+  app.get('/api/service-catalogue', (_req: Request, res: Response) => {
+    return res.json({
+      capabilities: SERVICE_CATALOGUE,
+      groups: SERVICE_GROUPS,
+      defaults: defaultEnabledServices(),
+    });
+  });
+
   app.get('/api/shops/:shopId/portal-config', async (req: Request, res: Response) => {
     try {
-      return res.json(await storage.getShopPortalConfig(req.params.shopId));
+      const config = await storage.getShopPortalConfig(req.params.shopId);
+      // Resolved here rather than in storage, so "never configured" and
+      // "offers nothing" stay distinguishable in the database.
+      return res.json({ ...config, enabledServices: resolveEnabledServices(config.enabledServices) });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -687,6 +703,17 @@ export function createApp(
       if (bool(body.customerNameRequired) !== undefined) next.customerNameRequired = body.customerNameRequired;
       if (bool(body.collectCustomerPhone) !== undefined) next.collectCustomerPhone = body.collectCustomerPhone;
       if (bool(body.customerPhoneRequired) !== undefined) next.customerPhoneRequired = body.customerPhoneRequired;
+
+      if (Array.isArray(body.enabledServices)) {
+        // Filtered against the catalogue rather than stored as sent, so a stale
+        // or invented key cannot reach the portal. Order is the shop's and is
+        // preserved; duplicates are collapsed.
+        const known = new Set(SERVICE_CATALOGUE.map((c) => c.key));
+        const seen = new Set<string>();
+        next.enabledServices = body.enabledServices
+          .filter((k: unknown): k is string => typeof k === 'string')
+          .filter((k: string) => known.has(k) && !seen.has(k) && (seen.add(k), true));
+      }
 
       // Required without collected is unsatisfiable: the portal would never
       // show the field, and every order would then be refused for missing it.

@@ -169,6 +169,11 @@ model ShopPortalConfig {
   collectCustomerPhone  Boolean  @default(false)
   customerPhoneRequired Boolean  @default(false)
 
+  /// Capability keys this shop offers, in the order it wants them shown.
+  /// Empty means "the defaults" rather than "nothing" — a shop that has never
+  /// opened the setup screen must still be able to sell.
+  enabledServices       String[] @default([])
+
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt @default(now())
 }

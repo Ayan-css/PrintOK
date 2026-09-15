@@ -1704,6 +1704,30 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(a4.perPageCents, 500);
   });
 
+  await t.test('61. The service catalogue is offered, and a selection is filtered', async () => {
+    const cat = await (await fetch(`${baseUrl}/api/service-catalogue`)).json() as any;
+    assert.ok(cat.capabilities.length >= 15, 'the catalogue must be worth having');
+    assert.ok(cat.groups.length >= 3);
+    assert.ok(cat.defaults.includes('bw'), 'a new shop prints black and white');
+    assert.ok(!cat.defaults.includes('colour'), 'but is not assumed to print colour');
+
+    // A shop that has never configured anything still offers the defaults —
+    // empty means "not configured", not "offers nothing".
+    const fresh = await (await fetch(`${baseUrl}/api/shops/${createdShopId}/portal-config`)).json() as any;
+    assert.deepStrictEqual(fresh.enabledServices, cat.defaults);
+
+    // An invented key must never reach a customer's screen.
+    const res = await fetch(`${baseUrl}/api/shops/${createdShopId}/portal-config`, {
+      method: 'POST',
+      headers: merchantAuth,
+      body: JSON.stringify({ enabledServices: ['bw', 'colour', 'not-a-real-service', 'bw'] }),
+    });
+    assert.strictEqual(res.status, 200);
+
+    const saved = (await res.json()) as any;
+    assert.deepStrictEqual(saved.enabledServices, ['bw', 'colour'], 'unknown keys dropped, duplicates collapsed');
+  });
+
   await t.test('28. A brand new shop can find itself from its session alone', async () => {
     // The dashboard has no shop id of its own when a merchant signs in: not in
     // the URL, and nothing in localStorage on a fresh browser. It asks this

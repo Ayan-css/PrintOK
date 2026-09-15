@@ -2,26 +2,86 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "outputDirectory": "public",
   "routes": [
-    { "src": "/(.+)/$", "status": 308, "headers": { "Location": "/$1" } },
-
-    { "src": "/index\\.html", "status": 308, "headers": { "Location": "/" } },
-    { "src": "/(.+)\\.html", "status": 308, "headers": { "Location": "/$1" } },
-
-    { "src": "/", "dest": "/index.html" },
-    { "src": "/admin", "dest": "/admin.html" },
-    { "src": "/register", "dest": "/register.html" },
-    { "src": "/registration", "dest": "/register.html" },
-    { "src": "/dashboard", "dest": "/dashboard.html" },
-    { "src": "/print", "dest": "/print.html" },
-    { "src": "/p/[^/]+", "dest": "/print.html" },
-    { "src": "/privacy", "dest": "/privacy.html" },
-    { "src": "/terms", "dest": "/terms.html" },
-    { "src": "/refund", "dest": "/refund.html" },
-    { "src": "/example", "dest": "/example.html" },
-    { "src": "/404", "dest": "/404.html" },
-
-    { "handle": "filesystem" },
-
-    { "src": "/.*", "status": 404, "dest": "/404.html" }
+    {
+      "src": "/(.+)/$",
+      "status": 308,
+      "headers": {
+        "Location": "/$1"
+      }
+    },
+    {
+      "src": "/index\\.html",
+      "status": 308,
+      "headers": {
+        "Location": "/"
+      }
+    },
+    {
+      "src": "/(.+)\\.html",
+      "status": 308,
+      "headers": {
+        "Location": "/$1"
+      }
+    },
+    {
+      "src": "/",
+      "dest": "/index.html"
+    },
+    {
+      "src": "/admin",
+      "dest": "/admin.html"
+    },
+    {
+      "src": "/register",
+      "dest": "/register.html"
+    },
+    {
+      "src": "/registration",
+      "dest": "/register.html"
+    },
+    {
+      "src": "/dashboard",
+      "dest": "/dashboard.html"
+    },
+    {
+      "src": "/print",
+      "dest": "/print.html"
+    },
+    {
+      "src": "/p/[^/]+",
+      "dest": "/print.html"
+    },
+    {
+      "src": "/privacy",
+      "dest": "/privacy.html"
+    },
+    {
+      "src": "/terms",
+      "dest": "/terms.html"
+    },
+    {
+      "src": "/refund",
+      "dest": "/refund.html"
+    },
+    {
+      "src": "/example",
+      "dest": "/example.html"
+    },
+    {
+      "src": "/404",
+      "dest": "/404.html"
+    },
+    {
+      "src": "/setup",
+      "dest": "/setup.html"
+    },
+    {
+      "handle": "filesystem"
+    },
+    {
+      "src": "/.*",
+      "status": 404,
+      "dest": "/404.html"
+    }
   ]
 }

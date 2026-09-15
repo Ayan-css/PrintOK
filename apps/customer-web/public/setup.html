@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="PrintOk Business Setup — configure the services your shop offers, your rates, discounts and what your customers are asked for.">
+  <meta name="theme-color" content="#0d0d0d">
+  <meta name="robots" content="noindex">
+  <title>Business Setup — PrintOk</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/styles.css">
+
+  <!--
+    Applied before the stylesheet paints, so a shop that chose dark never sees
+    a white flash on the way in. Same script as the dashboard, deliberately
+    duplicated rather than deferred to a file: a request for it would land
+    after first paint, which is the whole problem.
+  -->
+  <script>
+    (function () {
+      var chosen = null;
+      try { chosen = localStorage.getItem('printok.theme'); } catch (e) { /* private browsing */ }
+      if (chosen !== 'dark' && chosen !== 'light') {
+        chosen = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+          ? 'dark' : 'light';
+      }
+      document.documentElement.setAttribute('data-theme', chosen);
+    })();
+  </script>
+</head>
+<body class="bg-paper">
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+  <div class="app-wrapper">
+    <div class="page-container page-container--wide">
+
+      <header class="app-header">
+        <a href="/dashboard" class="brand" style="text-decoration: none; color: inherit;">
+          <div class="brand-mark">
+            <svg viewBox="0 0 18 18" fill="none">
+              <rect x="2" y="2" width="14" height="11" rx="1" stroke="white" stroke-width="2"/>
+              <rect x="5" y="13" width="8" height="4" rx="0.5" stroke="white" stroke-width="1.5"/>
+              <rect x="5" y="6" width="5" height="2" rx="0.5" fill="white"/>
+            </svg>
+          </div>
+          <div class="brand-text">
+            <div class="brand-name">PrintOk</div>
+            <div class="brand-tagline">Business Setup</div>
+          </div>
+        </a>
+
+        <div class="header-actions">
+          <a href="/dashboard" class="btn btn-outline btn-sm">← Dashboard</a>
+          <!--
+            One save for the whole wizard. Six tabs that each saved themselves
+            would mean a shop could half-configure itself and not know which
+            half took.
+          -->
+          <button type="button" id="btnSaveAll" class="btn btn-primary btn-sm" disabled>
+            Save changes
+          </button>
+        </div>
+      </header>
+
+      <!-- Signed out -->
+      <div id="setupSignedOut" class="card card--elevated" hidden>
+        <div class="empty-state">
+          <div class="empty-icon">🔒</div>
+          <div class="empty-title">Sign in to set up your shop</div>
+          <div class="empty-text">Business setup is only available to the shop owner.</div>
+          <a href="/dashboard" class="btn btn-primary" style="margin-top: 12px;">Go to sign in</a>
+        </div>
+      </div>
+
+      <main id="setupMain" hidden>
+
+        <div class="setup-heading">
+          <div>
+            <div class="label-text">BUSINESS SETUP</div>
+            <h1 class="setup-title" id="setupShopName">Your shop</h1>
+            <p class="setup-sub">What you offer, what it costs, and what your customers are asked for.</p>
+          </div>
+          <span class="badge" id="setupValidity">Loading…</span>
+        </div>
+
+        <!-- Tab bar. Each chip carries its own validity, so an incomplete tab
+             is visible without opening it. -->
+        <div class="card card--elevated" style="padding: 0;">
+          <div class="setup-tabs" role="tablist" aria-label="Business setup sections">
+            <button class="setup-tab active" data-tab="tabProfile"   role="tab" aria-selected="true"  type="button">
+              <span class="setup-tab-chip" data-chip="tabProfile">✓</span> Business Profile
+            </button>
+            <button class="setup-tab" data-tab="tabRates"    role="tab" aria-selected="false" type="button" tabindex="-1">
+              <span class="setup-tab-chip" data-chip="tabRates">✓</span> Pricing
+            </button>
+            <button class="setup-tab" data-tab="tabDiscounts" role="tab" aria-selected="false" type="button" tabindex="-1">
+              <span class="setup-tab-chip" data-chip="tabDiscounts">✓</span> Discounts
+            </button>
+            <button class="setup-tab" data-tab="tabPrinters" role="tab" aria-selected="false" type="button" tabindex="-1">
+              <span class="setup-tab-chip" data-chip="tabPrinters">✓</span> Printers
+            </button>
+            <button class="setup-tab" data-tab="tabPortal"   role="tab" aria-selected="false" type="button" tabindex="-1">
+              <span class="setup-tab-chip" data-chip="tabPortal">✓</span> Customer Portal
+            </button>
+            <button class="setup-tab" data-tab="tabAutomation" role="tab" aria-selected="false" type="button" tabindex="-1">
+              <span class="setup-tab-chip" data-chip="tabAutomation">✓</span> Automation
+            </button>
+          </div>
+
+          <!-- ============================ PROFILE =========================== -->
+          <section id="tabProfile" class="setup-pane active" role="tabpanel">
+            <h2 class="setup-pane-title">Services you offer</h2>
+            <p class="setup-pane-sub">
+              Turn off anything this shop cannot actually do. A customer is never
+              shown an option you have switched off here, so they cannot pay for
+              something you then have to refund.
+            </p>
+            <div id="serviceGroups" class="service-groups"></div>
+          </section>
+
+          <!-- ============================= RATES ============================ -->
+          <section id="tabRates" class="setup-pane" role="tabpanel">
+            <h2 class="setup-pane-title">Pricing grid</h2>
+            <p class="setup-pane-sub">
+              One rate per combination, in rupees per page. Back-to-back is
+              charged per printed side.
+            </p>
+            <div class="table-scroll">
+              <table class="rate-grid" id="rateGrid">
+                <thead>
+                  <tr>
+                    <th>Paper</th>
+                    <th>Colour</th>
+                    <th>Sides</th>
+                    <th class="num">Rate</th>
+                    <th class="num">Bulk rate</th>
+                    <th class="num">Copies 2+</th>
+                    <th>Offered</th>
+                  </tr>
+                </thead>
+                <tbody id="rateGridBody"></tbody>
+              </table>
+            </div>
+            <p class="form-help">
+              Leave a discount cell blank to charge the normal rate for it.
+            </p>
+          </section>
+
+          <!-- =========================== DISCOUNTS ========================== -->
+          <section id="tabDiscounts" class="setup-pane" role="tabpanel">
+            <h2 class="setup-pane-title">Discounts</h2>
+
+            <div class="setup-block">
+              <label class="switch-row">
+                <input type="checkbox" id="bulkEnabled">
+                <span>
+                  <strong>High-value order discount</strong>
+                  <span class="form-help">
+                    Charge the bulk rates once an order crosses an amount. Tested
+                    against what the order would cost at normal rates, so a
+                    discount never disqualifies the order that earned it.
+                  </span>
+                </span>
+              </label>
+
+              <div class="form-group" style="max-width: 260px; margin-top: 10px;">
+                <label class="form-label" for="bulkThreshold">Apply when the order is at least (₹)</label>
+                <input type="number" id="bulkThreshold" class="form-input" min="1" step="1">
+              </div>
+            </div>
+
+            <div class="setup-block">
+              <label class="switch-row">
+                <input type="checkbox" id="additionalCopyEnabled">
+                <span>
+                  <strong>Additional copy discount</strong>
+                  <span class="form-help">
+                    Copy 1 at the normal price; copies 2 and beyond at the
+                    "Copies 2+" rate on the Pricing tab.
+                  </span>
+                </span>
+              </label>
+            </div>
+          </section>
+
+          <!-- ============================ PRINTERS ========================== -->
+          <section id="tabPrinters" class="setup-pane" role="tabpanel">
+            <h2 class="setup-pane-title">Printers and agent</h2>
+            <p class="setup-pane-sub">
+              Pairing, the QR poster and the agent download live on the
+              dashboard, alongside the live connection status.
+            </p>
+            <a href="/dashboard#agent" class="btn btn-outline">Open QR Poster &amp; Agent →</a>
+          </section>
+
+          <!-- ============================= PORTAL =========================== -->
+          <section id="tabPortal" class="setup-pane" role="tabpanel">
+            <h2 class="setup-pane-title">What customers are asked for</h2>
+            <p class="setup-pane-sub">
+              Collected only if you ask. Leave both off and PrintOk stores nothing
+              about who placed an order, which is what your privacy notice says by
+              default.
+            </p>
+
+            <div class="setup-block">
+              <label class="switch-row">
+                <input type="checkbox" id="collectCustomerName">
+                <span><strong>Ask for a name</strong></span>
+              </label>
+              <label class="switch-row switch-row--nested">
+                <input type="checkbox" id="customerNameRequired">
+                <span>Refuse the order without one</span>
+              </label>
+            </div>
+
+            <div class="setup-block">
+              <label class="switch-row">
+                <input type="checkbox" id="collectCustomerPhone">
+                <span><strong>Ask for a mobile number</strong></span>
+              </label>
+              <label class="switch-row switch-row--nested">
+                <input type="checkbox" id="customerPhoneRequired">
+                <span>Refuse the order without one</span>
+              </label>
+            </div>
+          </section>
+
+          <!-- =========================== AUTOMATION ========================= -->
+          <section id="tabAutomation" class="setup-pane" role="tabpanel">
+            <h2 class="setup-pane-title">Automation</h2>
+            <p class="setup-pane-sub">
+              Auto-print modes, the order separator sheet and print receipts are
+              not built yet. Until they are, a paid job is queued and the agent
+              prints it.
+            </p>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="/setup.js" defer></script>
+</body>
+</html>

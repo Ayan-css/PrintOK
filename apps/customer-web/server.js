@@ -42,6 +42,7 @@ const PAGES = {
   '/terms': 'terms.html',
   '/refund': 'refund.html',
   '/example': 'example.html',
+  '/setup': 'setup.html',
   '/404': '404.html',
 };
 

@@ -1204,6 +1204,13 @@ document.addEventListener('DOMContentLoaded', () => {
           const customerLink = document.getElementById('btnCustomerLink');
           if (customerLink) customerLink.href = `/?printer=${encodeURIComponent(printer.id)}`;
 
+          // The wizard reads the shop from storage, but a link that carries it
+          // works on a browser that has never stored anything.
+          const setupLink = document.getElementById('btnBusinessSetup');
+          if (setupLink && dashShopId) {
+            setupLink.href = `/setup?shop=${encodeURIComponent(dashShopId)}`;
+          }
+
           const exeLink = document.getElementById('btnDownloadAgentExe');
           if (exeLink) exeLink.href = `${API_BASE}/api/agent-installer`;
           const cfgLink = document.getElementById('btnDownloadAgentConfigFile');

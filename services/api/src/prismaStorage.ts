@@ -1440,6 +1440,7 @@ export class PrismaStorage implements IStorageProvider {
       customerNameRequired: row.customerNameRequired,
       collectCustomerPhone: row.collectCustomerPhone,
       customerPhoneRequired: row.customerPhoneRequired,
+      enabledServices: row.enabledServices ?? [],
     };
   }
 

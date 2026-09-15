@@ -35,7 +35,7 @@ test('customer web routing', async (t) => {
     // this covers both: there is no client-side router to fall out of step.
     const routes = [
       '/register', '/registration', '/print', '/admin', '/dashboard',
-      '/privacy', '/terms', '/refund', '/404', '/p/prn_example',
+      '/privacy', '/terms', '/refund', '/404', '/p/prn_example', '/setup',
     ];
 
     for (const route of routes) {
