@@ -2207,6 +2207,72 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     );
   });
 
+  await t.test('72. Earnings account for every deduction, per order', async () => {
+    const reg = await (await fetch(`${baseUrl}/api/shops/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopName: 'Money Shop', ownerEmail: 'money@example.com', printerName: 'M' }),
+    })).json() as any;
+    const claimRes = await fetch(`${baseUrl}/api/merchant/claim`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId: reg.shop.id, ownerEmail: 'money@example.com', password: 'MoneyShopPass1', name: 'M' }),
+    });
+    const claim = (await claimRes.json()) as any;
+    assert.strictEqual(claimRes.status, 201, `claim must succeed: ${JSON.stringify(claim)}`);
+    const auth = { Authorization: `Bearer ${claim.token}`, 'Content-Type': 'application/json' };
+
+    const makeJob = async () => {
+      const res = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          printerId: reg.printer.id, fileName: 'm.pdf',
+          fileBase64: Buffer.from('%PDF-1.4 m').toString('base64'),
+          copies: 10, isColor: false,
+        }),
+      });
+      assert.strictEqual(res.status, 201);
+      return ((await res.json()) as any).job;
+    };
+
+    const paid = await makeJob();
+    await fetch(`${baseUrl}/api/print-jobs/${paid.id}/manual-override`, { method: 'POST' });
+    await makeJob(); // left unpaid
+
+    const data = await (await fetch(`${baseUrl}/api/shops/${reg.shop.id}/earnings`, { headers: auth })).json() as any;
+
+    // An unpaid job has earned nothing, so it is not in here at all.
+    assert.strictEqual(data.totals.orders, 1, 'only money that actually arrived counts');
+    assert.strictEqual(data.rows.length, 1);
+
+    const row = data.rows[0];
+    assert.strictEqual(row.grossCents, paid.totalPriceInCents);
+
+    // The deductions have to add up. A "you keep" figure that does not
+    // reconcile against the charge is the one number a shop will check.
+    assert.strictEqual(
+      row.netCents + row.razorpayFeeCents + row.platformCommissionCents,
+      row.grossCents,
+      'gross must equal what was taken plus what was kept'
+    );
+
+    assert.strictEqual(data.totals.grossCents, row.grossCents);
+    assert.strictEqual(data.totals.netCents, row.netCents);
+
+    // The estimate is labelled as one, because it will not match the
+    // settlement statement to the paisa.
+    assert.strictEqual(data.feesAreEstimated, true);
+    assert.strictEqual(data.settlement, 'pending-route', 'this shop is not connected to Razorpay yet');
+
+    // A window with nothing in it reports zero rather than everything.
+    const empty = await (await fetch(
+      `${baseUrl}/api/shops/${reg.shop.id}/earnings?from=2020-01-01&to=2020-01-31`, { headers: auth }
+    )).json() as any;
+    assert.strictEqual(empty.totals.orders, 0);
+    assert.strictEqual(empty.totals.grossCents, 0);
+
+    // Only the owner sees the takings.
+    assert.strictEqual((await fetch(`${baseUrl}/api/shops/${reg.shop.id}/earnings`)).status, 401);
+  });
+
   await t.test('28. A brand new shop can find itself from its session alone', async () => {
     // The dashboard has no shop id of its own when a merchant signs in: not in
     // the URL, and nothing in localStorage on a fresh browser. It asks this

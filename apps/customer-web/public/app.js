@@ -719,7 +719,10 @@ document.addEventListener('DOMContentLoaded', () => {
      * printer and its pairing code, and landing on the queue instead would make
      * that link a lie.
      */
-    const HASH_TABS = { '#agent': 'tabQr', '#queue': 'tabQueue', '#analytics': 'tabStats' };
+    const HASH_TABS = {
+      '#agent': 'tabQr', '#queue': 'tabQueue',
+      '#earnings': 'tabMoney', '#analytics': 'tabStats',
+    };
 
     function activateTabFromHash() {
       const wanted = HASH_TABS[window.location.hash];
@@ -992,6 +995,128 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
+    // ---------------------------------------------------------- earnings ---
+
+    let moneyFrom = '';
+    let moneyTo = '';
+
+    /**
+     * How the money actually reaches this shop.
+     *
+     * Said before any figure, because a shop owner's first question about a
+     * payments screen is not "how much" but "when do I get it" — and the honest
+     * answer today is "not through this screen yet".
+     */
+    function renderSettlement(settlement) {
+      const box = document.getElementById('settlementNotice');
+      if (!box) return;
+
+      if (settlement === 'automatic') {
+        box.className = 'settlement-notice is-good';
+        box.innerHTML = `
+          <strong>You are paid on every order.</strong>
+          Each payment is split at the moment the customer pays and your share goes
+          straight to your own Razorpay account. There is nothing to withdraw and
+          no request to make.`;
+      } else {
+        box.className = 'settlement-notice is-pending';
+        box.innerHTML = `
+          <strong>Automatic settlement is not switched on yet.</strong>
+          Once your shop is connected to Razorpay, each order is split at payment
+          and your share arrives in your own account without a withdrawal request.
+          Until then the figures below are what you have earned, not what has been
+          paid out.`;
+      }
+    }
+
+    function renderMoney(data) {
+      renderSettlement(data.settlement);
+
+      const totals = document.getElementById('moneyTotals');
+      if (totals) {
+        const t = data.totals;
+        const tile = (label, cents, hint) => `
+          <div class="money-tile">
+            <div class="money-label">${escapeHtml(label)}</div>
+            <div class="money-value">${formatRupees(cents)}</div>
+            ${hint ? `<div class="money-hint">${escapeHtml(hint)}</div>` : ''}
+          </div>`;
+
+        totals.innerHTML = [
+          tile('Customers paid', t.grossCents, `${t.orders} order${t.orders === 1 ? '' : 's'}`),
+          tile('Razorpay fees', t.razorpayFeeCents, `${(data.gatewayFeeBps / 100).toFixed(2)}% estimated`),
+          tile('PrintOk commission', t.platformCommissionCents, `${(data.commissionBps / 100).toFixed(2)}% of each order`),
+          tile('You keep', t.netCents, 'after both'),
+        ].join('');
+      }
+
+      const body = document.getElementById('ledgerBody');
+      if (body) {
+        body.innerHTML = data.rows.length === 0
+          ? `<tr><td colspan="7" class="ledger-empty">No paid orders in this period.</td></tr>`
+          : data.rows.map((r) => `
+            <tr>
+              <td>${escapeHtml(new Date(r.createdAt).toLocaleDateString())}</td>
+              <td>
+                <div class="ledger-file">${escapeHtml(r.fileName)}</div>
+                <div class="ledger-meta">${escapeHtml(r.tokenNumber || r.orderId)}</div>
+              </td>
+              <td>${escapeHtml(r.customerName || '—')}</td>
+              <td class="num">${formatRupees(r.grossCents)}</td>
+              <td class="num ledger-out">−${formatRupees(r.razorpayFeeCents)}</td>
+              <td class="num ledger-out">−${formatRupees(r.platformCommissionCents)}</td>
+              <td class="num ledger-net">${formatRupees(r.netCents)}</td>
+            </tr>`).join('');
+      }
+
+      const note = document.getElementById('ledgerNote');
+      if (note) {
+        note.textContent = data.feesAreEstimated
+          ? 'Razorpay fees are estimated at the published rate. The exact amount appears on your Razorpay settlement statement.'
+          : '';
+      }
+    }
+
+    async function loadMoney() {
+      if (!dashShopId) return;
+      try {
+        const params = new URLSearchParams();
+        if (moneyFrom) params.set('from', moneyFrom);
+        if (moneyTo) params.set('to', moneyTo);
+
+        const res = await shopFetch(
+          `/api/shops/${encodeURIComponent(dashShopId)}/earnings?${params.toString()}`
+        );
+        if (!res.ok) return;
+        renderMoney(await res.json());
+      } catch {
+        // keep the last good render
+      }
+    }
+
+    document.getElementById('moneyFrom')?.addEventListener('change', (e) => {
+      moneyFrom = e.target.value; loadMoney();
+    });
+    document.getElementById('moneyTo')?.addEventListener('change', (e) => {
+      moneyTo = e.target.value; loadMoney();
+    });
+    document.getElementById('btnMoneyThisMonth')?.addEventListener('click', () => {
+      const now = new Date();
+      const first = new Date(now.getFullYear(), now.getMonth(), 1);
+      moneyFrom = first.toISOString().slice(0, 10);
+      moneyTo = '';
+      document.getElementById('moneyFrom').value = moneyFrom;
+      document.getElementById('moneyTo').value = '';
+      loadMoney();
+    });
+    document.getElementById('btnMoneyAll')?.addEventListener('click', () => {
+      moneyFrom = '';
+      moneyTo = '';
+      document.getElementById('moneyFrom').value = '';
+      document.getElementById('moneyTo').value = '';
+      loadMoney();
+    });
+
     async function loadPairedDevices() {
       if (!dashPrinterId) return;
       try {
@@ -1173,7 +1298,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function loadDashboard() {
       if (!dashShopId) return;
-      await Promise.all([loadShopIdentity(), loadMetrics(), loadQueue()]);
+      await Promise.all([loadShopIdentity(), loadMetrics(), loadQueue(), loadMoney()]);
       await loadTelemetry();
     }
 

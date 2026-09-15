@@ -192,6 +192,10 @@
                     role="tab" aria-selected="false" aria-controls="tabQr" tabindex="-1">
               🖨️ QR Poster &amp; Agent
             </button>
+            <button class="dash-tab-btn" id="tabBtnMoney" data-tab="tabMoney" type="button"
+                    role="tab" aria-selected="false" aria-controls="tabMoney" tabindex="-1">
+              💰 Earnings
+            </button>
             <button class="dash-tab-btn" id="tabBtnStats" data-tab="tabStats" type="button"
                     role="tab" aria-selected="false" aria-controls="tabStats" tabindex="-1">
               📊 Revenue Analytics
@@ -244,6 +248,52 @@
                 <div class="empty-sub">Customer print requests will appear here in real-time as they scan your shop QR code.</div>
               </div>
             </div>
+          </div>
+
+          <!-- TAB: EARNINGS -->
+          <div id="tabMoney" role="tabpanel" aria-labelledby="tabBtnMoney" tabindex="0" class="dash-tab-pane" hidden style="padding: 20px;">
+
+            <!--
+              How the money reaches the shop, said plainly at the top. A shop
+              owner's first question about a payments screen is not "how much"
+              but "when do I actually get it", and guessing at that is how trust
+              goes.
+            -->
+            <div id="settlementNotice" class="settlement-notice"></div>
+
+            <div class="money-totals" id="moneyTotals"></div>
+
+            <div class="queue-filters">
+              <div class="queue-month">
+                <label class="form-label" for="moneyFrom">From</label>
+                <input type="date" id="moneyFrom" class="form-input">
+              </div>
+              <div class="queue-month">
+                <label class="form-label" for="moneyTo">To</label>
+                <input type="date" id="moneyTo" class="form-input">
+              </div>
+              <button type="button" id="btnMoneyThisMonth" class="btn btn-outline btn-sm">This month</button>
+              <button type="button" id="btnMoneyAll" class="btn btn-outline btn-sm">All time</button>
+            </div>
+
+            <div class="table-scroll">
+              <table class="ledger">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Order</th>
+                    <th>Customer</th>
+                    <th class="num">Charged</th>
+                    <th class="num">Razorpay</th>
+                    <th class="num">PrintOk</th>
+                    <th class="num">You keep</th>
+                  </tr>
+                </thead>
+                <tbody id="ledgerBody"></tbody>
+              </table>
+            </div>
+
+            <p class="form-help" id="ledgerNote"></p>
           </div>
 
           <!-- TAB 3: QR POSTER & AGENT PAIRING -->

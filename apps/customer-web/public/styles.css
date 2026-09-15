@@ -4698,3 +4698,110 @@ body::before {
   font-weight: 600;
   color: var(--color-primary);
 }
+
+/* --- earnings --------------------------------------------------------------
+   The settlement notice comes before any figure on purpose. A shop owner's
+   first question about a payments screen is when the money arrives, and a
+   screenful of totals that does not answer it reads as an evasion.
+   -------------------------------------------------------------------------- */
+
+.settlement-notice {
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+
+.settlement-notice.is-good {
+  border-color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
+}
+
+.settlement-notice.is-pending {
+  border-color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+}
+
+.money-totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.money-tile {
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.money-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary);
+}
+
+.money-value {
+  font-size: 20px;
+  font-weight: 700;
+  margin-top: 3px;
+  /* Tabular figures so a column of money lines up on the decimal rather than
+     wandering with the width of each digit. */
+  font-variant-numeric: tabular-nums;
+}
+
+.money-hint {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  margin-top: 2px;
+}
+
+.ledger {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 660px;
+}
+
+.ledger th,
+.ledger td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.ledger th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary);
+}
+
+.ledger .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ledger-file { font-weight: 600; }
+
+.ledger-meta {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  margin-top: 1px;
+}
+
+/* Deductions read as deductions without a colour that says "error". */
+.ledger-out { color: var(--color-text-secondary); }
+
+.ledger-net { font-weight: 700; }
+
+.ledger-empty {
+  text-align: center;
+  color: var(--color-text-secondary);
+  padding: 22px 10px;
+}

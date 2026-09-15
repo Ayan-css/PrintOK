@@ -2681,6 +2681,93 @@ export function createApp(
   /**
    * Shop Instant Payout Withdrawal Endpoint
    */
+  /**
+   * What the shop has earned, order by order.
+   *
+   * Built from the jobs themselves rather than a ledger table, because there is
+   * no ledger table yet and inventing one that is not written to by the payment
+   * path would be worse than deriving from the source of truth.
+   *
+   * The fee figures are estimates, and say so. Razorpay reports the actual fee
+   * and tax on the payment object, and until the webhook stores those this can
+   * only apply the published rate — a number that is close but not the one that
+   * will appear on a settlement statement.
+   */
+  app.get('/api/shops/:shopId/earnings', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res, { requireOwner: true });
+    if (!merchant) return;
+
+    try {
+      const { shopId } = req.params;
+      const [shop, plan, jobs] = await Promise.all([
+        storage.getShop(shopId),
+        storage.getShopPlan(shopId),
+        storage.getRecentJobsForShop(shopId, 500),
+      ]);
+      if (!shop) return res.status(404).json({ error: 'Shop not found.' });
+
+      const from = typeof req.query.from === 'string' ? req.query.from : '';
+      const to = typeof req.query.to === 'string' ? req.query.to : '';
+
+      // Compared as ISO strings. The timestamps already sort correctly that
+      // way, and a Date round-trip would shift a job either side of midnight
+      // into the wrong day.
+      const inRange = (iso: string) =>
+        (!from || iso >= from) && (!to || iso <= `${to}T23:59:59.999Z`);
+
+      const commissionBps = plan?.commissionBps ?? 800;
+
+      // Only money that actually arrived. A job awaiting payment has earned
+      // nothing, and a refunded one has un-earned what it took.
+      const earned = jobs.filter(
+        (j) => j.paymentState === PaymentState.Paid && inRange(String(j.createdAt))
+      );
+
+      const rows = earned.map((job) => {
+        const gross = job.totalPriceInCents || 0;
+        const { gatewayFeeCents, serviceFeeCents, netCents } = calculateShopNetCents(gross, commissionBps);
+
+        return {
+          jobId: job.id,
+          orderId: job.orderId,
+          tokenNumber: job.tokenNumber ?? null,
+          createdAt: job.createdAt,
+          fileName: job.fileName,
+          customerName: job.customerName ?? null,
+          paymentRef: job.paymentRef ?? null,
+          printState: job.printState,
+          grossCents: gross,
+          // What the shop actually banked on this order, and what each
+          // deduction was for. A single "net" number invites the question this
+          // answers.
+          razorpayFeeCents: gatewayFeeCents,
+          platformCommissionCents: serviceFeeCents,
+          netCents,
+        };
+      });
+
+      const sum = (pick: (r: (typeof rows)[number]) => number) => rows.reduce((t, r) => t + pick(r), 0);
+
+      return res.json({
+        settlement: shop.razorpayAccountStatus === 'activated' ? 'automatic' : 'pending-route',
+        commissionBps,
+        gatewayFeeBps: PAYMENT_GATEWAY_FEE_BPS,
+        // Named so nobody reads these as a settlement statement.
+        feesAreEstimated: true,
+        totals: {
+          orders: rows.length,
+          grossCents: sum((r) => r.grossCents),
+          razorpayFeeCents: sum((r) => r.razorpayFeeCents),
+          platformCommissionCents: sum((r) => r.platformCommissionCents),
+          netCents: sum((r) => r.netCents),
+        },
+        rows: rows.slice(0, 200),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/api/shops/:shopId/withdraw', async (req: Request, res: Response) => {
     const merchant = await authenticateMerchant(req, res, { requireOwner: true });
     if (!merchant) return;
