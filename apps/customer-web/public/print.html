@@ -186,7 +186,7 @@
           </div>
 
           <!-- Page Selection Range Pills -->
-          <div class="form-group" role="group" aria-labelledby="lblPageRange">
+          <div class="form-group" id="groupPageRange" role="group" aria-labelledby="lblPageRange">
             <span class="form-label" id="lblPageRange">Page Selection Range</span>
             <div class="option-pill-group">
               <label class="option-pill active" id="pillPagesAll">
@@ -208,7 +208,7 @@
           </div>
 
           <!-- Color Selector Pills -->
-          <div class="form-group" role="group" aria-labelledby="lblColorMode">
+          <div class="form-group" id="groupColorMode" role="group" aria-labelledby="lblColorMode">
             <span class="form-label" id="lblColorMode">Color Mode</span>
             <div class="option-pill-group">
               <label class="option-pill active" id="pillBw">
@@ -223,7 +223,7 @@
           </div>
 
           <!-- Duplex Paper Mode Pills -->
-          <div class="form-group" role="group" aria-labelledby="lblDuplexMode">
+          <div class="form-group" id="groupDuplexMode" role="group" aria-labelledby="lblDuplexMode">
             <span class="form-label" id="lblDuplexMode">Print Sides (Duplex)</span>
             <div class="option-pill-group">
               <label class="option-pill active" id="pillSingle">
@@ -239,7 +239,7 @@
 
           <!-- Paper Size & Copies Grid -->
           <div class="grid-2">
-            <div class="form-group">
+            <div class="form-group" id="groupPaperSize">
               <label class="form-label" for="selectPaperSize">Paper Size</label>
               <select id="selectPaperSize" class="form-select">
                 <option value="A4" selected>A4 Standard</option>
@@ -248,7 +248,7 @@
               </select>
             </div>
 
-            <div class="form-group">
+            <div class="form-group" id="groupCopies">
               <span class="form-label" id="lblCopies">Copies</span>
               <div class="stepper-box">
                 <button type="button" id="btnDecCopies" class="stepper-btn" aria-label="Decrease copies">-</button>

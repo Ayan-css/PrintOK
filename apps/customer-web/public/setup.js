@@ -100,6 +100,7 @@
     const btn = document.getElementById('btnSaveAll');
     if (btn) btn.disabled = !isDirty();
     refreshValidity();
+    renderPreview();
   }
 
   window.addEventListener('beforeunload', (e) => {
@@ -265,6 +266,102 @@
         });
       });
     });
+  }
+
+  // ---------------------------------------------------------------- preview ---
+
+  /**
+   * What a customer would be shown, derived from the unsaved draft.
+   *
+   * The same two rules the server uses: the shop has to offer the service, and
+   * a priced, enabled rate has to exist for the combination. Kept deliberately
+   * small and duplicated rather than fetched — the whole point of the preview
+   * is that it reflects edits that have not been saved, so there is nothing to
+   * ask the server about yet. The server remains the authority at submit time.
+   */
+  function derivePreview() {
+    const offers = new Set(draft.portal.enabledServices || []);
+    const paperKeys = { A4: 'paper-a4', A3: 'paper-a3', Letter: 'paper-letter' };
+
+    const sellable = (paper, colour, duplex) => draft.rates.some((r) =>
+      r.paperSize === paper && r.isColor === colour && r.isDuplex === duplex &&
+      r.enabled && typeof r.perPageCents === 'number' && r.perPageCents >= 0);
+
+    const paperSizes = Object.keys(paperKeys).filter((size) =>
+      offers.has(paperKeys[size]) &&
+      [false, true].some((c) => [false, true].some((d) => sellable(size, c, d))));
+
+    const colourModes = [];
+    if (offers.has('bw') && paperSizes.some((p) => [false, true].some((d) => sellable(p, false, d)))) colourModes.push('bw');
+    if (offers.has('colour') && paperSizes.some((p) => [false, true].some((d) => sellable(p, true, d)))) colourModes.push('colour');
+
+    const sidedModes = [];
+    if (offers.has('single-sided')) sidedModes.push('single');
+    if (offers.has('duplex-auto') || offers.has('duplex-manual')) sidedModes.push('duplex');
+
+    return {
+      colourModes,
+      sidedModes,
+      paperSizes,
+      allowMultipleCopies: offers.has('multiple-copies'),
+      allowPageSelection: offers.has('page-selection'),
+      asksName: !!draft.portal.collectCustomerName,
+      nameRequired: !!draft.portal.customerNameRequired,
+      asksPhone: !!draft.portal.collectCustomerPhone,
+      phoneRequired: !!draft.portal.customerPhoneRequired,
+    };
+  }
+
+  function renderPreview() {
+    const body = document.getElementById('ppBody');
+    if (!body || !draft) return;
+
+    const o = derivePreview();
+    const parts = [];
+
+    parts.push('<div class="pp-drop">Tap to choose a document</div>');
+
+    if (o.asksName || o.asksPhone) {
+      const fields = [];
+      if (o.asksName) fields.push(`<div class="pp-field">Name${o.nameRequired ? ' *' : ' (optional)'}</div>`);
+      if (o.asksPhone) fields.push(`<div class="pp-field">Mobile number${o.phoneRequired ? ' *' : ' (optional)'}</div>`);
+      parts.push(`<div class="pp-section"><div class="pp-label">Your details</div>${fields.join('')}</div>`);
+    }
+
+    // A control with one remaining choice is not shown, exactly as the customer
+    // page does it: a question with one answer is not a question.
+    if (o.colourModes.length > 1) {
+      parts.push(`<div class="pp-section"><div class="pp-label">Colour</div><div class="pp-pills">
+        ${o.colourModes.map((m, i) => `<span class="pp-pill ${i === 0 ? 'on' : ''}">${m === 'bw' ? 'B&amp;W' : 'Colour'}</span>`).join('')}
+      </div></div>`);
+    }
+
+    if (o.sidedModes.length > 1) {
+      parts.push(`<div class="pp-section"><div class="pp-label">Sides</div><div class="pp-pills">
+        ${o.sidedModes.map((m, i) => `<span class="pp-pill ${i === 0 ? 'on' : ''}">${m === 'single' ? 'Single' : 'Back-to-back'}</span>`).join('')}
+      </div></div>`);
+    }
+
+    if (o.paperSizes.length > 1) {
+      parts.push(`<div class="pp-section"><div class="pp-label">Paper</div><div class="pp-pills">
+        ${o.paperSizes.map((p, i) => `<span class="pp-pill ${i === 0 ? 'on' : ''}">${escapeHtml(p)}</span>`).join('')}
+      </div></div>`);
+    }
+
+    if (o.allowMultipleCopies) parts.push('<div class="pp-section"><div class="pp-label">Copies</div><div class="pp-stepper">− 1 +</div></div>');
+    if (o.allowPageSelection) parts.push('<div class="pp-section"><div class="pp-label">Pages</div><div class="pp-pills"><span class="pp-pill on">All</span><span class="pp-pill">Range</span></div></div>');
+
+    // The one state worth shouting about: nothing sellable at all.
+    if (o.colourModes.length === 0 || o.paperSizes.length === 0 || o.sidedModes.length === 0) {
+      parts.push(`<div class="pp-empty">
+        This shop currently offers nothing a customer could order.
+        Check the services and that the matching rates are switched on.
+      </div>`);
+    } else {
+      parts.push('<div class="pp-cta">Pay and print</div>');
+    }
+
+    body.innerHTML = parts.join('');
   }
 
   // ---------------------------------------------------------------- binding ---

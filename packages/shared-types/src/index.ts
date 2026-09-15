@@ -184,9 +184,15 @@ export interface ServiceCapability {
   /**
    * Whether a shop that has never configured anything offers it.
    *
-   * Deliberately conservative: colour and automatic duplex are off, because a
-   * shop promising them on a mono simplex printer takes money for something it
-   * cannot produce and has to refund.
+   * This is not a judgement about what a shop *should* sell — it is a
+   * statement of what the customer page already offered before this catalogue
+   * existed. Anything the portal showed yesterday defaults on, or a shop that
+   * has never opened the setup screen would quietly stop accepting orders it
+   * accepted the day before.
+   *
+   * Capabilities the portal never had (photo sizes, glossy, stapling,
+   * pages-per-sheet) default off, because nothing is lost by them being off
+   * and a shop promising them on hardware that cannot do them has to refund.
    */
   defaultOn: boolean;
 }
@@ -194,13 +200,13 @@ export interface ServiceCapability {
 export const SERVICE_CATALOGUE: readonly ServiceCapability[] = [
   // --- Popular: what nearly every counter does ---
   { key: 'bw',              label: 'Black & white',       group: 'popular', defaultOn: true },
-  { key: 'colour',          label: 'Colour',              group: 'popular', defaultOn: false, hint: 'Only if this printer really prints colour' },
+  { key: 'colour',          label: 'Colour',              group: 'popular', defaultOn: true,  hint: 'Turn off if this printer is mono only' },
   { key: 'single-sided',    label: 'Single-sided',        group: 'popular', defaultOn: true },
-  { key: 'duplex-auto',     label: 'Back-to-back',        group: 'popular', defaultOn: false, hint: 'Automatic — the printer turns the page itself' },
-  { key: 'duplex-manual',   label: 'Back-to-back',        group: 'popular', defaultOn: false, hint: 'Manual — two passes on a single-sided printer' },
+  { key: 'duplex-auto',     label: 'Back-to-back',        group: 'popular', defaultOn: true,  hint: 'Automatic — the printer turns the page itself' },
+  { key: 'duplex-manual',   label: 'Back-to-back',        group: 'popular', defaultOn: true, hint: 'Manual — two passes on a single-sided printer' },
   { key: 'paper-a4',        label: 'A4',                  group: 'popular', defaultOn: true },
-  { key: 'paper-a3',        label: 'A3',                  group: 'popular', defaultOn: false },
-  { key: 'paper-letter',    label: 'Letter',              group: 'popular', defaultOn: false },
+  { key: 'paper-a3',        label: 'A3',                  group: 'popular', defaultOn: true },
+  { key: 'paper-letter',    label: 'Letter',              group: 'popular', defaultOn: true },
   { key: 'multiple-copies', label: 'Multiple copies',     group: 'popular', defaultOn: true },
   { key: 'page-selection',  label: 'Page selection',      group: 'popular', defaultOn: true, hint: 'Customer picks a page range' },
 
@@ -243,6 +249,114 @@ export function resolveEnabledServices(stored: string[] | undefined | null): str
   if (!stored || stored.length === 0) return defaultEnabledServices();
   const known = new Set(SERVICE_CATALOGUE.map((c) => c.key));
   return stored.filter((k) => known.has(k));
+}
+
+/**
+ * What a customer may actually choose at one shop.
+ *
+ * Derived from two independent things: the services the shop says it offers,
+ * and whether a priced, enabled rate exists for the combination. Both have to
+ * agree — a shop that ticks "colour" but has disabled every colour rate is not
+ * offering colour, and showing the option would sell something it then has to
+ * refund.
+ *
+ * Shared by three callers that must not disagree: the customer page decides
+ * what to render, the setup screen previews the same thing before saving, and
+ * the API refuses a job that asks for something not on this list. Hiding a
+ * control is presentation; the refusal is the enforcement.
+ */
+export interface PortalOptions {
+  colourModes: Array<'bw' | 'colour'>;
+  sidedModes: Array<'single' | 'duplex'>;
+  paperSizes: string[];
+  allowMultipleCopies: boolean;
+  allowPageSelection: boolean;
+}
+
+/** Which capability key gates a given paper size. */
+const PAPER_SERVICE_KEYS: Record<string, string> = {
+  A4: 'paper-a4',
+  A3: 'paper-a3',
+  Letter: 'paper-letter',
+};
+
+export function derivePortalOptions(
+  enabledServices: string[],
+  card: ShopRateCard
+): PortalOptions {
+  const offers = new Set(resolveEnabledServices(enabledServices));
+
+  /** A combination is sellable only if its rate row exists and is switched on. */
+  const sellable = (paperSize: string, isColor: boolean, isDuplex: boolean): boolean => {
+    const rate = findRate(card, paperSize, isColor, isDuplex);
+    return !!rate && rate.enabled && rate.perPageCents >= 0;
+  };
+
+  const paperSizes = Object.keys(PAPER_SERVICE_KEYS).filter((size) => {
+    if (!offers.has(PAPER_SERVICE_KEYS[size])) return false;
+    // At least one combination on this paper has to be sellable, or the size
+    // is a dead end the customer can select and then not proceed from.
+    return [false, true].some((c) => [false, true].some((d) => sellable(size, c, d)));
+  });
+
+  const colourModes: Array<'bw' | 'colour'> = [];
+  if (offers.has('bw') && paperSizes.some((p) => [false, true].some((d) => sellable(p, false, d)))) {
+    colourModes.push('bw');
+  }
+  if (offers.has('colour') && paperSizes.some((p) => [false, true].some((d) => sellable(p, true, d)))) {
+    colourModes.push('colour');
+  }
+
+  const sidedModes: Array<'single' | 'duplex'> = [];
+  if (offers.has('single-sided')) sidedModes.push('single');
+  if (offers.has('duplex-auto') || offers.has('duplex-manual')) sidedModes.push('duplex');
+
+  return {
+    colourModes,
+    sidedModes,
+    paperSizes,
+    allowMultipleCopies: offers.has('multiple-copies'),
+    allowPageSelection: offers.has('page-selection'),
+  };
+}
+
+/**
+ * Whether a submitted job configuration is one this shop actually sells.
+ *
+ * Returns the reason it is not, so the customer is told which choice is
+ * unavailable rather than being handed a generic refusal.
+ */
+export function checkJobAgainstPortal(
+  options: PortalOptions,
+  job: { isColor: boolean; isDuplex: boolean; paperSize: string; copies: number; pageRange?: string | null }
+): string | undefined {
+  const wantedColour = job.isColor ? 'colour' : 'bw';
+  if (!options.colourModes.includes(wantedColour)) {
+    return job.isColor
+      ? 'This shop does not print in colour.'
+      : 'This shop does not offer black and white printing.';
+  }
+
+  const wantedSided = job.isDuplex ? 'duplex' : 'single';
+  if (!options.sidedModes.includes(wantedSided)) {
+    return job.isDuplex
+      ? 'This shop does not print back-to-back.'
+      : 'This shop does not offer single-sided printing.';
+  }
+
+  if (!options.paperSizes.includes(job.paperSize)) {
+    return `This shop does not stock ${job.paperSize} paper.`;
+  }
+
+  if (job.copies > 1 && !options.allowMultipleCopies) {
+    return 'This shop prints one copy at a time.';
+  }
+
+  if (job.pageRange && !options.allowPageSelection) {
+    return 'This shop prints whole documents only.';
+  }
+
+  return undefined;
 }
 
 /** One cell of the rate grid: what this exact configuration costs. */

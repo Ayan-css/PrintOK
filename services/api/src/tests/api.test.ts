@@ -1708,8 +1708,19 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const cat = await (await fetch(`${baseUrl}/api/service-catalogue`)).json() as any;
     assert.ok(cat.capabilities.length >= 15, 'the catalogue must be worth having');
     assert.ok(cat.groups.length >= 3);
-    assert.ok(cat.defaults.includes('bw'), 'a new shop prints black and white');
-    assert.ok(!cat.defaults.includes('colour'), 'but is not assumed to print colour');
+    // Defaults must equal what the customer page offered before this catalogue
+    // existed. Anything less and a shop that never opens the setup screen
+    // quietly stops accepting orders it took the day before.
+    for (const key of ['bw', 'colour', 'single-sided', 'duplex-auto', 'duplex-manual',
+                       'paper-a4', 'paper-a3', 'paper-letter', 'multiple-copies', 'page-selection']) {
+      assert.ok(cat.defaults.includes(key), `${key} was already offered and must stay on by default`);
+    }
+
+    // Capabilities the portal never had stay off: nothing is lost, and a shop
+    // promising them on hardware that cannot do them has to refund.
+    for (const key of ['photo-4x6', 'photo-5x7', 'paper-glossy', 'stapling', 'pages-per-sheet']) {
+      assert.ok(!cat.defaults.includes(key), `${key} is new and must be opted into`);
+    }
 
     // A shop that has never configured anything still offers the defaults —
     // empty means "not configured", not "offers nothing".
@@ -1726,6 +1737,101 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
 
     const saved = (await res.json()) as any;
     assert.deepStrictEqual(saved.enabledServices, ['bw', 'colour'], 'unknown keys dropped, duplicates collapsed');
+  });
+
+  await t.test('62. A shop cannot be sold a service it has switched off', async () => {
+    // Hiding a control on the customer page is presentation. This is the part
+    // that stops a colour job reaching a mono printer from a stale page, a
+    // cached one, or a script.
+    const reg = await (await fetch(`${baseUrl}/api/shops/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopName: 'Mono Only', ownerEmail: 'mono@example.com', printerName: 'M' }),
+    })).json() as any;
+
+    const claimRes = await fetch(`${baseUrl}/api/merchant/claim`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId: reg.shop.id, ownerEmail: 'mono@example.com', password: 'MonoPassword1', name: 'M' }),
+    });
+    const claim = (await claimRes.json()) as any;
+    assert.strictEqual(claimRes.status, 201, `claim must succeed: ${JSON.stringify(claim)}`);
+    const auth = { Authorization: `Bearer ${claim.token}`, 'Content-Type': 'application/json' };
+
+    const submit = (body: Record<string, unknown>) => fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: reg.printer.id,
+        fileName: 'j.pdf',
+        fileBase64: Buffer.from('%PDF-1.4 j').toString('base64'),
+        copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+        ...body,
+      }),
+    });
+
+    // Before narrowing, everything the portal ever offered still works.
+    assert.strictEqual((await submit({ isColor: true })).status, 201, 'colour works by default');
+    assert.strictEqual((await submit({ paperSize: 'A3' })).status, 201, 'A3 works by default');
+
+    // The shop says it is mono, A4 only, one copy at a time.
+    const narrow = await fetch(`${baseUrl}/api/shops/${reg.shop.id}/portal-config`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ enabledServices: ['bw', 'single-sided', 'paper-a4'] }),
+    });
+    assert.strictEqual(narrow.status, 200, `narrowing must succeed, got ${narrow.status}: ${await narrow.clone().text()}`);
+
+    const colour = await submit({ isColor: true });
+    assert.strictEqual(colour.status, 400);
+    assert.match(((await colour.json()) as any).error, /colour/i, 'the customer is told which choice is unavailable');
+
+    const a3 = await submit({ paperSize: 'A3' });
+    assert.strictEqual(a3.status, 400);
+    assert.match(((await a3.json()) as any).error, /A3/);
+
+    assert.strictEqual((await submit({ isDuplex: true })).status, 400, 'back-to-back was not offered');
+    assert.strictEqual((await submit({ copies: 3 })).status, 400, 'multiple copies were not offered');
+
+    // And what it does offer still goes through.
+    assert.strictEqual((await submit({})).status, 201, 'mono A4 single is exactly what it sells');
+  });
+
+  await t.test('63. Portal options agree with the rate grid, not just the services', async () => {
+    // A shop that ticks colour but has disabled every colour rate is not
+    // offering colour. Showing the option would sell something it must refund.
+    const reg = await (await fetch(`${baseUrl}/api/shops/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopName: 'Rates Off', ownerEmail: 'ro@example.com', printerName: 'R' }),
+    })).json() as any;
+
+    const claimRes = await fetch(`${baseUrl}/api/merchant/claim`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId: reg.shop.id, ownerEmail: 'ro@example.com', password: 'RatesOffPass1', name: 'R' }),
+    });
+    const claim = (await claimRes.json()) as any;
+    assert.strictEqual(claimRes.status, 201, `claim must succeed: ${JSON.stringify(claim)}`);
+    const auth = { Authorization: `Bearer ${claim.token}`, 'Content-Type': 'application/json' };
+
+    const before = await (await fetch(`${baseUrl}/api/shops/${reg.shop.id}/portal-options`)).json() as any;
+    assert.ok(before.colourModes.includes('colour'), 'colour is on by default');
+
+    // Services still say colour; every colour rate is switched off.
+    const card = await (await fetch(`${baseUrl}/api/shops/${reg.shop.id}/rates`)).json() as any;
+    await fetch(`${baseUrl}/api/shops/${reg.shop.id}/rates`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ rates: card.rates.filter((r: any) => r.isColor).map((r: any) => ({ ...r, enabled: false })) }),
+    });
+
+    const after = await (await fetch(`${baseUrl}/api/shops/${reg.shop.id}/portal-options`)).json() as any;
+    assert.ok(!after.colourModes.includes('colour'), 'no priced colour rate means no colour on offer');
+    assert.ok(after.colourModes.includes('bw'), 'and mono is unaffected');
+
+    const res = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: reg.printer.id, fileName: 'c.pdf',
+        fileBase64: Buffer.from('%PDF-1.4 c').toString('base64'),
+        copies: 1, isColor: true, isDuplex: false, paperSize: 'A4',
+      }),
+    });
+    assert.strictEqual(res.status, 400, 'and the job is refused too');
   });
 
   await t.test('28. A brand new shop can find itself from its session alone', async () => {

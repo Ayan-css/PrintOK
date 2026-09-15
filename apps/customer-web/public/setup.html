@@ -228,6 +228,25 @@
                 <span>Refuse the order without one</span>
               </label>
             </div>
+
+            <!--
+              The preview is the reason this screen works. A shop can see what
+              its customers get before saving, rather than switching things off
+              and finding out from a customer who could not order.
+            -->
+            <div class="portal-preview-wrap">
+              <div class="portal-preview-head">
+                <h3 class="setup-pane-title" style="margin:0;">What your customers see</h3>
+                <span class="form-help" style="margin:0;">Updates as you change things, before you save.</span>
+              </div>
+
+              <div class="portal-preview" id="portalPreview" aria-live="polite">
+                <div class="pp-phone">
+                  <div class="pp-bar"><span id="ppShop">Your shop</span></div>
+                  <div class="pp-body" id="ppBody"></div>
+                </div>
+              </div>
+            </div>
           </section>
 
           <!-- =========================== AUTOMATION ========================= -->

@@ -1940,6 +1940,91 @@ document.addEventListener('DOMContentLoaded', () => {
       collectCustomerPhone: false, customerPhoneRequired: false,
     };
 
+    /**
+     * What this shop actually sells, from the API.
+     *
+     * Derived server-side rather than here, so the page that hides a control
+     * and the endpoint that refuses the job can never disagree about what is
+     * on offer. Null until loaded, which means "show everything" — an older
+     * cached page must not start refusing options mid-order.
+     */
+    let portalOptions = null;
+
+    async function loadPortalOptions(shopId) {
+      if (!shopId) return;
+      try {
+        const res = await fetch(`${API_BASE}/api/shops/${encodeURIComponent(shopId)}/portal-options`);
+        if (!res.ok) return;
+        portalOptions = await res.json();
+        applyPortalOptions();
+      } catch {
+        // Leave everything visible. The server still refuses anything this shop
+        // does not sell, so the worst case is a refusal at submit rather than a
+        // customer who cannot order at all.
+      }
+    }
+
+    /**
+     * Hides what this shop does not offer.
+     *
+     * A control with one remaining choice is hidden entirely rather than shown
+     * as a single option: a radio group of one is a question with no answer to
+     * give, and it invites a customer to wonder what the other one was.
+     */
+    function applyPortalOptions() {
+      if (!portalOptions) return;
+      const o = portalOptions;
+
+      const show = (id, on) => {
+        const el = document.getElementById(id);
+        if (el) el.hidden = !on;
+      };
+      const pill = (id, on) => {
+        const el = document.getElementById(id);
+        if (el) el.hidden = !on;
+      };
+
+      // Colour
+      pill('pillBw', o.colourModes.includes('bw'));
+      pill('pillColor', o.colourModes.includes('colour'));
+      show('groupColorMode', o.colourModes.length > 1);
+      if (o.colourModes.length === 1) selectColorMode(o.colourModes[0] === 'colour');
+
+      // Sides
+      pill('pillSingle', o.sidedModes.includes('single'));
+      pill('pillDuplex', o.sidedModes.includes('duplex'));
+      show('groupDuplexMode', o.sidedModes.length > 1);
+      if (o.sidedModes.length === 1) selectDuplexMode(o.sidedModes[0] === 'duplex');
+
+      // Paper
+      const select = document.getElementById('selectPaperSize');
+      if (select) {
+        [...select.options].forEach((opt) => {
+          opt.hidden = !o.paperSizes.includes(opt.value);
+          opt.disabled = opt.hidden;
+        });
+        if (!o.paperSizes.includes(select.value) && o.paperSizes.length > 0) {
+          select.value = o.paperSizes[0];
+          select.dispatchEvent(new Event('change'));
+        }
+      }
+      show('groupPaperSize', o.paperSizes.length > 1);
+
+      show('groupCopies', o.allowMultipleCopies);
+      show('groupPageRange', o.allowPageSelection);
+    }
+
+    /** Forces a colour choice when the shop offers only one. */
+    function selectColorMode(wantColour) {
+      const input = document.querySelector(`input[name="colorMode"][value="${wantColour ? 'color' : 'bw'}"]`);
+      if (input && !input.checked) { input.checked = true; input.dispatchEvent(new Event('change', { bubbles: true })); }
+    }
+
+    function selectDuplexMode(wantDuplex) {
+      const input = document.querySelector(`input[name="duplexMode"][value="${wantDuplex ? 'duplex' : 'single'}"]`);
+      if (input && !input.checked) { input.checked = true; input.dispatchEvent(new Event('change', { bubbles: true })); }
+    }
+
     async function loadPortalConfig(shopId) {
       if (!shopId) return;
       try {
@@ -2375,6 +2460,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.shop && data.shop.id) {
           await fetchShopPricing(data.shop.id);
           await loadPortalConfig(data.shop.id);
+          await loadPortalOptions(data.shop.id);
         }
       } else {
         const shopNameDisplay = document.getElementById('shopNameDisplay');

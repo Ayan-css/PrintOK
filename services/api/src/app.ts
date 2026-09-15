@@ -24,6 +24,7 @@ import {
   Printer, ShopPortalConfig, CUSTOMER_NAME_MAX, CUSTOMER_PHONE_MAX,
   ShopRate, ShopRateCard,
   SERVICE_CATALOGUE, SERVICE_GROUPS, defaultEnabledServices, resolveEnabledServices,
+  derivePortalOptions, checkJobAgainstPortal,
 } from '@printok/shared-types';
 import {
   hashPassword, verifyPassword, validatePasswordStrength,
@@ -677,6 +678,25 @@ export function createApp(
       groups: SERVICE_GROUPS,
       defaults: defaultEnabledServices(),
     });
+  });
+
+  /**
+   * What a customer may choose at this shop, already resolved.
+   *
+   * The customer page could derive this itself from the services and the rate
+   * grid, but then two implementations would have to agree forever. One answer,
+   * computed where the refusal is also computed.
+   */
+  app.get('/api/shops/:shopId/portal-options', async (req: Request, res: Response) => {
+    try {
+      const [config, card] = await Promise.all([
+        storage.getShopPortalConfig(req.params.shopId),
+        storage.getShopRateCard(req.params.shopId),
+      ]);
+      return res.json(derivePortalOptions(config.enabledServices, card));
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
   });
 
   app.get('/api/shops/:shopId/portal-config', async (req: Request, res: Response) => {
@@ -1887,6 +1907,25 @@ export function createApp(
       const identity = readCustomerIdentity(portal, { customerName, customerPhone });
       if ('error' in identity) {
         return res.status(400).json({ error: identity.error });
+      }
+
+      // The shop only sells what it has switched on. Hiding a control on the
+      // customer page is presentation; this is the part that actually stops a
+      // colour job reaching a shop with a mono printer, whether it came from a
+      // stale page, a cached one, or a script.
+      const options = derivePortalOptions(
+        portal.enabledServices,
+        await storage.getShopRateCard(printer.shopId)
+      );
+      const unavailable = checkJobAgainstPortal(options, {
+        isColor: !!isColor,
+        isDuplex: !!isDuplex,
+        paperSize: paperSize || 'A4',
+        copies: copies || 1,
+        pageRange: (req.body as any)?.pageRange,
+      });
+      if (unavailable) {
+        return res.status(400).json({ error: unavailable });
       }
 
       // Multi-format document inspection & server-side page count verification
