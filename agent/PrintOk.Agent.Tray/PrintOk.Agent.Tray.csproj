@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The Windows desktop agent: a tray icon that keeps the print worker
+       running in the background, and a window the shop owner opens only when
+       they want to check something.
+
+       WinExe, not Exe, so starting it at logon does not flash a console window
+       on the shop's screen every morning.
+
+       net8.0-windows is required by WinForms and is exactly why the worker
+       lives in PrintOk.Agent.Core on plain net8.0: this project can never be
+       built for Linux, and the core must stay able to. -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- Lets this be built and published from a Linux or macOS machine.
+         Without it the Windows Desktop reference pack is not restored and the
+         build fails anywhere but Windows. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>PrintOk.Agent.Tray</RootNamespace>
+    <AssemblyName>PrintOkAgent</AssemblyName>
+    <Product>PrintOk Print Agent</Product>
+    <Company>PrintOk</Company>
+    <Version>1.3.0</Version>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == ''">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../PrintOk.Agent.Core/PrintOk.Agent.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- System.Drawing.Printing, for enumerating the installed printers the
+         settings and printers tabs show. -->
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>

@@ -1,11 +1,15 @@
-name: Build and Release Windows Print Agent
+name: Build and Release Print Agent
 
 on:
   push:
     branches:
       - main
     paths:
-      - 'agent/windows-print-agent/**'
+      - 'agent/**'
+      - '.github/workflows/build-print-agent.yml'
+  pull_request:
+    paths:
+      - 'agent/**'
       - '.github/workflows/build-print-agent.yml'
   workflow_dispatch:
 
@@ -13,75 +17,129 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    runs-on: windows-latest
-
+  # The agent is built from one core on two hosts. This job proves the core
+  # still compiles without Windows, which is the thing that quietly breaks the
+  # moment someone adds a WinForms reference to the wrong project.
+  linux:
+    name: Core and console (linux-x64)
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup .NET SDK
-        uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
 
-      - name: Restore dependencies
-        run: dotnet restore agent/windows-print-agent/WindowsPrintAgent.csproj
+      - name: Build the console agent for Linux
+        run: >
+          dotnet build agent/windows-print-agent/WindowsPrintAgent.csproj
+          -c Release -r linux-x64 --self-contained false
+          -warnaserror
 
-      - name: Publish self-contained single-file agent
-        # Self-contained so a shop PC can run the agent without installing the
-        # .NET runtime, and single-file so the .exe asset works on its own rather
-        # than needing its sibling DLLs.
+  windows:
+    name: Console and desktop agent (win-x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # ---------------------------------------------------------------- console ---
+      - name: Publish the console agent
+        # Self-contained so a shop PC can run it without installing .NET, and
+        # single-file so the .exe works without its sibling DLLs.
         run: >
           dotnet publish agent/windows-print-agent/WindowsPrintAgent.csproj
-          -c Release
-          -r win-x64
-          --self-contained true
-          -p:PublishSingleFile=true
-          -p:EnableCompressionInSingleFile=true
-          -o bin/publish
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true
+          -o bin/console
 
-      - name: Verify published executable is standalone
+      # ---------------------------------------------------------------- desktop ---
+      - name: Publish the desktop agent
+        run: >
+          dotnet publish agent/PrintOk.Agent.Tray/PrintOk.Agent.Tray.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true
+          -o bin/desktop
+
+      - name: Verify both executables are standalone
         shell: pwsh
         run: |
-          $exe = 'bin/publish/WindowsPrintAgent.exe'
-          if (-not (Test-Path $exe)) { throw "Publish did not produce $exe" }
-          $sizeMb = [math]::Round((Get-Item $exe).Length / 1MB, 2)
-          Write-Host "WindowsPrintAgent.exe is $sizeMb MB"
-          # A framework-dependent apphost stub is ~0.15 MB; a self-contained
-          # single-file build is tens of MB. Fail loudly if we shipped the stub.
-          if ((Get-Item $exe).Length -lt 20MB) {
-            throw "WindowsPrintAgent.exe is only $sizeMb MB - it is not self-contained and will not run on a shop PC."
-          }
-          if (-not (Test-Path 'bin/publish/appsettings.json')) {
-            throw "appsettings.json template missing from publish output"
+          function Assert-SelfContained($path, $name) {
+            if (-not (Test-Path $path)) { throw "Publish did not produce $path" }
+            $mb = [math]::Round((Get-Item $path).Length / 1MB, 2)
+            Write-Host "$name is $mb MB"
+            # A framework-dependent apphost stub is ~0.15 MB; a self-contained
+            # single-file build is tens of MB. Fail loudly if we shipped the stub.
+            if ((Get-Item $path).Length -lt 20MB) {
+              throw "$name is only $mb MB - it is not self-contained and will not run on a shop PC."
+            }
           }
 
-      - name: Stage release bundle
+          Assert-SelfContained 'bin/console/WindowsPrintAgent.exe' 'WindowsPrintAgent.exe'
+          Assert-SelfContained 'bin/desktop/PrintOkAgent.exe'      'PrintOkAgent.exe'
+
+          if (-not (Test-Path 'bin/console/appsettings.json')) {
+            throw "appsettings.json template missing from the console publish"
+          }
+
+      # -------------------------------------------------------------- installer ---
+      - name: Build the Windows installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path agent/dist | Out-Null
+          Copy-Item bin/desktop/PrintOkAgent.exe agent/dist/
+          # Inno Setup ships on the windows-latest image.
+          & "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe" agent/installer/PrintOkAgent.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with $LASTEXITCODE" }
+          Get-ChildItem agent/dist
+
+      - name: Stage the release bundle
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path bundle | Out-Null
-          Copy-Item bin/publish/WindowsPrintAgent.exe bundle/
-          Copy-Item bin/publish/appsettings.json bundle/
+          Copy-Item bin/console/WindowsPrintAgent.exe bundle/
+          Copy-Item bin/console/appsettings.json bundle/
           Copy-Item agent/windows-print-agent/INSTALL.md bundle/README.txt
           Compress-Archive -Path bundle/* -DestinationPath PrintAgent-win-x64.zip -Force
 
-      - name: Create or Update GitHub Release
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: print-agent-win-x64
+          path: |
+            bin/desktop/PrintOkAgent.exe
+            bin/console/WindowsPrintAgent.exe
+            agent/dist/*.exe
+
+      - name: Create or update the GitHub release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: PrintOk Windows Agent (Latest Release)
+          name: PrintOk Print Agent (Latest Release)
           body: |
-            Self-contained Windows print agent for PrintOk shops. No .NET runtime install required.
+            The print agent for PrintOk shops. No .NET runtime install required.
 
-            - `PrintAgent-win-x64.zip` — recommended. Executable, `appsettings.json` template and setup instructions.
-            - `WindowsPrintAgent.exe` — standalone executable. Needs an `appsettings.json` beside it, or `--AgentApiKey=<key> --PrintOkApiUrl=<url>` on the command line.
+            **Most shops want the installer.**
 
-            Download your pre-filled `appsettings.json` from the PrintOk dashboard under **QR Poster & Agent**.
+            - `PrintOkAgentSetup-*.exe` — recommended. Installs the desktop agent,
+              starts it with Windows, and keeps it in the system tray. Open it from
+              the tray to check the connection, see printers, pair, or read logs.
+            - `PrintOkAgent.exe` — the desktop agent on its own, no installer.
+            - `PrintAgent-win-x64.zip` — the headless console agent, for unattended
+              or scripted installs. Executable, `appsettings.json` template and setup
+              instructions.
+            - `WindowsPrintAgent.exe` — the console agent on its own. It knows the
+              PrintOk cloud address already; pass `--PrintOkApiUrl=<url>` to override.
           draft: false
           prerelease: false
           files: |
+            agent/dist/PrintOkAgentSetup-*.exe
+            bin/desktop/PrintOkAgent.exe
             PrintAgent-win-x64.zip
-            bin/publish/WindowsPrintAgent.exe
+            bin/console/WindowsPrintAgent.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

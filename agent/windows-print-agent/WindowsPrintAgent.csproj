@@ -1,5 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk.Worker">
 
+  <!-- The console host.
+       Cross-platform, unattended, and the one the release workflow publishes as
+       WindowsPrintAgent.exe. The desktop agent (PrintOk.Agent.Tray) is a second
+       host over the same core; neither can break the other. -->
+
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
@@ -8,7 +13,7 @@
     <UserSecretsId>dotnet-WindowsPrintAgent-12345</UserSecretsId>
     <Product>PrintOk Windows Print Agent</Product>
     <Company>PrintOk</Company>
-    <Version>1.2.1</Version>
+    <Version>1.3.0</Version>
   </PropertyGroup>
 
   <!-- Published as a self-contained single file so a shop PC can run the agent
@@ -41,10 +46,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.0" />
-    <!-- DPAPI, for encrypting the device token at rest on Windows (PRD 7.2). -->
-    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+    <ProjectReference Include="../PrintOk.Agent.Core/PrintOk.Agent.Core.csproj" />
   </ItemGroup>
 
 </Project>
