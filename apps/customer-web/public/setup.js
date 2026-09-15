@@ -21,7 +21,12 @@
     return 'https://prinok-api.onrender.com';
   })();
 
-  const SESSION_KEY = 'printok.merchantToken';
+  // These must match app.js exactly. They are separate scripts with no shared
+  // module, so the only thing keeping them in step is the routing test that
+  // asserts both files use the same strings — which exists because getting this
+  // wrong shows up as "sign in to set up your shop" on a page you just signed
+  // into, with nothing in the console to say why.
+  const SESSION_KEY = 'printok_merchant_token';
   const CONTEXT_KEY = 'printok.shopContext';
 
   let shopId = null;
@@ -134,6 +139,10 @@
 
     if (draft.card.bulkEnabled && !(draft.card.bulkThresholdCents > 0)) {
       problems.tabDiscounts = 'Set the amount the discount starts at';
+    }
+
+    if (draft.portal.separatorMode !== 'none' && !(draft.portal.separatorMinQueue >= 1)) {
+      problems.tabAutomation = 'Say how many waiting jobs counts as busy';
     }
 
     // Required without asked is unsatisfiable — the field would never show and
@@ -389,6 +398,47 @@
     }
   }
 
+  function bindAutomation() {
+    document.querySelectorAll('input[name="autoPrintMode"]').forEach((radio) => {
+      radio.checked = radio.value === draft.portal.autoPrintMode;
+      radio.addEventListener('change', () => {
+        if (radio.checked) { draft.portal.autoPrintMode = radio.value; refreshSaveButton(); }
+      });
+    });
+
+    const mode = document.getElementById('separatorMode');
+    const queue = document.getElementById('separatorMinQueue');
+    const group = document.getElementById('separatorQueueGroup');
+
+    const syncSeparator = () => {
+      // The threshold is meaningless with nothing to print between jobs, so it
+      // goes away rather than sitting there inviting a pointless decision.
+      if (group) group.hidden = draft.portal.separatorMode === 'none';
+    };
+
+    if (mode) {
+      mode.value = draft.portal.separatorMode;
+      mode.addEventListener('change', () => {
+        draft.portal.separatorMode = mode.value;
+        syncSeparator();
+        refreshSaveButton();
+      });
+    }
+
+    if (queue) {
+      queue.value = String(draft.portal.separatorMinQueue ?? 3);
+      queue.addEventListener('input', () => {
+        const n = Number.parseInt(queue.value, 10);
+        const bad = !Number.isInteger(n) || n < 1;
+        queue.classList.toggle('is-invalid', bad);
+        if (!bad) draft.portal.separatorMinQueue = n;
+        refreshSaveButton();
+      });
+    }
+
+    syncSeparator();
+  }
+
   function bindPortal() {
     const p = () => draft.portal;
     bindCheckbox('collectCustomerName', () => p().collectCustomerName, (v) => {
@@ -512,6 +562,7 @@
       renderServices();
       renderRates();
       bindDiscounts();
+      bindAutomation();
       bindPortal();
       bindTabs();
       refreshSaveButton();

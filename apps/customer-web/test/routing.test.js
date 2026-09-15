@@ -82,5 +82,32 @@ test('customer web routing', async (t) => {
     assert.match(res.headers.get('content-type'), /css/);
   });
 
+  await t.test('the dashboard and the setup page agree on storage keys', async () => {
+    // app.js and setup.js are separate scripts with no shared module. When they
+    // disagreed about the session key, the setup page showed "sign in to set up
+    // your shop" to someone who had just signed in — and nothing anywhere said
+    // why, because a missing key is indistinguishable from a missing session.
+    const fs = require('fs');
+    const path = require('path');
+    const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
+
+    const app = read('app.js');
+    const setup = read('setup.js');
+
+    const sessionKey = app.match(/KEY:\s*'([^']*merchant[^']*)'/)?.[1];
+    assert.ok(sessionKey, 'app.js must define a merchant session key');
+    assert.ok(
+      setup.includes(`'${sessionKey}'`),
+      `setup.js must read the same session key as app.js ('${sessionKey}')`
+    );
+
+    const contextKey = app.match(/localStorage\.getItem\('([^']*shopContext[^']*)'\)/)?.[1];
+    assert.ok(contextKey, 'app.js must define a shop context key');
+    assert.ok(
+      setup.includes(`'${contextKey}'`),
+      `setup.js must read the same shop context key as app.js ('${contextKey}')`
+    );
+  });
+
   await new Promise((resolve) => server.close(resolve));
 });
