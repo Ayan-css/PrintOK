@@ -91,10 +91,34 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path agent/dist | Out-Null
           Copy-Item bin/desktop/PrintOkAgent.exe agent/dist/
-          # Inno Setup ships on the windows-latest image.
-          & "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe" agent/installer/PrintOkAgent.iss
+
+          # ${env:...} braces are required: the variable name contains
+          # parentheses, and $env:ProgramFiles(x86) parses as $env:ProgramFiles
+          # followed by a separate (x86) expression, which is a syntax error.
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+          # Inno Setup is normally present on the windows runner image, but that
+          # is the image's choice and not a guarantee. Install it rather than
+          # fail a release build on someone else's packaging decision.
+          if (-not $iscc) {
+            Write-Host "Inno Setup not found on this image; installing."
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw "Could not install Inno Setup" }
+            $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          if (-not $iscc) { throw "ISCC.exe still not found after install" }
+
+          Write-Host "Using $iscc"
+          & $iscc agent/installer/PrintOkAgent.iss
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with $LASTEXITCODE" }
-          Get-ChildItem agent/dist
+
+          $setup = Get-ChildItem agent/dist/PrintOkAgentSetup-*.exe -ErrorAction SilentlyContinue
+          if (-not $setup) { throw "Inno Setup reported success but produced no installer" }
+          Write-Host "Installer: $($setup.Name) $([math]::Round($setup.Length/1MB,2)) MB"
 
       - name: Stage the release bundle
         shell: pwsh
