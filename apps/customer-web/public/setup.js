@@ -464,24 +464,42 @@
 
   // ------------------------------------------------------------------- tabs ---
 
-  function bindTabs() {
+  function showTab(target) {
     const tabs = [...document.querySelectorAll('.setup-tab')];
-    tabs.forEach((tab) => {
+    const wanted = tabs.find((t) => t.getAttribute('data-tab') === target);
+    if (!wanted) return false;
+
+    tabs.forEach((t) => {
+      const on = t === wanted;
+      t.classList.toggle('active', on);
+      t.setAttribute('aria-selected', String(on));
+      t.tabIndex = on ? 0 : -1;
+    });
+
+    document.querySelectorAll('.setup-pane').forEach((pane) => {
+      pane.classList.toggle('active', pane.id === target);
+    });
+
+    return true;
+  }
+
+  function bindTabs() {
+    document.querySelectorAll('.setup-tab').forEach((tab) => {
       tab.addEventListener('click', () => {
         const target = tab.getAttribute('data-tab');
+        if (!showTab(target)) return;
 
-        tabs.forEach((t) => {
-          const on = t === tab;
-          t.classList.toggle('active', on);
-          t.setAttribute('aria-selected', String(on));
-          t.tabIndex = on ? 0 : -1;
-        });
-
-        document.querySelectorAll('.setup-pane').forEach((pane) => {
-          pane.classList.toggle('active', pane.id === target);
-        });
+        // Replace rather than push: the back button should leave the setup
+        // screen, not walk back through six tabs someone clicked to find one.
+        // The hash is what makes a section linkable from the dashboard.
+        history.replaceState(null, '', `${window.location.pathname}${window.location.search}#${target}`);
       });
     });
+
+    // Opened at a section: ?tab= from a link, or #hash from a shared URL.
+    const params = new URLSearchParams(window.location.search);
+    const wanted = params.get('tab') || window.location.hash.replace('#', '');
+    if (wanted) showTab(wanted);
   }
 
   // ------------------------------------------------------------------- save ---

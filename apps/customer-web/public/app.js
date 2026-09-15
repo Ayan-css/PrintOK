@@ -712,8 +712,34 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
+    /**
+     * Opens a tab from the URL hash, so a link can point at a section.
+     *
+     * #agent is the one that matters: Business Setup sends people here for the
+     * printer and its pairing code, and landing on the queue instead would make
+     * that link a lie.
+     */
+    const HASH_TABS = { '#agent': 'tabQr', '#queue': 'tabQueue', '#analytics': 'tabStats' };
+
+    function activateTabFromHash() {
+      const wanted = HASH_TABS[window.location.hash];
+      if (!wanted) return;
+      const btn = tabBtns.find((b) => b.getAttribute('data-tab') === wanted);
+      if (btn) activateTab(btn);
+    }
+
+    activateTabFromHash();
+    window.addEventListener('hashchange', activateTabFromHash);
+
     tabBtns.forEach((btn, idx) => {
-      btn.addEventListener('click', () => activateTab(btn));
+      btn.addEventListener('click', () => {
+        activateTab(btn);
+        // Keep the URL honest, so a refresh or a shared link lands where the
+        // person was rather than back on the queue.
+        const hash = Object.entries(HASH_TABS)
+          .find(([, id]) => id === btn.getAttribute('data-tab'))?.[0];
+        if (hash) history.replaceState(null, '', `${window.location.pathname}${window.location.search}${hash}`);
+      });
       // Arrow-key navigation is expected of a tablist.
       btn.addEventListener('keydown', (e) => {
         let next = null;
@@ -1238,9 +1264,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
           // The wizard reads the shop from storage, but a link that carries it
           // works on a browser that has never stored anything.
+          // The shop id is added to whatever the link already points at, so a
+          // link aimed at a section keeps its section. Overwriting the href
+          // wholesale would send "Rates & discounts" to the first tab instead.
           for (const id of ['btnBusinessSetup', 'btnRatesToSetup']) {
             const link = document.getElementById(id);
-            if (link && dashShopId) link.href = `/setup?shop=${encodeURIComponent(dashShopId)}`;
+            if (!link || !dashShopId) continue;
+
+            const url = new URL(link.getAttribute('href'), window.location.origin);
+            url.searchParams.set('shop', dashShopId);
+            link.href = `${url.pathname}${url.search}${url.hash}`;
           }
 
           const exeLink = document.getElementById('btnDownloadAgentExe');

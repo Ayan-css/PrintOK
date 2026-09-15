@@ -57,6 +57,14 @@
         <div class="header-actions">
           <a href="/dashboard" class="btn btn-outline btn-sm">← Dashboard</a>
           <!--
+            The agent's connection state is something a shop checks daily, so it
+            belongs with the queue rather than in here with the settings. A tab
+            that only pointed at the dashboard was the other half of a circle:
+            this screen sent you there for printers, and that one sent you here
+            for rates.
+          -->
+          <a href="/dashboard#agent" class="btn btn-outline btn-sm">Printers &amp; agent ↗</a>
+          <!--
             One save for the whole wizard. Six tabs that each saved themselves
             would mean a shop could half-configure itself and not know which
             half took.
@@ -100,9 +108,6 @@
             </button>
             <button class="setup-tab" data-tab="tabDiscounts" role="tab" aria-selected="false" type="button" tabindex="-1">
               <span class="setup-tab-chip" data-chip="tabDiscounts">✓</span> Discounts
-            </button>
-            <button class="setup-tab" data-tab="tabPrinters" role="tab" aria-selected="false" type="button" tabindex="-1">
-              <span class="setup-tab-chip" data-chip="tabPrinters">✓</span> Printers
             </button>
             <button class="setup-tab" data-tab="tabPortal"   role="tab" aria-selected="false" type="button" tabindex="-1">
               <span class="setup-tab-chip" data-chip="tabPortal">✓</span> Customer Portal
@@ -186,16 +191,6 @@
                 </span>
               </label>
             </div>
-          </section>
-
-          <!-- ============================ PRINTERS ========================== -->
-          <section id="tabPrinters" class="setup-pane" role="tabpanel">
-            <h2 class="setup-pane-title">Printers and agent</h2>
-            <p class="setup-pane-sub">
-              Pairing, the QR poster and the agent download live on the
-              dashboard, alongside the live connection status.
-            </p>
-            <a href="/dashboard#agent" class="btn btn-outline">Open QR Poster &amp; Agent →</a>
           </section>
 
           <!-- ============================= PORTAL =========================== -->

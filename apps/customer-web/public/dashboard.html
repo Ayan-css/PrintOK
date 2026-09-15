@@ -182,14 +182,11 @@
 
         <!-- Tabbed Dashboard Navigation -->
         <div class="card card--elevated" style="padding: 0;">
-          <div class="dash-tabs-bar" role="tablist" aria-label="Dashboard sections">
+          <div class="dash-tabs-bar">
+            <div class="dash-tabs-group" role="tablist" aria-label="Dashboard sections">
             <button class="dash-tab-btn active" id="tabBtnQueue" data-tab="tabQueue" type="button"
                     role="tab" aria-selected="true" aria-controls="tabQueue">
               ⚡ Live Print Queue
-            </button>
-            <button class="dash-tab-btn" id="tabBtnPricing" data-tab="tabPricing" type="button"
-                    role="tab" aria-selected="false" aria-controls="tabPricing" tabindex="-1">
-              💷 Rates
             </button>
             <button class="dash-tab-btn" id="tabBtnQr" data-tab="tabQr" type="button"
                     role="tab" aria-selected="false" aria-controls="tabQr" tabindex="-1">
@@ -199,6 +196,16 @@
                     role="tab" aria-selected="false" aria-controls="tabStats" tabindex="-1">
               📊 Revenue Analytics
             </button>
+            </div>
+
+            <!--
+              A link, not a tab, and outside the tablist because it is neither.
+              Pricing lives in Business Setup; a tab that opens a pane saying so
+              costs a click and teaches nothing, so this goes straight there.
+            -->
+            <a class="dash-tab-link" id="btnRatesToSetup" href="/setup?tab=tabRates">
+              💷 Rates &amp; discounts ↗
+            </a>
           </div>
 
           <!-- TAB 1: LIVE QUEUE & CASH APPROVALS -->
@@ -238,30 +245,6 @@
               </div>
             </div>
           </div>
-
-          <!-- TAB 2: PRICING MATRIX CONFIGURATION -->
-          <!--
-            Rates used to be edited here, as four flat numbers. Business Setup
-            owns pricing now: a rate per paper size, colour mode and sided-ness,
-            plus the two discount models. Two editors of different capability
-            pointed at the same money is how a shop ends up charging what it
-            did not intend, so this one is retired rather than left as a
-            simpler-looking alternative.
-          -->
-          <div id="tabPricing" role="tabpanel" aria-labelledby="tabBtnPricing" tabindex="0" class="dash-tab-pane" hidden style="padding: 20px;">
-            <div class="empty-state">
-              <div class="empty-icon">💷</div>
-              <div class="empty-title">Rates moved to Business Setup</div>
-              <div class="empty-text">
-                You can now set a different rate for each paper size, colour mode
-                and single or double sided — and add bulk and extra-copy discounts.
-              </div>
-              <a id="btnRatesToSetup" href="/setup" class="btn btn-primary" style="margin-top: 14px; text-decoration: none;">
-                Open pricing →
-              </a>
-            </div>
-          </div>
-
 
           <!-- TAB 3: QR POSTER & AGENT PAIRING -->
           <div id="tabQr" role="tabpanel" aria-labelledby="tabBtnQr" tabindex="0" class="dash-tab-pane" hidden style="padding: 20px;">

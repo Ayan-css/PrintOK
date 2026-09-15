@@ -4626,3 +4626,26 @@ body::before {
     transition: none;
   }
 }
+
+
+/* --- dashboard tab bar: tabs on the left, links out on the right ---------- */
+
+/* display:contents so the real tabs stay in the bar's own flex row. Without it
+   the tablist becomes a box and the four items stop sharing one line. */
+.dash-tabs-group { display: contents; }
+
+.dash-tab-link {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-primary);
+  text-decoration: none;
+  border-left: 2px solid var(--color-border);
+}
+
+.dash-tab-link:hover { text-decoration: underline; }
