@@ -526,65 +526,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Theme --------------------------------------------------------------
     // The <head> has already applied any stored choice before first paint; this
     // only keeps the button in sync with it and records changes.
-    const ThemeToggle = {
-      KEY: 'printok.theme',
-      stored() {
-        try { return localStorage.getItem(this.KEY); } catch { return null; }
-      },
-      /** What is actually on screen, whether chosen here or inherited from the OS. */
-      current() {
-        const chosen = document.documentElement.getAttribute('data-theme');
-        if (chosen === 'dark' || chosen === 'light') return chosen;
-        return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
-          ? 'dark'
-          : 'light';
-      },
-      apply(theme, { persist = true } = {}) {
-        document.documentElement.setAttribute('data-theme', theme);
-        if (persist) {
-          try { localStorage.setItem(this.KEY, theme); } catch { /* private browsing */ }
-        }
-        this.render(theme);
-      },
-      render(theme) {
-        const btn = document.getElementById('btnThemeToggle');
-        const icon = document.getElementById('themeToggleIcon');
-        const label = document.getElementById('themeToggleLabel');
-        const dark = theme === 'dark';
-        // The button offers the theme you would switch *to*.
-        if (icon) icon.textContent = dark ? '☀️' : '🌙';
-        if (label) label.textContent = dark ? 'Light' : 'Dark';
-        if (btn) {
-          btn.setAttribute('aria-pressed', String(dark));
-          btn.setAttribute('title', dark ? 'Switch to light' : 'Switch to dark');
-        }
-        const meta = document.querySelector('meta[name="theme-color"]');
-        if (meta) meta.setAttribute('content', dark ? '#121210' : '#0d0d0d');
-      },
-      init() {
-        this.render(this.current());
-
-        const btn = document.getElementById('btnThemeToggle');
-        if (btn) {
-          btn.addEventListener('click', () => {
-            this.apply(this.current() === 'dark' ? 'light' : 'dark');
-          });
-        }
-
-        // Follow the OS while the shop has expressed no preference of its own.
-        // Not persisted: that would turn an OS change into a standing choice
-        // and stop the dashboard following the OS from then on.
-        if (window.matchMedia) {
-          const os = window.matchMedia('(prefers-color-scheme: dark)');
-          const onChange = (e) => {
-            if (!this.stored()) this.apply(e.matches ? 'dark' : 'light', { persist: false });
-          };
-          if (os.addEventListener) os.addEventListener('change', onChange);
-          else if (os.addListener) os.addListener(onChange);
-        }
-      },
-    };
-    ThemeToggle.init();
+    // The theme toggle lives in /theme.js now, shared with Business Setup and
+    // the admin console. Keeping a copy here would attach a second click
+    // listener to the same button, so every press would toggle twice and the
+    // theme would appear stuck.
 
     // --- Sign-in gate -------------------------------------------------------
     const loginView = document.getElementById('merchantLoginView');
@@ -865,19 +810,51 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- QR poster actions ---
     const btnDownloadQr = document.getElementById('btnDownloadQr');
     if (btnDownloadQr) {
-      btnDownloadQr.addEventListener('click', () => {
+      btnDownloadQr.addEventListener('click', async () => {
         const img = document.getElementById('dashQrImg');
         if (!img || !img.src) {
           showToast('warning', 'No QR Yet', 'Connect a shop to generate its QR poster.');
           return;
         }
-        const a = document.createElement('a');
-        a.href = img.src;
-        a.download = 'PrintOk_Shop_QR.png';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        showToast('info', 'QR Sign Downloaded', 'Print and place at your shop counter.');
+
+        const save = (href, filename, revoke) => {
+          const a = document.createElement('a');
+          a.href = href;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          if (revoke) setTimeout(() => URL.revokeObjectURL(href), 0);
+        };
+
+        const text = (id) => (document.getElementById(id)?.textContent || '').trim();
+
+        // The bare QR square is the fallback, not the product. A shop that
+        // prints a naked code gets customers who have no idea what it is for.
+        if (!window.PrintOkPoster) {
+          save(img.src, 'PrintOk_Shop_QR.png');
+          showToast('info', 'QR Downloaded', 'Print and place at your shop counter.');
+          return;
+        }
+
+        btnDownloadQr.disabled = true;
+        try {
+          const svg = window.PrintOkPoster.buildPosterSvg({
+            shopName: text('dashQrShopName'),
+            url: text('dashQrTargetUrl').replace(/^https?:\/\//, ''),
+            qrDataUrl: img.src,
+          });
+          const blob = await window.PrintOkPoster.posterToPngBlob(svg, 2);
+          save(URL.createObjectURL(blob), 'PrintOk_Counter_Poster.png', true);
+          showToast('success', 'Poster Downloaded', 'A4 sign, ready to print and stick on the counter.');
+        } catch {
+          // Rendering is the browser's job and it can refuse. A merchant who
+          // clicked download should still end up with something to print.
+          save(img.src, 'PrintOk_Shop_QR.png');
+          showToast('info', 'QR Downloaded', 'The full poster could not be built, so here is the code on its own.');
+        } finally {
+          btnDownloadQr.disabled = false;
+        }
       });
     }
 

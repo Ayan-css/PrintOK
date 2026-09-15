@@ -7,6 +7,23 @@
   <meta name="robots" content="noindex, nofollow">
   <title>Platform Admin — PrintOk</title>
   <link rel="stylesheet" href="/styles.css">
+  <!--
+    Applied before the stylesheet paints, so a shop that chose dark never sees
+    a white flash on the way in. Deliberately inline: a deferred script lands
+    after first paint, which is the whole problem. The toggle itself lives in
+    /theme.js, which takes over once the page is up.
+  -->
+  <script>
+    (function () {
+      var chosen = null;
+      try { chosen = localStorage.getItem('printok.theme'); } catch (e) { /* private browsing */ }
+      if (chosen !== 'dark' && chosen !== 'light') {
+        chosen = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+          ? 'dark' : 'light';
+      }
+      document.documentElement.setAttribute('data-theme', chosen);
+    })();
+  </script>
 </head>
 <body class="bg-paper">
   <div class="app-wrapper">
@@ -52,6 +69,11 @@
             <p class="meta-text" id="adminWhoami">—</p>
           </div>
           <div class="admin-topbar-actions">
+            <button type="button" id="btnThemeToggle" class="btn btn-outline btn-sm"
+                    aria-pressed="false" title="Switch between light and dark">
+              <span id="themeToggleIcon" aria-hidden="true">🌙</span>
+              <span id="themeToggleLabel">Dark</span>
+            </button>
             <button class="btn btn-outline btn-sm" id="btnAdminRefresh" type="button">↻ Refresh</button>
             <button class="btn btn-outline btn-sm" id="btnAdminSignOut" type="button">Sign Out</button>
           </div>
