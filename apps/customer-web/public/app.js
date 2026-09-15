@@ -205,6 +205,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const PRINT_STATE_LABELS = {
     Created: 'Created',
     AwaitingPayment: 'Awaiting Payment',
+    // Not an error: this shop releases each job by hand.
+    HeldForRelease: 'Waiting for you',
     Queued: 'Queued',
     Downloading: 'Sent to Printer',
     Printing: 'Printing',
@@ -915,6 +917,35 @@ document.addEventListener('DOMContentLoaded', () => {
       }).join('');
     }
 
+    /**
+     * Releases a job this shop was holding.
+     *
+     * Only appears for shops that print on their own say-so; the server refuses
+     * anything not actually held, so a stale page cannot push a job through.
+     */
+    async function releaseJob(jobId, button) {
+      const label = button ? button.textContent : null;
+      try {
+        if (button) { button.disabled = true; button.textContent = 'Sending…'; }
+
+        const res = await shopFetch(
+          `/api/shops/${encodeURIComponent(dashShopId)}/jobs/${encodeURIComponent(jobId)}/release`,
+          { method: 'POST' }
+        );
+
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || 'Could not send this job to the printer.');
+        }
+
+        showToast('success', 'Sent to printer', 'The agent will pick it up within a few seconds.');
+        loadDashboard();
+      } catch (err) {
+        showToast('danger', 'Not sent', err.message);
+        if (button) { button.disabled = false; if (label) button.textContent = label; }
+      }
+    }
+
     async function loadPairedDevices() {
       if (!dashPrinterId) return;
       try {
@@ -1344,6 +1375,7 @@ document.addEventListener('DOMContentLoaded', () => {
               <span class="queue-amount">${formatRupees(job.totalPriceInCents)}</span>
               <span class="badge ${badgeClass}">${escapeHtml(label)}</span>
               ${needsCash ? `<button type="button" class="btn btn-primary btn-sm" data-approve="${escapeHtml(job.id)}">✅ Cash Received</button>` : ''}
+              ${job.printState === 'HeldForRelease' ? `<button type="button" class="btn btn-primary btn-sm" data-release="${escapeHtml(job.id)}">🖨️ Print now</button>` : ''}
               ${canDecline(job) ? `<button type="button" class="btn btn-outline btn-sm btn-decline" data-decline="${escapeHtml(job.id)}" data-paid="${job.paymentState === 'Paid' ? '1' : ''}">✖ Decline</button>` : ''}
             </div>
           </div>`;
@@ -1356,6 +1388,10 @@ document.addEventListener('DOMContentLoaded', () => {
       list.querySelectorAll('[data-decline]').forEach(btn => {
         btn.addEventListener('click', () =>
           declineJob(btn.getAttribute('data-decline'), btn.getAttribute('data-paid') === '1', btn));
+      });
+
+      list.querySelectorAll('[data-release]').forEach(btn => {
+        btn.addEventListener('click', () => releaseJob(btn.getAttribute('data-release'), btn));
       });
     }
 

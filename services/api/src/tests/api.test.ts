@@ -18,6 +18,12 @@ process.env.RAZORPAY_WEBHOOK_SECRET = TEST_WEBHOOK_SECRET;
 // than the behaviour they describe.
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'printok_test_jwt_secret_key';
 
+// The suite creates hundreds of jobs from one address in a few seconds, which
+// is exactly what the production limiter exists to stop. Left at the default it
+// starts refusing partway through and the failure lands on whichever test
+// happened to be running, not on the one that added the requests.
+process.env.API_RATE_LIMIT_PER_MINUTE = '100000';
+
 /** Signs the exact bytes that will be sent, as Razorpay does. */
 function signWebhook(rawBody: string): string {
   return crypto.createHmac('sha256', TEST_WEBHOOK_SECRET).update(rawBody).digest('hex');
@@ -1834,6 +1840,133 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(res.status, 400, 'and the job is refused too');
   });
 
+  await t.test('64. Auto-print modes decide when a paid job reaches the printer', async () => {
+    const makeShop = async (name: string, email: string) => {
+      const reg = await (await fetch(`${baseUrl}/api/shops/register`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shopName: name, ownerEmail: email, printerName: 'P' }),
+      })).json() as any;
+      const claimRes = await fetch(`${baseUrl}/api/merchant/claim`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shopId: reg.shop.id, ownerEmail: email, password: 'AutoPrintPass1', name: 'A' }),
+      });
+      const claim = (await claimRes.json()) as any;
+      assert.strictEqual(claimRes.status, 201, `claim must succeed: ${JSON.stringify(claim)}`);
+      return { reg, auth: { Authorization: `Bearer ${claim.token}`, 'Content-Type': 'application/json' } };
+    };
+
+    const makeJob = async (printerId: string) => {
+      const res = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          printerId, fileName: 'a.pdf',
+          fileBase64: Buffer.from('%PDF-1.4 a').toString('base64'),
+          copies: 1, isColor: false,
+        }),
+      });
+      return ((await res.json()) as any).job;
+    };
+
+    // --- the default is what PrintOk always did ---
+    const dflt = await makeShop('Default Mode', 'apdefault@example.com');
+    const cfg = await (await fetch(`${baseUrl}/api/shops/${dflt.reg.shop.id}/portal-config`)).json() as any;
+    assert.strictEqual(cfg.autoPrintMode, 'after-payment', 'existing behaviour must be the default');
+
+    const j1 = await makeJob(dflt.reg.printer.id);
+    assert.strictEqual(j1.printState, 'AwaitingPayment');
+    await fetch(`${baseUrl}/api/print-jobs/${j1.id}/manual-override`, { method: 'POST' });
+    const afterPay = await (await fetch(`${baseUrl}/api/print-jobs/${j1.id}`)).json() as any;
+    assert.strictEqual(afterPay.job.printState, 'Queued', 'payment queues it');
+
+    // --- off: paid, but held until the shop says so ---
+    const held = await makeShop('Held Mode', 'apheld@example.com');
+    await fetch(`${baseUrl}/api/shops/${held.reg.shop.id}/portal-config`, {
+      method: 'POST', headers: held.auth, body: JSON.stringify({ autoPrintMode: 'off' }),
+    });
+
+    const j2 = await makeJob(held.reg.printer.id);
+    await fetch(`${baseUrl}/api/print-jobs/${j2.id}/manual-override`, { method: 'POST' });
+    const heldJob = await (await fetch(`${baseUrl}/api/print-jobs/${j2.id}`)).json() as any;
+    assert.strictEqual(heldJob.job.paymentState, 'Paid', 'the money is still taken');
+    assert.strictEqual(heldJob.job.printState, 'HeldForRelease', 'but nothing prints yet');
+
+    // The agent must not see it: a held job is not a queued one.
+    const polled = await (await fetch(`${baseUrl}/api/agent/jobs/pending`, {
+      headers: { 'x-agent-api-key': held.reg.printer.apiKey },
+    })).json() as any;
+    assert.ok(!polled.jobs.some((j: any) => j.id === j2.id), 'a held job must not reach the agent');
+
+    // Releasing it queues it.
+    const release = await fetch(`${baseUrl}/api/shops/${held.reg.shop.id}/jobs/${j2.id}/release`, {
+      method: 'POST', headers: held.auth,
+    });
+    assert.strictEqual(release.status, 200);
+    assert.strictEqual(((await release.json()) as any).job.printState, 'Queued');
+
+    // --- all: queued before the money clears ---
+    const eager = await makeShop('Eager Mode', 'apeager@example.com');
+    await fetch(`${baseUrl}/api/shops/${eager.reg.shop.id}/portal-config`, {
+      method: 'POST', headers: eager.auth, body: JSON.stringify({ autoPrintMode: 'all' }),
+    });
+
+    const j3 = await makeJob(eager.reg.printer.id);
+    assert.strictEqual(j3.printState, 'Queued', 'queued before payment, by the shop\'s choice');
+    assert.notStrictEqual(j3.paymentState, 'Paid', 'and the payment is still outstanding');
+  });
+
+  await t.test('65. Release refuses anything that is not actually held', async () => {
+    // "Print this now" must not become a way to push an unpaid or already
+    // printing job through.
+    const reg = await (await fetch(`${baseUrl}/api/shops/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopName: 'Release Guard', ownerEmail: 'rg@example.com', printerName: 'P' }),
+    })).json() as any;
+    const claimRes = await fetch(`${baseUrl}/api/merchant/claim`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId: reg.shop.id, ownerEmail: 'rg@example.com', password: 'ReleaseGuard1', name: 'R' }),
+    });
+    const claim = (await claimRes.json()) as any;
+    assert.strictEqual(claimRes.status, 201, `claim must succeed: ${JSON.stringify(claim)}`);
+    const auth = { Authorization: `Bearer ${claim.token}`, 'Content-Type': 'application/json' };
+
+    const job = ((await (await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: reg.printer.id, fileName: 'g.pdf',
+        fileBase64: Buffer.from('%PDF-1.4 g').toString('base64'), copies: 1, isColor: false,
+      }),
+    })).json()) as any).job;
+
+    // Unpaid and not held.
+    const early = await fetch(`${baseUrl}/api/shops/${reg.shop.id}/jobs/${job.id}/release`, {
+      method: 'POST', headers: auth,
+    });
+    assert.strictEqual(early.status, 409, 'an unpaid job is not a held one');
+
+    // Another shop cannot release it either.
+    const anon = await fetch(`${baseUrl}/api/shops/${reg.shop.id}/jobs/${job.id}/release`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+    });
+    assert.strictEqual(anon.status, 401);
+  });
+
+  await t.test('66. A separator prints only when there is a real backlog', async () => {
+    const { shouldPrintSeparator } = await import('@printok/shared-types');
+
+    // Off is off, however busy it gets.
+    assert.strictEqual(shouldPrintSeparator({ separatorMode: 'none', separatorMinQueue: 1 }, 99), false);
+
+    // A separator between every job in a quiet hour is one wasted sheet per
+    // order, which is how a shop concludes the feature is not worth having.
+    assert.strictEqual(shouldPrintSeparator({ separatorMode: 'blank', separatorMinQueue: 3 }, 1), false);
+    assert.strictEqual(shouldPrintSeparator({ separatorMode: 'blank', separatorMinQueue: 3 }, 2), false);
+    assert.strictEqual(shouldPrintSeparator({ separatorMode: 'blank', separatorMinQueue: 3 }, 3), true);
+    assert.strictEqual(shouldPrintSeparator({ separatorMode: 'invoice', separatorMinQueue: 3 }, 10), true);
+
+    // A nonsensical threshold still behaves: one waiting job is a backlog of one.
+    assert.strictEqual(shouldPrintSeparator({ separatorMode: 'blank', separatorMinQueue: 0 }, 1), true);
+  });
+
   await t.test('28. A brand new shop can find itself from its session alone', async () => {
     // The dashboard has no shop id of its own when a merchant signs in: not in
     // the URL, and nothing in localStorage on a fresh browser. It asks this
@@ -2171,7 +2304,11 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
           copies: 1, isColor: false, isDuplex: false,
         }),
       });
-      return ((await res.json()) as any).job;
+      const body = (await res.json()) as any;
+      // Asserted rather than assumed: a job that fails to create shows up much
+      // later as an undefined .id, which reads like a bug in whatever used it.
+      assert.strictEqual(res.status, 201, `job creation must succeed: ${JSON.stringify(body)}`);
+      return body.job;
     };
 
     // --- an unpaid job: declining stops it, with nothing to refund ---

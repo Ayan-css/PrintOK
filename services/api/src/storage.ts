@@ -18,6 +18,16 @@ export interface CreateJobOptions {
   /** Present only when the shop's portal asked for them. */
   customerName?: string;
   customerPhone?: string;
+  /**
+   * Queue the job immediately without claiming it is paid.
+   *
+   * For shops printing before the money clears. Deliberately separate from
+   * autoApprovePayment: that marks the payment settled, and using it to mean
+   * "start printing" would record an unpaid job as Paid, corrupting the payout
+   * figures and breaking the rule that payment state and print state are never
+   * derived from one another.
+   */
+  queueWithoutPayment?: boolean;
 }
 
 /** Extra context recorded alongside a print state change. */
@@ -560,7 +570,9 @@ export class MemoryStorage implements IStorageProvider {
     );
     const tokenNumber = this.getNextTokenNumber(printerId);
     const nowIso = new Date().toISOString();
-    const printState = autoApprovePayment ? PrintState.Queued : PrintState.AwaitingPayment;
+    const printState = autoApprovePayment || options.queueWithoutPayment
+      ? PrintState.Queued
+      : PrintState.AwaitingPayment;
 
     const job: PrintJob = {
       id,
@@ -608,13 +620,23 @@ export class MemoryStorage implements IStorageProvider {
     }
 
     // A confirmed payment only ever queues the job; it never asserts printing.
-    const printCheck = canTransitionPrintState(job.printState, PrintState.Queued);
+    //
+    // Where it goes depends on the shop: most queue on payment, some hold every
+    // job until someone presses print. Decided here rather than at each of the
+    // three callers — webhook, verify and manual override — so they cannot
+    // drift into three different ideas of what a paid job does next.
+    const portal = await this.getShopPortalConfig(job.shopId);
+    const target = portal.autoPrintMode === 'off' ? PrintState.HeldForRelease : PrintState.Queued;
+
+    const printCheck = canTransitionPrintState(job.printState, target);
     const previousPrintState = job.printState;
 
     job.paymentState = PaymentState.Paid;
     if (printCheck.allowed) {
-      job.printState = PrintState.Queued;
-      job.queuedAt = job.queuedAt || new Date().toISOString();
+      job.printState = target;
+      if (target === PrintState.Queued) {
+        job.queuedAt = job.queuedAt || new Date().toISOString();
+      }
     }
     job.updatedAt = new Date().toISOString();
     this.printJobs.set(id, job);

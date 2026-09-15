@@ -25,6 +25,7 @@ import {
   ShopRate, ShopRateCard,
   SERVICE_CATALOGUE, SERVICE_GROUPS, defaultEnabledServices, resolveEnabledServices,
   derivePortalOptions, checkJobAgainstPortal,
+  AUTO_PRINT_MODES, SEPARATOR_MODES, shouldPrintSeparator,
 } from '@printok/shared-types';
 import {
   hashPassword, verifyPassword, validatePasswordStrength,
@@ -147,9 +148,17 @@ export function createApp(
   app.set('trust proxy', 1);
 
   // Security: Public API Rate Limiter (Max 60 requests per minute per IP)
+  //
+  // The ceiling is configurable because the test suite drives hundreds of job
+  // creations from one address in seconds and would otherwise start failing on
+  // request count rather than on behaviour — which surfaces as an unrelated
+  // test breaking, several steps away from whatever added the requests.
+  //
+  // It is a ceiling, never a switch: an unset or unparseable value keeps the
+  // production default rather than disabling the limiter.
   const apiLimiter = rateLimit({
     windowMs: 60 * 1000,
-    max: 60,
+    max: Number.parseInt(process.env.API_RATE_LIMIT_PER_MINUTE || '', 10) || 60,
     message: { error: 'Too many requests from this IP, please try again after a minute.' },
     standardHeaders: true,
     legacyHeaders: false,
@@ -723,6 +732,20 @@ export function createApp(
       if (bool(body.customerNameRequired) !== undefined) next.customerNameRequired = body.customerNameRequired;
       if (bool(body.collectCustomerPhone) !== undefined) next.collectCustomerPhone = body.collectCustomerPhone;
       if (bool(body.customerPhoneRequired) !== undefined) next.customerPhoneRequired = body.customerPhoneRequired;
+
+      if (typeof body.autoPrintMode === 'string' && AUTO_PRINT_MODES.includes(body.autoPrintMode)) {
+        next.autoPrintMode = body.autoPrintMode;
+      }
+      if (typeof body.separatorMode === 'string' && SEPARATOR_MODES.includes(body.separatorMode)) {
+        next.separatorMode = body.separatorMode;
+      }
+      if (body.separatorMinQueue !== undefined) {
+        const n = Number(body.separatorMinQueue);
+        if (!Number.isInteger(n) || n < 1) {
+          return res.status(400).json({ error: 'The backlog size must be a whole number, at least 1.' });
+        }
+        next.separatorMinQueue = n;
+      }
 
       if (Array.isArray(body.enabledServices)) {
         // Filtered against the catalogue rather than stored as sent, so a stale
@@ -1939,6 +1962,14 @@ export function createApp(
       // Tamper-proof page count override
       const verifiedPageCount = docResult.pageCount;
 
+      // "Print everything" queues the job before payment clears. That is a
+      // shop choosing to print first and collect at the counter — and choosing
+      // to eat the paper when someone walks away. It is not a default.
+      //
+      // Passed as its own flag rather than as autoApprove: that one marks the
+      // payment settled, and reusing it here would record an unpaid job as Paid.
+      const queueWithoutPayment = !autoApprove && portal.autoPrintMode === 'all';
+
       const job = await storage.createPrintJob(
         printerId,
         fileName,
@@ -1949,7 +1980,7 @@ export function createApp(
         autoApprove,
         !!isDuplex,
         paperSize || 'A4',
-        identity.value
+        { ...identity.value, queueWithoutPayment }
       );
 
       // If job is immediately queued, push notification to active WebSocket agent
@@ -1984,6 +2015,47 @@ export function createApp(
   /**
    * One-Click Manual Print Override (For offline cash payment / merchant override)
    */
+  /**
+   * Releases a job the shop was holding.
+   *
+   * Only for shops printing on their own say-so. A job in any other state is
+   * refused rather than force-queued: "print this now" must not become a way to
+   * push an unpaid or already-printing job through.
+   */
+  app.post('/api/shops/:shopId/jobs/:jobId/release', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res);
+    if (!merchant) return;
+
+    try {
+      const { shopId, jobId } = req.params;
+      const job = await storage.getPrintJob(jobId);
+      if (!job || job.shopId !== shopId) {
+        return res.status(404).json({ error: 'Job not found for this shop.' });
+      }
+
+      if (job.printState !== PrintState.HeldForRelease) {
+        return res.status(409).json({
+          error: `This job is ${job.printState}, not waiting to be released.`,
+          job,
+        });
+      }
+
+      const result = await storage.updateJobPrintState(jobId, PrintState.Queued, undefined, {
+        actor: `shop:${merchant.sub}`,
+      });
+      if (!result.ok) {
+        // NOT_FOUND carries no job; the union has already been narrowed above
+        // by the explicit lookup, so this is the illegal-transition case.
+        return res.status(409).json({ error: result.reason });
+      }
+
+      if (wsServer && result.job) wsServer.notifyJobQueued(result.job);
+      return res.json({ job: result.job });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/api/print-jobs/:id/manual-override', async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
@@ -2242,6 +2314,17 @@ export function createApp(
       const deviceId = identity.deviceId || (req.headers['x-agent-device-id'] as string) || printer.id;
       const pendingJobs = await storage.getPendingJobsForPrinter(printer.id);
 
+      // Whether a separator sheet belongs in front of these jobs, decided once
+      // against the depth of the queue as it stood before anything was claimed.
+      //
+      // Deciding per job after claiming would compare against a queue this very
+      // loop is draining, so the first job in a rush would get a separator and
+      // the last would not — which is the wrong way round.
+      const portal = await storage.getShopPortalConfig(printer.shopId);
+      const separator = shouldPrintSeparator(portal, pendingJobs.length)
+        ? portal.separatorMode
+        : 'none';
+
       const claimedJobs = [];
       for (const job of pendingJobs) {
         const claim = await storage.assignJobToDevice(job.id, deviceId);
@@ -2250,7 +2333,7 @@ export function createApp(
         }
       }
 
-      const response: AgentPollResponse = { jobs: claimedJobs };
+      const response: AgentPollResponse = { jobs: claimedJobs, separator };
       return res.json(response);
     } catch (err: any) {
       return res.status(500).json({ error: err.message });

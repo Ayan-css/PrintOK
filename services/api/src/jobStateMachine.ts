@@ -30,6 +30,8 @@ export const HELD_PRINT_STATES: ReadonlySet<PrintState> = new Set([
 export const DOCUMENT_REQUIRED_STATES: ReadonlySet<PrintState> = new Set([
   PrintState.Created,
   PrintState.AwaitingPayment,
+  // The shop has not released it yet, so the file is very much still needed.
+  PrintState.HeldForRelease,
   PrintState.Queued,
   PrintState.Assigned,
   PrintState.Downloading,
@@ -41,10 +43,19 @@ const PRINT_TRANSITIONS: Readonly<Record<PrintState, readonly PrintState[]>> = {
   [PrintState.Created]: [
     PrintState.AwaitingPayment,
     PrintState.Queued,
+    PrintState.HeldForRelease,
     PrintState.Cancelled,
     PrintState.Failed,
   ],
   [PrintState.AwaitingPayment]: [
+    PrintState.Queued,
+    // Paid, but this shop prints on its own say-so.
+    PrintState.HeldForRelease,
+    PrintState.Cancelled,
+    PrintState.Failed,
+  ],
+  [PrintState.HeldForRelease]: [
+    // The only way forward is the shop releasing it.
     PrintState.Queued,
     PrintState.Cancelled,
     PrintState.Failed,

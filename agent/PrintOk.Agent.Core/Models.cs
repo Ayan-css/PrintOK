@@ -15,7 +15,15 @@ public record PrintJob(
 );
 
 public record AgentPollResponse(
-    [property: JsonPropertyName("jobs")] List<PrintJob> Jobs
+    [property: JsonPropertyName("jobs")] List<PrintJob> Jobs,
+    /// <summary>
+    /// A sheet to print before this batch: "none", "blank" or "invoice".
+    ///
+    /// Sent per batch rather than per job, because the decision is about how
+    /// busy the counter is. Defaults to "none" so a server that does not send
+    /// it, or an older one, changes nothing.
+    /// </summary>
+    [property: JsonPropertyName("separator")] string? Separator = null
 );
 
 public record AgentUpdateStatusDto(

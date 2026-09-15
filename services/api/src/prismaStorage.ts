@@ -198,7 +198,9 @@ export class PrismaStorage implements IStorageProvider {
 
     const tokenNumber = await this.getNextTokenNumber(printerId);
     const now = new Date();
-    const printState = autoApprovePayment ? PrintState.Queued : PrintState.AwaitingPayment;
+    const printState = autoApprovePayment || options.queueWithoutPayment
+      ? PrintState.Queued
+      : PrintState.AwaitingPayment;
 
     const printConfig: PrintConfigSnapshot = {
       pageCount, copies, isColor, isDuplex, paperSize, pageRange: options.pageRange,
@@ -347,8 +349,15 @@ export class PrismaStorage implements IStorageProvider {
     }
 
     // Payment success queues the job. It never claims the document printed.
+    //
+    // Unless the shop releases jobs by hand, in which case a paid job waits in
+    // HeldForRelease. Decided here rather than at each of the three callers so
+    // webhook, verify and manual override cannot drift apart.
     const from = existing.printState as PrintState;
-    const canQueue = canTransitionPrintState(from, PrintState.Queued).allowed;
+    const portal = await this.getShopPortalConfig(existing.shopId);
+    const target = portal.autoPrintMode === 'off' ? PrintState.HeldForRelease : PrintState.Queued;
+
+    const canMove = canTransitionPrintState(from, target).allowed;
     const now = new Date();
 
     const job = await this.prisma.printJob.update({
@@ -356,12 +365,17 @@ export class PrismaStorage implements IStorageProvider {
       data: {
         paymentState: PaymentState.Paid,
         ...(meta.detail?.paymentRef ? { paymentRef: String(meta.detail.paymentRef) } : {}),
-        ...(canQueue ? { printState: PrintState.Queued, queuedAt: existing.queuedAt ?? now } : {}),
+        ...(canMove
+          ? {
+              printState: target,
+              ...(target === PrintState.Queued ? { queuedAt: existing.queuedAt ?? now } : {}),
+            }
+          : {}),
         events: {
           create: {
             type: 'PAYMENT_CONFIRMED',
             fromState: from,
-            toState: canQueue ? PrintState.Queued : from,
+            toState: canMove ? target : from,
             actor: meta.actor || 'webhook',
             detail: (meta.detail || {}) as Prisma.InputJsonValue,
           },
@@ -1441,6 +1455,9 @@ export class PrismaStorage implements IStorageProvider {
       collectCustomerPhone: row.collectCustomerPhone,
       customerPhoneRequired: row.customerPhoneRequired,
       enabledServices: row.enabledServices ?? [],
+      autoPrintMode: (row.autoPrintMode as ShopPortalConfig['autoPrintMode']) ?? 'after-payment',
+      separatorMode: (row.separatorMode as ShopPortalConfig['separatorMode']) ?? 'none',
+      separatorMinQueue: row.separatorMinQueue ?? 3,
     };
   }
 

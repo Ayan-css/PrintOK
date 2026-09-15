@@ -23,6 +23,10 @@ export enum PrintState {
   Created = 'Created',
   AwaitingPayment = 'AwaitingPayment',
   Queued = 'Queued',
+  /// Paid for, but deliberately not queued: this shop releases each job by
+  /// hand. Distinct from RequiresShopAction, which means something went wrong —
+  /// a held job is working exactly as the shop configured it.
+  HeldForRelease = 'HeldForRelease',
   /// Claimed by a specific agent device; no other device may pick it up.
   Assigned = 'Assigned',
   Downloading = 'Downloading',
@@ -561,6 +565,17 @@ export interface CreatePrintJobDto {
  * Every field defaults to false. A shop that has not opted in collects nothing,
  * which is what the privacy policy tells its customers.
  */
+/**
+ * When a job actually reaches the printer.
+ *
+ * `after-payment` is what PrintOk has always done and stays the default, so no
+ * existing shop changes behaviour by upgrading.
+ */
+export type AutoPrintMode = 'after-payment' | 'all' | 'off';
+
+/** What, if anything, is printed between jobs on a busy counter. */
+export type SeparatorMode = 'none' | 'blank' | 'invoice';
+
 export interface ShopPortalConfig {
   collectCustomerName: boolean;
   customerNameRequired: boolean;
@@ -568,6 +583,29 @@ export interface ShopPortalConfig {
   customerPhoneRequired: boolean;
   /** Capability keys offered, in display order. Empty means the defaults. */
   enabledServices: string[];
+
+  autoPrintMode: AutoPrintMode;
+  separatorMode: SeparatorMode;
+  /** How many waiting jobs counts as a backlog worth separating. */
+  separatorMinQueue: number;
+}
+
+export const AUTO_PRINT_MODES: readonly AutoPrintMode[] = ['after-payment', 'all', 'off'];
+export const SEPARATOR_MODES: readonly SeparatorMode[] = ['none', 'blank', 'invoice'];
+
+/**
+ * Whether this job should be preceded by a separator sheet.
+ *
+ * Only when a real backlog exists. A separator between every job in a quiet
+ * hour is one wasted sheet per order, which is how a shop decides the feature
+ * is not worth having and turns it off for the busy hour too.
+ */
+export function shouldPrintSeparator(
+  config: Pick<ShopPortalConfig, 'separatorMode' | 'separatorMinQueue'>,
+  jobsWaiting: number
+): boolean {
+  if (config.separatorMode === 'none') return false;
+  return jobsWaiting >= Math.max(1, config.separatorMinQueue);
 }
 
 export const DEFAULT_PORTAL_CONFIG: ShopPortalConfig = {
@@ -576,6 +614,9 @@ export const DEFAULT_PORTAL_CONFIG: ShopPortalConfig = {
   collectCustomerPhone: false,
   customerPhoneRequired: false,
   enabledServices: [],
+  autoPrintMode: 'after-payment',
+  separatorMode: 'none',
+  separatorMinQueue: 3,
 };
 
 /** Longest we will store for either field, so a paste of a whole address is refused. */
@@ -594,6 +635,14 @@ export interface CreatePrintJobResponse {
  */
 export interface AgentPollResponse {
   jobs: PrintJob[];
+  /**
+   * A sheet to print before this batch, or 'none'.
+   *
+   * Sent with the batch rather than per job: the decision is about how busy the
+   * counter is, and the agent needs it before it starts printing the first one.
+   * Older agents ignore the field and behave exactly as they did.
+   */
+  separator?: SeparatorMode;
 }
 
 /**

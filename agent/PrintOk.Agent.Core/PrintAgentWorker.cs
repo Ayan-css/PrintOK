@@ -200,9 +200,44 @@ public class PrintAgentWorker : BackgroundService
 
         _logger.LogInformation("Received {Count} pending print job(s).", pollResult.Jobs.Count);
 
+        // A divider sheet before the batch, when the server says the counter is
+        // busy enough to warrant one. Printed first so it separates this batch
+        // from whatever is already sitting in the tray.
+        await PrintSeparatorAsync(pollResult.Separator, pollResult.Jobs.Count, cancellationToken);
+
         foreach (var job in pollResult.Jobs)
         {
             await ProcessSingleJobAsync(job, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Prints the divider sheet, if this batch wants one.
+    ///
+    /// Failure here is logged and ignored. A missing divider is untidy; a batch
+    /// that did not print because the divider failed is a shop's morning gone.
+    /// </summary>
+    private async Task PrintSeparatorAsync(string? mode, int jobCount, CancellationToken cancellationToken)
+    {
+        string? path = SeparatorSheet.TryCreate(mode, jobCount, _logger);
+        if (path is null) return;
+
+        try
+        {
+            _logger.LogInformation("Printing a '{Mode}' separator before {Count} job(s).", mode, jobCount);
+            await _spooler.PrintDocumentAsync(path, "PrintOk separator", 1, false, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("The separator sheet did not print ({Message}). Carrying on with the jobs.", ex.Message);
+        }
+        finally
+        {
+            try { File.Delete(path); } catch { /* temp file; nothing to report */ }
         }
     }
 
