@@ -36,6 +36,11 @@ jobs:
           -c Release -r linux-x64 --self-contained false
           -warnaserror
 
+      # The core's logic is testable without a printer, a console or a network,
+      # so it is tested here rather than only on a shop PC.
+      - name: Test the core
+        run: dotnet test agent/PrintOk.Agent.Core.Tests/PrintOk.Agent.Core.Tests.csproj -c Release --nologo
+
   windows:
     name: Console and desktop agent (win-x64)
     runs-on: windows-latest
@@ -120,6 +125,12 @@ jobs:
           if (-not $setup) { throw "Inno Setup reported success but produced no installer" }
           Write-Host "Installer: $($setup.Name) $([math]::Round($setup.Length/1MB,2)) MB"
 
+          # A second copy under a name that does not move. The dashboard's
+          # download button is a fixed redirect to this release, and a filename
+          # carrying the version would break that link on every version bump.
+          # The versioned file is still published, for anyone pinning one.
+          Copy-Item $setup.FullName agent/dist/PrintOkAgentSetup.exe
+
       - name: Stage the release bundle
         shell: pwsh
         run: |
@@ -147,9 +158,14 @@ jobs:
           body: |
             The print agent for PrintOk shops. No .NET runtime install required.
 
+            Windows will show "Windows protected your PC" with an unknown
+            publisher: these builds are not code-signed yet. Click
+            **More info → Run anyway**.
+
             **Most shops want the installer.**
 
-            - `PrintOkAgentSetup-*.exe` — recommended. Installs the desktop agent,
+            - `PrintOkAgentSetup.exe` — recommended, and what the dashboard's
+              download button gives you. Installs the desktop agent,
               starts it with Windows, and keeps it in the system tray. Open it from
               the tray to check the connection, see printers, pair, or read logs.
             - `PrintOkAgent.exe` — the desktop agent on its own, no installer.
@@ -161,6 +177,7 @@ jobs:
           draft: false
           prerelease: false
           files: |
+            agent/dist/PrintOkAgentSetup.exe
             agent/dist/PrintOkAgentSetup-*.exe
             bin/desktop/PrintOkAgent.exe
             PrintAgent-win-x64.zip

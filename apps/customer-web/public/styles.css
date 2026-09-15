@@ -2523,6 +2523,41 @@ body::before {
   white-space: nowrap;
 }
 
+/*
+  The code, at the size of the thing that matters on this panel.
+
+  Monospace and widely letter-spaced because it is read off one screen and
+  typed into another, and because the alphabet drops I, L, O, 0 and 1 to keep
+  that transcription unambiguous — spacing the characters out is the rest of
+  that same job.
+*/
+.pairing-code-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+
+.pairing-code-value {
+  flex: 1 1 auto;
+  padding: 10px 14px;
+  border: 2px solid var(--color-border, #111);
+  border-radius: 6px;
+  background: var(--color-paper, #fff);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono, ui-monospace, 'Cascadia Code', Consolas, monospace);
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-align: center;
+  user-select: all; /* one click selects the code and nothing around it */
+}
+
+.pairing-advanced { margin-top: 10px; }
+.pairing-advanced > summary { cursor: pointer; }
+.pairing-advanced .pairing-command { margin-top: 8px; }
+
 .pairing-expiry { font-weight: 600; }
 
 .device-list { display: flex; flex-direction: column; gap: 8px; }

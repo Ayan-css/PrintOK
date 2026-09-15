@@ -1,3 +1,5 @@
+using PrintOk.WindowsPrintAgent.Services;
+
 namespace PrintOk.Agent.Tray.Ui;
 
 /// <summary>
@@ -12,7 +14,17 @@ public sealed class PairingDialog : Form
 {
     private readonly TextBox _code;
 
-    public string Code => _code.Text.Trim();
+    /// <summary>
+    /// The code as the server expects it, or empty if what was typed is not a
+    /// pairing code at all. Parsing happens here rather than at the far end
+    /// because a paste of the whole usage line used to be sent verbatim and
+    /// come back as "your code expired" — which was never true.
+    /// </summary>
+    public string Code =>
+        PairingCodeInput.TryParse(_code.Text, out var parsed) ? parsed : string.Empty;
+
+    /// <summary>What was typed, for an error message that quotes it back.</summary>
+    public string RawCode => _code.Text.Trim();
 
     public PairingDialog(string apiBaseUrl)
     {
@@ -51,7 +63,10 @@ public sealed class PairingDialog : Form
             Width = 220,
             Font = new Font("Consolas", 14f),
             CharacterCasing = CharacterCasing.Upper,
-            MaxLength = 9,
+            // The length cap was 9, which silently truncated a pasted command
+            // line to its first nine characters and turned a recoverable paste
+            // into an unexplainable rejection. Length is checked when parsing,
+            // where it can be explained.
             PlaceholderText = "XXXX-XXXX",
         };
 

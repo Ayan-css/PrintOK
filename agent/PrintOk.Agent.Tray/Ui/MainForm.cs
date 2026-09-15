@@ -292,7 +292,20 @@ public sealed class MainForm : Form
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
         string code = dialog.Code;
-        if (string.IsNullOrWhiteSpace(code)) return;
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            // Empty means the parser refused it, not that the box was blank —
+            // the operator typed something and deserves to know what was wrong
+            // with it rather than watching the dialog close and nothing happen.
+            if (!string.IsNullOrWhiteSpace(dialog.RawCode))
+            {
+                MessageBox.Show(
+                    "That does not look like a pairing code.\n\nA code is eight characters, shown on "
+                    + "the dashboard as XXXX-XXXX. Paste just the code, not the whole command line.",
+                    "PrintOk", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            return;
+        }
 
         Cursor = Cursors.WaitCursor;
         try

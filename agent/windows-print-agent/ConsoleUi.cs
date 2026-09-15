@@ -36,6 +36,45 @@ public static class Ui
     private const int Width = 62;
 
     private static readonly bool ColorEnabled = DetectColorSupport();
+    private static readonly bool UnicodeEnabled = TryEnableUnicode();
+
+    /// <summary>
+    /// Heavy box-drawing and check marks, or the ASCII that survives anywhere.
+    ///
+    /// A fresh Windows console starts on a legacy OEM codepage — 437 in most of
+    /// the world, 850 in western Europe. Those have the light box-drawing
+    /// characters, which is why a shop owner saw the rules under the section
+    /// headings render correctly, and none of the heavy ones, which is why the
+    /// banner around them came out as a row of question marks. Switching the
+    /// console to UTF-8 fixes it where the console will accept the switch; where
+    /// it will not, the same layout prints in ASCII rather than in "?".
+    /// </summary>
+    private static string G(string unicode, string ascii) => UnicodeEnabled ? unicode : ascii;
+
+    private static bool TryEnableUnicode()
+    {
+        try
+        {
+            if (Console.IsOutputRedirected) return false;
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                // Without the BOM: this is a console, and the encoding preamble
+                // would print as stray characters on the first line.
+                Console.OutputEncoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+            }
+
+            // Ask what actually took effect rather than trusting the assignment.
+            // A console host that refuses the codepage leaves the old one in
+            // place, and printing heavy box-drawing into that is the bug.
+            return Console.OutputEncoding.CodePage == 65001;
+        }
+        catch
+        {
+            // Encoding is presentation. It never stops the agent starting.
+            return false;
+        }
+    }
 
     private static string C(string code, string text) => ColorEnabled ? code + text + Reset : text;
 
@@ -105,11 +144,11 @@ public static class Ui
     public static void Banner(string version, string platform)
     {
         Console.WriteLine();
-        Console.WriteLine(C(Purple, "  ┏" + new string('━', Width - 2) + "┓"));
+        Console.WriteLine(C(Purple, "  " + G("┏", "+") + new string(G("━", "-")[0], Width - 2) + G("┓", "+")));
         Row(C(Bold, "PrintOk") + C(Muted, " · print agent"), "PrintOk · print agent",
             C(Yellow, version), version);
         Row(C(Muted, platform), platform, "", "");
-        Console.WriteLine(C(Purple, "  ┗" + new string('━', Width - 2) + "┛"));
+        Console.WriteLine(C(Purple, "  " + G("┗", "+") + new string(G("━", "-")[0], Width - 2) + G("┛", "+")));
         Console.WriteLine();
     }
 
@@ -126,7 +165,7 @@ public static class Ui
         int fill = (Width - 4) - leftPlain.Length - rightPlain.Length;
         if (fill < 1) fill = 1;
 
-        Console.WriteLine(C(Purple, "  ┃ ") + left + new string(' ', fill) + right + C(Purple, " ┃"));
+        Console.WriteLine(C(Purple, "  " + G("┃", "|") + " ") + left + new string(' ', fill) + right + C(Purple, " " + G("┃", "|")));
     }
 
     /// <summary>A section heading, mirroring the dashboard's card titles.</summary>
@@ -134,20 +173,20 @@ public static class Ui
     {
         Console.WriteLine();
         Console.WriteLine("  " + C(Bold, title.ToUpperInvariant()));
-        Console.WriteLine("  " + C(Muted, new string('─', Math.Min(Width, title.Length + 6))));
+        Console.WriteLine("  " + C(Muted, new string(G("─", "-")[0], Math.Min(Width, title.Length + 6))));
     }
 
     /// <summary>A label and value pair, aligned like the dashboard's meta rows.</summary>
     public static void Field(string label, string value)
         => Console.WriteLine("  " + C(Muted, label.PadRight(16)) + value);
 
-    public static void Ok(string message)   => Console.WriteLine("  " + C(Green,  "✔ ") + message);
-    public static void Warn(string message) => Console.WriteLine("  " + C(Amber,  "▲ ") + message);
-    public static void Fail(string message) => Console.WriteLine("  " + C(Red,    "✖ ") + message);
-    public static void Info(string message) => Console.WriteLine("  " + C(Purple, "› ") + message);
+    public static void Ok(string message)   => Console.WriteLine("  " + C(Green,  G("✔", "[OK]") + " ") + message);
+    public static void Warn(string message) => Console.WriteLine("  " + C(Amber,  G("▲", "[!]")  + " ") + message);
+    public static void Fail(string message) => Console.WriteLine("  " + C(Red,    G("✖", "[X]")  + " ") + message);
+    public static void Info(string message) => Console.WriteLine("  " + C(Purple, G("›", ">")    + " ") + message);
     public static void Note(string message) => Console.WriteLine("  " + C(Muted, message));
     public static void Blank()              => Console.WriteLine();
-    public static void Rule()               => Console.WriteLine("  " + C(Muted, new string('─', Width)));
+    public static void Rule()               => Console.WriteLine("  " + C(Muted, new string(G("─", "-")[0], Width)));
 
     /// <summary>
     /// A job state, coloured to match the badge the same job shows in the

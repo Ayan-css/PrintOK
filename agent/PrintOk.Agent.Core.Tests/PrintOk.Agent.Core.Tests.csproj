@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The agent's first test project.
+
+       Plain net8.0 and no Windows target, so it runs on the Linux CI job that
+       already guards the core against picking up a WinForms dependency. What
+       gets tested here is what can be: pure logic with no printer, no console
+       and no network attached. -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>PrintOk.Agent.Core.Tests</RootNamespace>
+    <!-- CI installs the 8.0 SDK; a developer machine may only have a newer
+         runtime. Roll forward rather than making everyone install 8.0 to run
+         eight assertions. -->
+    <RollForward>LatestMajor</RollForward>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../PrintOk.Agent.Core/PrintOk.Agent.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -350,12 +350,25 @@
 
                 <div class="grid-2" style="margin-top: 12px;">
                   <a id="btnDownloadAgentExe" href="#" target="_blank" rel="noopener" class="btn btn-primary btn-sm" style="text-decoration: none; text-align: center;">
-                    ⬇️ Download PrintAgent.exe
+                    ⬇️ Download Agent for Windows
                   </a>
                   <a id="btnDownloadAgentConfigFile" href="#" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration: none; text-align: center;">
                     ⚙️ Auto-Config (.json)
                   </a>
                 </div>
+
+                <!--
+                  Said before it happens, not after. The installer is not yet
+                  code-signed, so Windows shows "Windows protected your PC" with
+                  an unknown publisher. A shop owner who meets that with no
+                  warning assumes the download is malware and stops; one who was
+                  told to expect it carries on. The real fix is an authenticode
+                  certificate — see agent/windows-print-agent/INSTALL.md.
+                -->
+                <p class="meta-text" style="margin-top: 8px;">
+                  Windows will say <strong>“Windows protected your PC”</strong> — our installer is
+                  not yet signed. Click <strong>More info → Run anyway</strong> to continue.
+                </p>
 
                 <div class="grid-2" style="margin-top: 8px;">
                   <button class="btn btn-outline btn-sm" id="btnCopyAgentConfig" type="button">
@@ -376,10 +389,29 @@
                     <button class="btn btn-primary btn-sm" id="btnPairAgent" type="button">🔗 Pair New PC</button>
                   </div>
 
+                  <!--
+                    The code is the whole message, so it is the whole element.
+
+                    This block used to show only "WindowsPrintAgent.exe
+                    --PairingCode=XXXX-XXXX", a command line with the code
+                    buried in it. A shop owner copied the one thing on offer,
+                    pasted all of it into the agent's "Pairing code:" prompt,
+                    and was told their code had expired. It had not. The agent
+                    now parses a paste like that, but the better fix is not to
+                    hand someone a command line when what they need is a code.
+                  -->
                   <div id="pairingCodeBox" class="pairing-code-box" hidden aria-live="polite">
-                    <div class="meta-text">On the shop PC, run:</div>
-                    <code class="pairing-command">WindowsPrintAgent.exe --PairingCode=<span id="pairingCodeValue">--</span></code>
+                    <div class="meta-text">Type this into the agent on the shop PC:</div>
+                    <div class="pairing-code-row">
+                      <code class="pairing-code-value" id="pairingCodeValue">--</code>
+                      <button type="button" class="btn btn-outline btn-sm" id="btnCopyPairingCode"
+                              title="Copy just the code">📋 Copy</button>
+                    </div>
                     <div class="pairing-expiry meta-text" id="pairingExpiry">Expires in 15:00</div>
+                    <details class="pairing-advanced">
+                      <summary class="meta-text">Using the console agent instead?</summary>
+                      <code class="pairing-command">WindowsPrintAgent.exe --PairingCode=<span id="pairingCommandCode">--</span></code>
+                    </details>
                   </div>
 
                   <div id="pairedDeviceList" class="device-list" aria-live="polite">

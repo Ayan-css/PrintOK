@@ -44,6 +44,39 @@ static void HoldWindowOpen()
     }
 }
 
+static string? ReadPairingCode()
+{
+    // Up to three goes, because a typo should not mean re-launching the agent,
+    // and because the operator may be reading the code off a second screen.
+    for (int attempt = 0; attempt < 3; attempt++)
+    {
+        string? typed = Ui.Prompt("Pairing code (e.g. K7MP-3QRT), or Enter to quit:");
+        if (string.IsNullOrWhiteSpace(typed)) return null;
+
+        if (PairingCodeInput.TryParse(typed, out string code, out var problem)) return code;
+
+        // Said here rather than by the server. A local complaint is the honest
+        // one: nothing was sent, so nothing expired, and telling someone to
+        // generate a fresh code would start a loop that cannot end.
+        Ui.Blank();
+        switch (problem)
+        {
+            case PairingCodeInput.Problem.ConfusableCharacter:
+                Ui.Warn("That contains a character no pairing code has.");
+                Ui.Note("Codes never use I, L, O, 0 or 1 — check for a misread letter.");
+                break;
+            default:
+                Ui.Warn("That does not look like a pairing code.");
+                Ui.Note("A code is eight characters, shown as XXXX-XXXX. Paste just the code,");
+                Ui.Note("not the whole command line.");
+                break;
+        }
+        Ui.Blank();
+    }
+
+    return null;
+}
+
 static string PlatformLabel()
 {
     string os =
@@ -113,7 +146,7 @@ if (existing is null && string.IsNullOrWhiteSpace(pairingCode) && !settings.IsCo
     Ui.Info("Click 'Pair New PC' and copy the code it shows");
     Ui.Blank();
 
-    pairingCode = Ui.Prompt("Pairing code (e.g. K7MP-3QRT), or Enter to quit:");
+    pairingCode = ReadPairingCode();
 
     if (string.IsNullOrWhiteSpace(pairingCode))
     {
@@ -123,6 +156,21 @@ if (existing is null && string.IsNullOrWhiteSpace(pairingCode) && !settings.IsCo
         HoldWindowOpen();
         return 1;
     }
+}
+else if (!string.IsNullOrWhiteSpace(pairingCode))
+{
+    // A code given on the command line gets the same treatment. Quoting a
+    // switch wrongly is easy, and sending the mess to the server would produce
+    // the same misleading "expired code" as typing it wrongly did.
+    if (!PairingCodeInput.TryParse(pairingCode, out string parsed, out _))
+    {
+        Ui.Blank();
+        Ui.Fail("That is not a pairing code.");
+        Ui.Note("--PairingCode takes eight characters, shown as XXXX-XXXX on the dashboard.");
+        HoldWindowOpen();
+        return 1;
+    }
+    pairingCode = parsed;
 }
 
 if (!string.IsNullOrWhiteSpace(pairingCode))

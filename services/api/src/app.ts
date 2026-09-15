@@ -2127,19 +2127,47 @@ export function createApp(
    */
   app.get('/api/agent-installer', async (req: Request, res: Response) => {
     try {
-      // ?format=zip returns the full bundle (executable + appsettings template +
-      // setup instructions); the default is the standalone self-contained .exe.
-      const wantsBundle = String(req.query.format || '').toLowerCase() === 'zip';
+      // What a shop gets by default is the installer for the desktop agent: an
+      // app with a window, a tray icon and a pairing dialog, that starts with
+      // Windows.
+      //
+      // It used to be WindowsPrintAgent.exe, the headless console build. A shop
+      // owner clicked "Download agent", got a black terminal, and reasonably
+      // asked where the application was. The desktop agent had been built and
+      // published all along — this endpoint simply pointed at the wrong asset.
+      //
+      // The other builds stay available for the people who want them:
+      //   ?format=console  the console .exe, for an unattended or scripted box
+      //   ?format=zip      that .exe plus an appsettings template and a README
+      //   ?format=portable the desktop agent with no installer
+      const format = String(req.query.format || '').toLowerCase();
 
+      const ASSETS: Record<string, string> = {
+        '':         'PrintOkAgentSetup.exe',
+        installer:  'PrintOkAgentSetup.exe',
+        portable:   'PrintOkAgent.exe',
+        console:    'WindowsPrintAgent.exe',
+        zip:        'PrintAgent-win-x64.zip',
+      };
+
+      const assetName = ASSETS[format];
+      if (!assetName) {
+        return res.status(400).json({
+          error: 'Unknown format. Use installer, portable, console or zip.',
+        });
+      }
+
+      // An operator hosting their own build overrides the default download
+      // only; the specific formats stay pinned to the published release so a
+      // single custom URL cannot silently answer for all four.
       const customUrl = process.env.AGENT_INSTALLER_URL;
-      if (customUrl && !wantsBundle) {
+      if (customUrl && (format === '' || format === 'installer')) {
         return res.redirect(customUrl);
       }
 
       const githubRepo = process.env.PRINT_AGENT_REPO || 'Ayan-css/PrintOK';
-      const assetName = wantsBundle ? 'PrintAgent-win-x64.zip' : 'WindowsPrintAgent.exe';
-      const releaseUrl = `https://github.com/${githubRepo}/releases/download/latest/${assetName}`;
-      return res.redirect(releaseUrl);
+      return res.redirect(
+        `https://github.com/${githubRepo}/releases/download/latest/${assetName}`);
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }

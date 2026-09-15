@@ -1124,10 +1124,29 @@ document.addEventListener('DOMContentLoaded', () => {
           const data = await res.json();
           const box = document.getElementById('pairingCodeBox');
           const value = document.getElementById('pairingCodeValue');
+          const commandCode = document.getElementById('pairingCommandCode');
           const expiry = document.getElementById('pairingExpiry');
 
           if (value) value.textContent = data.code;
+          if (commandCode) commandCode.textContent = data.code;
           if (box) box.hidden = false;
+
+          // Copies the code alone. The button exists so that the obvious way to
+          // get the code onto the clipboard is not "select the command line".
+          const copyBtn = document.getElementById('btnCopyPairingCode');
+          if (copyBtn && !copyBtn.dataset.wired) {
+            copyBtn.dataset.wired = '1';
+            copyBtn.addEventListener('click', async () => {
+              const code = document.getElementById('pairingCodeValue')?.textContent?.trim();
+              if (!code || code === '--') return;
+              try {
+                await navigator.clipboard.writeText(code);
+                showToast('success', 'Code Copied', 'Type or paste it into the agent on the shop PC.');
+              } catch {
+                showToast('warning', 'Copy Failed', `Type it in by hand: ${code}`);
+              }
+            });
+          }
 
           // The code is single use and short lived; show the operator how long is left.
           let remaining = data.expiresInSeconds || 900;
@@ -1138,6 +1157,7 @@ document.addEventListener('DOMContentLoaded', () => {
               clearInterval(pairingCountdown);
               if (expiry) expiry.textContent = 'Expired — generate a new code.';
               if (value) value.textContent = '--';
+              if (commandCode) commandCode.textContent = '--';
               return;
             }
             const mins = Math.floor(remaining / 60);
@@ -1145,7 +1165,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (expiry) expiry.textContent = `Expires in ${mins}:${secs}`;
           }, 1000);
 
-          showToast('success', 'Pairing Code Ready', 'Run the command shown on the shop PC within 15 minutes.');
+          showToast('success', 'Pairing Code Ready', 'Enter it in the agent on the shop PC within 15 minutes.');
         } catch (err) {
           showToast('danger', 'Pairing Failed', err.message);
         } finally {

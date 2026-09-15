@@ -2749,6 +2749,37 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.match(String(((await link.json()) as any).error), /phone/i);
   });
 
+  /**
+   * A shop owner clicked "Download agent", got a headless console window and
+   * asked where the application was. The desktop agent existed and was
+   * published; this endpoint pointed at the console build instead.
+   */
+  await t.test('73. The agent download hands over the desktop installer', async () => {
+    const res = await fetch(`${baseUrl}/api/agent-installer`, { redirect: 'manual' });
+    assert.strictEqual(res.status, 302);
+
+    const target = String(res.headers.get('location'));
+    assert.match(target, /PrintOkAgentSetup\.exe$/,
+      'the default download must be the installer, not the console .exe');
+    // No version in the filename: the button is a fixed redirect and a
+    // versioned asset name would break it on the next release.
+    assert.doesNotMatch(target, /Setup-\d/);
+
+    // The other builds stay reachable for anyone who wants them.
+    for (const [format, asset] of [
+      ['console', 'WindowsPrintAgent.exe'],
+      ['portable', 'PrintOkAgent.exe'],
+      ['zip', 'PrintAgent-win-x64.zip'],
+    ] as const) {
+      const r = await fetch(`${baseUrl}/api/agent-installer?format=${format}`, { redirect: 'manual' });
+      assert.strictEqual(r.status, 302, format);
+      assert.ok(String(r.headers.get('location')).endsWith(asset), `${format} -> ${asset}`);
+    }
+
+    const bogus = await fetch(`${baseUrl}/api/agent-installer?format=nonsense`, { redirect: 'manual' });
+    assert.strictEqual(bogus.status, 400);
+  });
+
   server.close();
 });
 
