@@ -4476,3 +4476,153 @@ body::before {
   color: var(--color-text-secondary);
   line-height: 1.45;
 }
+
+/* --- order queue toolbar ---------------------------------------------------
+   Tabs carry their own counts so a shop can see there are jobs needing
+   attention without clicking to find out.
+   -------------------------------------------------------------------------- */
+
+.queue-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  margin-bottom: 10px;
+  scrollbar-width: thin;
+}
+
+.queue-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.queue-tab:hover { border-color: var(--color-text-secondary); }
+
+.queue-tab.active {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  color: var(--color-primary);
+}
+
+.queue-tab-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--color-border);
+  color: var(--color-text-primary);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.queue-tab.active .queue-tab-count {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.queue-filters {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+/* The search box takes the slack; the month picker keeps its natural width. */
+.queue-search { flex: 1 1 200px; min-width: 0; }
+.queue-search .form-input { width: 100%; }
+.queue-month .form-input { width: auto; }
+
+/* ===========================================================================
+   Scrollbars
+
+   The browser default is a grey slab that belongs to no design system. This is
+   the brand's, and it reacts: the thumb grows and takes the brand colour when
+   the pointer is over the area being scrolled, so it is discoverable without
+   being loud while you read.
+
+   Written against `*`, which has no specificity, so any component that sets
+   its own rule still wins — the tab bars hide their scrollbars deliberately
+   and keep doing so regardless of where this sits in the file.
+
+   Three deliberate limits:
+     * It never animates on `prefers-reduced-motion`. A moving scrollbar is
+       exactly the kind of incidental motion that setting exists to stop.
+     * Firefox gets `scrollbar-color` only. It has no thumb pseudo-element, so
+       there is nothing to animate; a plain branded bar is the honest result
+       rather than a worse imitation.
+     * Touch devices are left alone. Mobile browsers draw their own overlay
+       scrollbar and hide it when idle, which is already the right behaviour.
+   =========================================================================== */
+
+@media (hover: hover) and (pointer: fine) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--color-primary) 45%, transparent) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    /* Inset by a transparent border rather than a smaller width, so the thumb
+       can grow on hover without the track resizing and shifting the layout. */
+    background-color: color-mix(in srgb, var(--color-text-secondary) 40%, transparent);
+    background-clip: content-box;
+    border: 3px solid transparent;
+    border-radius: 999px;
+    transition: background-color 180ms ease, border-width 180ms ease;
+  }
+
+  /* Hovering anywhere in the scrollable area, not just the bar itself: a 6px
+     thumb is hard to aim at, and the point is to show where you are while
+     reading rather than to wait until you have found it. */
+  *:hover::-webkit-scrollbar-thumb {
+    background-color: color-mix(in srgb, var(--color-primary) 55%, transparent);
+    border-width: 2px;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-primary);
+    border-width: 2px;
+  }
+
+  *::-webkit-scrollbar-thumb:active {
+    background-color: color-mix(in srgb, var(--color-primary) 80%, var(--color-ink, #000));
+  }
+
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  /* The page itself, where a full-height bar against the paper background
+     would otherwise look heavier than the panes inside it. */
+  html {
+    scrollbar-gutter: stable;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *::-webkit-scrollbar-thumb {
+    transition: none;
+  }
+}

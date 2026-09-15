@@ -26,6 +26,7 @@ import {
   SERVICE_CATALOGUE, SERVICE_GROUPS, defaultEnabledServices, resolveEnabledServices,
   derivePortalOptions, checkJobAgainstPortal,
   AUTO_PRINT_MODES, SEPARATOR_MODES, shouldPrintSeparator,
+  bucketForState, countJobBuckets, jobMatchesSearch,
 } from '@printok/shared-types';
 import {
   hashPassword, verifyPassword, validatePasswordStrength,
@@ -792,9 +793,47 @@ export function createApp(
 
     try {
       const { shopId } = req.params;
-      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
-      const jobs = await storage.getRecentJobsForShop(shopId, limit);
-      return res.json({ jobs });
+      const limit = Math.min(Number(req.query.limit) || 50, 500);
+
+      // Fetched wide, then filtered here, so the counts describe the shop's
+      // whole recent history rather than whichever page happened to load. A tab
+      // reading "Rejected 0" because the rejections fell off the end of the
+      // page is worse than no count at all.
+      const all = await storage.getRecentJobsForShop(shopId, 500);
+
+      const bucket = typeof req.query.status === 'string' ? req.query.status : 'all';
+      const search = typeof req.query.q === 'string' ? req.query.q : '';
+      const month = typeof req.query.month === 'string' ? req.query.month : '';
+
+      let jobs = all;
+
+      // YYYY-MM, matched on the string rather than by parsing dates: the
+      // timestamps are ISO and already in that order, and a Date round-trip
+      // would quietly shift a job either side of midnight into another month.
+      if (/^\d{4}-\d{2}$/.test(month)) {
+        jobs = jobs.filter((j) => String(j.createdAt).startsWith(month));
+      }
+
+      if (bucket !== 'all') {
+        jobs = jobs.filter((j) => bucketForState(j.printState) === bucket);
+      }
+
+      if (search) {
+        jobs = jobs.filter((j) => jobMatchesSearch(j, search));
+      }
+
+      return res.json({
+        jobs: jobs.slice(0, limit),
+        // Counted after the month filter but before status and search, so the
+        // tabs say how many are in each bucket *right now* rather than how many
+        // survived the box the merchant is currently typing in.
+        counts: countJobBuckets(
+          /^\d{4}-\d{2}$/.test(month)
+            ? all.filter((j) => String(j.createdAt).startsWith(month))
+            : all
+        ),
+        total: jobs.length,
+      });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }

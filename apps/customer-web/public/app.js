@@ -682,7 +682,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // Resolved once from the session by resolveIdentity(), then reused so the
     // 8-second refresh does not re-fetch it.
     let identity = { shop: null, printer: null };
+    // What the queue is currently showing. Sent to the server rather than
+    // applied to a cached page, so the counts and the rows describe the same
+    // set — and so searching finds an order from last month, not just the ones
+    // that happened to be in the last fetch.
     let queueFilter = 'all';
+    let queueSearch = '';
+    let queueMonth = '';
+    let queueCounts = null;
     let cachedJobs = [];
     let shopUpiId = null; // the shop's own payout UPI wins over the API's placeholder
     let dashTimer = null;
@@ -722,18 +729,82 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     });
 
-    // --- Queue filter pills ---
-    document.querySelectorAll('.filter-pill').forEach(pill => {
-      pill.addEventListener('click', () => {
-        queueFilter = pill.getAttribute('data-filter') || 'all';
-        document.querySelectorAll('.filter-pill').forEach(p => {
-          const on = p === pill;
-          p.classList.toggle('active', on);
-          p.setAttribute('aria-pressed', String(on));
+    // --- Queue tabs, search and month ---
+
+    const QUEUE_BUCKETS = [
+      { id: 'all',        label: 'All' },
+      { id: 'pending',    label: 'Pending' },
+      { id: 'processing', label: 'Processing' },
+      { id: 'printing',   label: 'Printing' },
+      { id: 'failed',     label: 'Needs attention' },
+      { id: 'rejected',   label: 'Rejected' },
+      { id: 'done',       label: 'Done' },
+    ];
+
+    function renderQueueTabs() {
+      const host = document.getElementById('queueTabs');
+      if (!host) return;
+
+      host.innerHTML = QUEUE_BUCKETS.map((b) => {
+        const count = queueCounts ? (queueCounts[b.id] ?? 0) : null;
+        const on = queueFilter === b.id;
+        return `<button type="button" class="queue-tab ${on ? 'active' : ''}"
+                        data-bucket="${b.id}" role="tab" aria-selected="${on}">
+          ${escapeHtml(b.label)}${count === null ? '' : ` <span class="queue-tab-count">${count}</span>`}
+        </button>`;
+      }).join('');
+
+      host.querySelectorAll('[data-bucket]').forEach((tab) => {
+        tab.addEventListener('click', () => {
+          queueFilter = tab.getAttribute('data-bucket') || 'all';
+          renderQueueTabs();
+          loadQueue();
         });
-        renderQueue(cachedJobs);
       });
-    });
+    }
+
+    const searchInput = document.getElementById('queueSearch');
+    if (searchInput) {
+      let timer = null;
+      searchInput.addEventListener('input', () => {
+        // Debounced: a shop owner typing a phone number should not fire eight
+        // requests, and the queue already refreshes on its own timer.
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          queueSearch = searchInput.value.trim();
+          syncQueueClear();
+          loadQueue();
+        }, 250);
+      });
+    }
+
+    const monthInput = document.getElementById('queueMonth');
+    if (monthInput) {
+      monthInput.addEventListener('change', () => {
+        queueMonth = monthInput.value || '';
+        syncQueueClear();
+        loadQueue();
+      });
+    }
+
+    function syncQueueClear() {
+      const btn = document.getElementById('btnQueueClear');
+      if (btn) btn.hidden = !queueSearch && !queueMonth;
+    }
+
+    const clearBtn = document.getElementById('btnQueueClear');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        queueSearch = '';
+        queueMonth = '';
+        if (searchInput) searchInput.value = '';
+        if (monthInput) monthInput.value = '';
+        syncQueueClear();
+        loadQueue();
+      });
+    }
+
+    renderQueueTabs();
 
     // Ask the session which shop this is before deciding there isn't one. The
     // URL and localStorage are hints, not the authority, and a merchant who has
@@ -759,57 +830,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         loadDashboard();
         showToast('info', 'Refreshed', 'Queue metrics updated.');
-      });
-    }
-
-    // --- Rates matrix save (the form had no handler at all) ---
-    const btnSavePricing = document.getElementById('btnSavePricing');
-    if (btnSavePricing) {
-      btnSavePricing.addEventListener('click', async () => {
-        if (!dashShopId) {
-          showToast('warning', 'No Shop Connected', 'Register a shop before setting rates.');
-          return;
-        }
-
-        const toCents = (id) => {
-          const el = document.getElementById(id);
-          const v = el ? parseFloat(el.value) : NaN;
-          return Number.isFinite(v) ? Math.round(v * 100) : null;
-        };
-
-        const config = {
-          bwSinglePerPageCents: toCents('rateBwSingle'),
-          bwDuplexPerPageCents: toCents('rateBwDuplex'),
-          colorSinglePerPageCents: toCents('rateColorSingle'),
-          colorDuplexPerPageCents: toCents('rateColorDuplex'),
-        };
-
-        if (Object.values(config).some(v => v === null || v <= 0)) {
-          showToast('warning', 'Invalid Rates', 'Every rate must be a number greater than zero.');
-          return;
-        }
-
-        btnSavePricing.disabled = true;
-        const original = btnSavePricing.textContent;
-        btnSavePricing.textContent = 'Saving...';
-
-        try {
-          const res = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/pricing`, {
-            method: 'POST',
-            body: JSON.stringify(config),
-          });
-          const data = await res.json();
-          if (res.ok) {
-            showToast('success', 'Rates Saved', 'New per-page rates now apply to incoming jobs.');
-          } else {
-            showToast('danger', 'Save Failed', data.error || 'Could not update rates.');
-          }
-        } catch {
-          showToast('danger', 'Network Error', 'Could not reach the API server.');
-        } finally {
-          btnSavePricing.disabled = false;
-          btnSavePricing.textContent = original;
-        }
       });
     }
 
@@ -1127,33 +1147,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function loadDashboard() {
       if (!dashShopId) return;
-      await Promise.all([loadShopIdentity(), loadMetrics(), loadQueue(), loadPricingForm()]);
+      await Promise.all([loadShopIdentity(), loadMetrics(), loadQueue()]);
       await loadTelemetry();
     }
 
     /** The rates form showed hardcoded defaults regardless of what the shop had saved. */
-    async function loadPricingForm() {
-      try {
-        const res = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/pricing`);
-        if (!res.ok) return;
-        const { pricing } = await res.json();
-        if (!pricing) return;
-
-        const fill = (id, cents) => {
-          const el = document.getElementById(id);
-          // Don't clobber what the owner is currently typing.
-          if (el && document.activeElement !== el && Number.isFinite(cents)) {
-            el.value = (cents / 100).toFixed(2);
-          }
-        };
-        fill('rateBwSingle', pricing.bwSinglePerPageCents);
-        fill('rateBwDuplex', pricing.bwDuplexPerPageCents);
-        fill('rateColorSingle', pricing.colorSinglePerPageCents);
-        fill('rateColorDuplex', pricing.colorDuplexPerPageCents);
-      } catch {
-        // keep whatever is in the form
-      }
-    }
+    // loadPricingForm and its save handler are gone with the Rates Matrix pane.
+    // Business Setup owns pricing now; leaving a second editor behind would be
+    // a quietly different answer to the same question.
 
     /**
      * Resolves which shop and printer this dashboard belongs to, from the session.
@@ -1237,9 +1238,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
           // The wizard reads the shop from storage, but a link that carries it
           // works on a browser that has never stored anything.
-          const setupLink = document.getElementById('btnBusinessSetup');
-          if (setupLink && dashShopId) {
-            setupLink.href = `/setup?shop=${encodeURIComponent(dashShopId)}`;
+          for (const id of ['btnBusinessSetup', 'btnRatesToSetup']) {
+            const link = document.getElementById(id);
+            if (link && dashShopId) link.href = `/setup?shop=${encodeURIComponent(dashShopId)}`;
           }
 
           const exeLink = document.getElementById('btnDownloadAgentExe');
@@ -1303,24 +1304,37 @@ document.addEventListener('DOMContentLoaded', () => {
       const list = document.getElementById('liveQueueList');
       if (list) list.setAttribute('aria-busy', 'true');
       try {
-        const res = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/jobs?limit=50`);
+        // Filtering happens server-side so the tab counts and the rows agree,
+        // and so a search reaches orders older than the page being shown.
+        const params = new URLSearchParams({ limit: '100', status: queueFilter });
+        if (queueSearch) params.set('q', queueSearch);
+        if (queueMonth) params.set('month', queueMonth);
+
+        const res = await shopFetch(
+          `/api/shops/${encodeURIComponent(dashShopId)}/jobs?${params.toString()}`
+        );
         if (res.ok) {
           const data = await res.json();
           cachedJobs = Array.isArray(data.jobs) ? data.jobs : [];
+          queueCounts = data.counts || null;
+          renderQueueTabs();
           renderQueue(cachedJobs);
 
-          // "Printed Pages" has no API field; derive it from completed jobs.
-          const pages = cachedJobs
-            .filter(j => j.printState === 'Completed' || j.printState === 'Printed')
-            .reduce((sum, j) => sum + (j.pageCount || 0) * (j.copies || 1), 0);
+          // The tiles describe the shop, not whatever the queue is filtered to,
+          // so they come from the server's tally rather than the rows on screen.
+          // Counting the rows would make "Printed Pages" fall to zero the moment
+          // someone searched for a customer.
           const pagesEl = document.getElementById('statPrintedPages');
-          if (pagesEl) pagesEl.textContent = String(pages);
+          if (pagesEl && queueCounts) pagesEl.textContent = String(queueCounts.pagesDone ?? 0);
 
-          // The tile reads "Awaiting Agent / Cash", so count both, not just queued.
-          const outstanding = cachedJobs.filter(j =>
-            ['AwaitingPayment', 'Queued', 'Downloading', 'Printing'].includes(j.printState)).length;
+          // The tile reads "Awaiting Agent / Cash", so it is everything not yet
+          // finished, refused or broken.
           const queuedEl = document.getElementById('statQueuedCount');
-          if (queuedEl) queuedEl.textContent = String(outstanding);
+          if (queuedEl && queueCounts) {
+            queuedEl.textContent = String(
+              (queueCounts.pending ?? 0) + (queueCounts.processing ?? 0) + (queueCounts.printing ?? 0)
+            );
+          }
         }
       } catch {
         // keep the last good render
@@ -1333,15 +1347,16 @@ document.addEventListener('DOMContentLoaded', () => {
       const list = document.getElementById('liveQueueList');
       if (!list) return;
 
-      const visible = queueFilter === 'all'
-        ? jobs
-        : jobs.filter(j => j.printState === queueFilter);
+      // Already filtered by the server. Filtering again here would compare a
+      // bucket name against a print state and quietly show nothing.
+      const visible = jobs;
 
       if (visible.length === 0) {
         list.innerHTML = `
           <div class="empty-state">
             <div class="empty-icon">📭</div>
-            <div class="empty-title">${jobs.length === 0 ? 'No Print Jobs Yet' : 'Nothing Matches This Filter'}</div>
+            <div class="empty-title">${(queueSearch || queueMonth || queueFilter !== 'all')
+              ? 'Nothing matches' : 'No Print Jobs Yet'}</div>
             <div class="empty-sub">${jobs.length === 0
               ? 'Customer print requests will appear here in real-time as they scan your shop QR code.'
               : 'Try the “All” filter to see every order.'}</div>

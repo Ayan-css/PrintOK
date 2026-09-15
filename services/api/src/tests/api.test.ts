@@ -1967,6 +1967,99 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(shouldPrintSeparator({ separatorMode: 'blank', separatorMinQueue: 0 }, 1), true);
   });
 
+  await t.test('67. The queue filters, counts and searches', async () => {
+    const reg = await (await fetch(`${baseUrl}/api/shops/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopName: 'Queue Shop', ownerEmail: 'queue@example.com', printerName: 'Q' }),
+    })).json() as any;
+    const claimRes = await fetch(`${baseUrl}/api/merchant/claim`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId: reg.shop.id, ownerEmail: 'queue@example.com', password: 'QueueShopPass1', name: 'Q' }),
+    });
+    const claim = (await claimRes.json()) as any;
+    assert.strictEqual(claimRes.status, 201, `claim must succeed: ${JSON.stringify(claim)}`);
+    const auth = { Authorization: `Bearer ${claim.token}`, 'Content-Type': 'application/json' };
+
+    // Ask for a name and number so there is something to search by.
+    await fetch(`${baseUrl}/api/shops/${reg.shop.id}/portal-config`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ collectCustomerName: true, collectCustomerPhone: true }),
+    });
+
+    const order = async (name: string, phone: string, file: string) => {
+      const res = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          printerId: reg.printer.id, fileName: file,
+          fileBase64: Buffer.from('%PDF-1.4 q').toString('base64'),
+          copies: 1, isColor: false, customerName: name, customerPhone: phone,
+        }),
+      });
+      assert.strictEqual(res.status, 201);
+      return ((await res.json()) as any).job;
+    };
+
+    const asha = await order('Asha Menon', '+91 98200 12345', 'thesis.pdf');
+    const ravi = await order('Ravi Kumar', '9769912345', 'invoice.pdf');
+    await order('Sita Rao', '9820099999', 'notes.pdf');
+
+    // One paid so it lands in a different bucket from the other two.
+    await fetch(`${baseUrl}/api/print-jobs/${asha.id}/manual-override`, { method: 'POST' });
+
+    const query = async (qs: string) => {
+      const res = await fetch(`${baseUrl}/api/shops/${reg.shop.id}/jobs?${qs}`, { headers: auth });
+      assert.strictEqual(res.status, 200);
+      return (await res.json()) as any;
+    };
+
+    // --- counts describe every bucket, not just the one being shown ---
+    const all = await query('status=all');
+    assert.strictEqual(all.counts.all, 3);
+    assert.strictEqual(all.counts.pending, 2, 'two still awaiting payment');
+    assert.strictEqual(all.counts.processing, 1, 'the paid one is queued');
+    assert.strictEqual(all.counts.rejected, 0, 'a zero is a fact, not an absence');
+
+    // --- a bucket filter narrows the rows but not the counts ---
+    const processing = await query('status=processing');
+    assert.strictEqual(processing.jobs.length, 1);
+    assert.strictEqual(processing.jobs[0].id, asha.id);
+    assert.strictEqual(processing.counts.pending, 2, 'counts must not shrink to the filter');
+
+    // --- search reaches name, file and token ---
+    assert.strictEqual((await query('q=Ravi')).jobs.length, 1);
+    assert.strictEqual((await query('q=thesis')).jobs.length, 1);
+    assert.strictEqual((await query(`q=${encodeURIComponent(ravi.tokenNumber || '')}`)).jobs.length, 1);
+
+    // --- a phone number typed any way finds the order ---
+    // Stored as "+91 98200 12345"; nobody types it back the same way.
+    for (const typed of ['9820012345', '98200 12345', '+91 98200 12345']) {
+      const hit = await query(`q=${encodeURIComponent(typed)}`);
+      assert.ok(
+        hit.jobs.some((j: any) => j.id === asha.id),
+        `a number typed as "${typed}" must find the order stored as "+91 98200 12345"`
+      );
+    }
+
+    // --- month filter ---
+    const thisMonth = new Date().toISOString().slice(0, 7);
+    assert.strictEqual((await query(`month=${thisMonth}`)).counts.all, 3);
+    assert.strictEqual((await query('month=2020-01')).counts.all, 0, 'an empty month is empty');
+
+    // --- and it is still the shop's own queue only ---
+    const anon = await fetch(`${baseUrl}/api/shops/${reg.shop.id}/jobs`);
+    assert.strictEqual(anon.status, 401);
+  });
+
+  await t.test('68. Buckets cover every print state', async () => {
+    // A state in no bucket is invisible in the queue: it would be missing from
+    // every tab including "All"'s counts, and nobody would know to look for it.
+    const { PrintState } = await import('@printok/shared-types');
+    const { bucketForState } = await import('@printok/shared-types');
+
+    const unbucketed = Object.values(PrintState).filter((s) => !bucketForState(s));
+    assert.deepStrictEqual(unbucketed, [], 'every print state must belong to a bucket');
+  });
+
   await t.test('28. A brand new shop can find itself from its session alone', async () => {
     // The dashboard has no shop id of its own when a merchant signs in: not in
     // the URL, and nothing in localStorage on a fresh browser. It asks this

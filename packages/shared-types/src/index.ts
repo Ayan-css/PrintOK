@@ -363,6 +363,106 @@ export function checkJobAgainstPortal(
   return undefined;
 }
 
+/**
+ * How a merchant thinks about their queue.
+ *
+ * Print states are the machine's vocabulary — a shop owner does not distinguish
+ * Assigned from Downloading, they just want to know it is on its way. These
+ * buckets are that translation, defined once so the tab a merchant clicks and
+ * the count above it cannot disagree.
+ */
+export type JobBucket = 'pending' | 'processing' | 'printing' | 'done' | 'failed' | 'rejected';
+
+const BUCKET_STATES: Record<JobBucket, PrintState[]> = {
+  // Nothing is happening yet, and something is expected of someone.
+  pending: [PrintState.Created, PrintState.AwaitingPayment, PrintState.HeldForRelease],
+  // Accepted and on its way to a printer.
+  processing: [PrintState.Queued, PrintState.Assigned, PrintState.Downloading],
+  printing: [PrintState.Printing],
+  done: [PrintState.Printed, PrintState.ReadyForCollection, PrintState.Completed],
+  // Needs a person: a failure, or a job the agent could not resolve.
+  failed: [PrintState.Failed, PrintState.RequiresShopAction],
+  // The shop said no, or the money is going back.
+  rejected: [PrintState.Cancelled, PrintState.RefundReview],
+};
+
+export const JOB_BUCKETS: ReadonlyArray<{ id: JobBucket; label: string }> = [
+  { id: 'pending',    label: 'Pending' },
+  { id: 'processing', label: 'Processing' },
+  { id: 'printing',   label: 'Printing' },
+  { id: 'failed',     label: 'Needs attention' },
+  { id: 'rejected',   label: 'Rejected' },
+  { id: 'done',       label: 'Done' },
+];
+
+export function bucketForState(state: PrintState | string): JobBucket | undefined {
+  for (const [bucket, states] of Object.entries(BUCKET_STATES)) {
+    if (states.includes(state as PrintState)) return bucket as JobBucket;
+  }
+  return undefined;
+}
+
+/**
+ * Tallies every bucket, so a tab showing zero is a fact rather than an absence.
+ *
+ * Also returns the sheets actually printed, because the dashboard tile that
+ * reports it must describe the shop rather than whatever the queue is filtered
+ * to — counting rows on screen makes it fall to zero the moment someone
+ * searches for a customer.
+ */
+export function countJobBuckets(
+  jobs: Array<{ printState: PrintState | string; pageCount?: number; copies?: number }>
+): Record<JobBucket, number> & { all: number; pagesDone: number } {
+  const counts = {
+    pending: 0, processing: 0, printing: 0, done: 0, failed: 0, rejected: 0,
+    all: jobs.length, pagesDone: 0,
+  };
+
+  for (const job of jobs) {
+    const bucket = bucketForState(job.printState);
+    if (bucket) counts[bucket] += 1;
+    if (bucket === 'done') {
+      counts.pagesDone += (job.pageCount || 0) * (job.copies || 1);
+    }
+  }
+
+  return counts;
+}
+
+/**
+ * Whether a job matches what the merchant typed.
+ *
+ * Searches the things a shop actually has to hand when someone is standing at
+ * the counter: the token they were given, their name, their number, or the name
+ * of the file. Case and spacing in a phone number are ignored, because nobody
+ * writes one the same way twice.
+ */
+export function jobMatchesSearch(
+  job: {
+    orderId?: string; tokenNumber?: string; fileName?: string;
+    customerName?: string; customerPhone?: string;
+  },
+  query: string
+): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+
+  const digits = (v: string) => v.replace(/[^0-9]/g, '');
+  const haystack = [job.orderId, job.tokenNumber, job.fileName, job.customerName]
+    .filter(Boolean)
+    .map((v) => String(v).toLowerCase());
+
+  if (haystack.some((v) => v.includes(q))) return true;
+
+  // A number typed as 98200 12345 must find one stored as +91 98200 12345.
+  const queryDigits = digits(q);
+  if (queryDigits.length >= 4 && job.customerPhone) {
+    return digits(job.customerPhone).includes(queryDigits);
+  }
+
+  return false;
+}
+
 /** One cell of the rate grid: what this exact configuration costs. */
 export interface ShopRate {
   paperSize: string;
