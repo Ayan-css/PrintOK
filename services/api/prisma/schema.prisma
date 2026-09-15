@@ -48,6 +48,8 @@ model Shop {
   addressState      String?
   addressPostalCode String?
   addressCountry    String?      @default("IN")
+  /// GST registration number, where the shop has one. Shape-checked only.
+  gstin             String?
 
   /// Subscription tier: start | smart | business | enterprise (PRD 41).
   /// Canonical definitions live in PLAN_CATALOGUE in @printok/shared-types.

@@ -4649,3 +4649,52 @@ body::before {
 }
 
 .dash-tab-link:hover { text-decoration: underline; }
+
+/* --- shop details and people ---------------------------------------------- */
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+/* An address line wants the row to itself; a PIN code does not. */
+.form-group--wide { grid-column: 1 / -1; }
+
+.setup-rule {
+  border: 0;
+  border-top: 1px solid var(--color-border);
+  margin: 24px 0 18px;
+}
+
+.staff-list { display: grid; gap: 8px; margin-bottom: 14px; }
+
+.staff-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  padding: 10px 13px;
+}
+
+/* Dimmed rather than hidden: a disabled account is still someone who exists,
+   and hiding it makes "why can't they sign in" unanswerable from this screen. */
+.staff-row.is-disabled { opacity: 0.55; }
+
+.staff-name { font-size: 13px; font-weight: 600; }
+
+.staff-meta {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  margin-top: 1px;
+}
+
+.staff-add summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-primary);
+}

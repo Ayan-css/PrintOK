@@ -131,6 +131,8 @@ export interface ShopContactDetails {
   addressPostalCode?: string;
   /** ISO country code; India unless stated otherwise. */
   addressCountry?: string;
+  /** GST registration number, where the shop has one. Shape-checked only. */
+  gstin?: string;
 }
 
 export interface Shop extends ShopContactDetails {

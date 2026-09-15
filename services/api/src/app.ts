@@ -709,6 +709,212 @@ export function createApp(
     }
   });
 
+  // ------------------------------------------------------------------------
+  // Shop profile and staff (PRD 20)
+  // ------------------------------------------------------------------------
+
+  /** The shop's own details, for the profile screen. */
+  app.get('/api/shops/:shopId/profile', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res);
+    if (!merchant) return;
+
+    try {
+      const shop = await storage.getShop(req.params.shopId);
+      if (!shop) return res.status(404).json({ error: 'Shop not found.' });
+
+      // Deliberately not the payout details. Those belong to the money screen
+      // and there is no reason for a profile form to carry a bank account.
+      return res.json({
+        profile: {
+          name: shop.name,
+          ownerEmail: shop.ownerEmail,
+          contactPhone: shop.contactPhone ?? '',
+          addressStreet1: shop.addressStreet1 ?? '',
+          addressStreet2: shop.addressStreet2 ?? '',
+          addressCity: shop.addressCity ?? '',
+          addressState: shop.addressState ?? '',
+          addressPostalCode: shop.addressPostalCode ?? '',
+          addressCountry: shop.addressCountry ?? 'IN',
+          gstin: shop.gstin ?? '',
+        },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/shops/:shopId/profile', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res, { requireOwner: true });
+    if (!merchant) return;
+
+    try {
+      const body = req.body || {};
+      const text = (v: unknown, max: number) =>
+        v === undefined ? undefined : String(v).replace(/\s+/g, ' ').trim().slice(0, max);
+
+      const name = text(body.name, 120);
+      if (name !== undefined && name === '') {
+        return res.status(400).json({ error: 'A shop needs a name.' });
+      }
+
+      // Shape-checked, not checksummed. A GSTIN is 15 characters: two state
+      // digits, a ten-character PAN, an entity digit, a Z, and a check
+      // character. Refusing a legitimate number because a checksum
+      // implementation disagrees is worse than storing what the owner read off
+      // their certificate, so this rejects only what is plainly not one.
+      const gstin = text(body.gstin, 20)?.toUpperCase();
+      if (gstin && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]{3}$/.test(gstin)) {
+        return res.status(400).json({
+          error: 'That does not look like a GSTIN. It is 15 characters, e.g. 27ABCDE1234F1Z5.',
+        });
+      }
+
+      const updated = await storage.updateShopProfile(req.params.shopId, {
+        name,
+        contactPhone: text(body.contactPhone, 20),
+        addressStreet1: text(body.addressStreet1, 160),
+        addressStreet2: text(body.addressStreet2, 160),
+        addressCity: text(body.addressCity, 80),
+        addressState: text(body.addressState, 80),
+        addressPostalCode: text(body.addressPostalCode, 12),
+        addressCountry: text(body.addressCountry, 2)?.toUpperCase(),
+        gstin,
+      });
+
+      if (!updated) return res.status(404).json({ error: 'Shop not found.' });
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Changes the signed-in user's own password.
+   *
+   * Requires the current one. Without that, anyone who finds an unlocked
+   * counter PC with the dashboard open can lock the owner out of their own
+   * shop — and a print shop's PC is not a private device.
+   */
+  app.post('/api/merchant/password', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res, { shopId: undefined });
+    if (!merchant) return;
+
+    try {
+      const { currentPassword, newPassword } = req.body || {};
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ error: 'Enter your current password and the new one.' });
+      }
+
+      const weak = validatePasswordStrength(String(newPassword));
+      if (weak) return res.status(400).json({ error: weak });
+
+      const user = await storage.getMerchantUser(merchant.sub);
+      if (!user) return res.status(401).json({ error: 'This account no longer exists.' });
+
+      const stored = await storage.getMerchantByEmail(user.email);
+      if (!stored || !verifyPassword(String(currentPassword), stored.passwordHash)) {
+        return res.status(403).json({ error: 'That is not your current password.' });
+      }
+
+      // Checked, not assumed. A password change that quietly does nothing
+      // leaves someone believing they have rotated a credential they have not.
+      const changed = await storage.updateMerchantPassword(merchant.sub, hashPassword(String(newPassword)));
+      if (!changed) {
+        return res.status(500).json({ error: 'The password could not be changed. Try again.' });
+      }
+
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /** Everyone who can sign in to this shop. */
+  app.get('/api/shops/:shopId/staff', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res, { requireOwner: true });
+    if (!merchant) return;
+
+    try {
+      return res.json({ staff: await storage.listMerchantUsers(req.params.shopId) });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Adds a staff account.
+   *
+   * Staff only, never another owner. The owner is whoever claimed the shop, and
+   * letting that be handed out from this screen would mean a staff member could
+   * be promoted to someone who can change prices and move money.
+   */
+  app.post('/api/shops/:shopId/staff', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res, { requireOwner: true });
+    if (!merchant) return;
+
+    try {
+      const { email, name, password } = req.body || {};
+      if (!email || !password) {
+        return res.status(400).json({ error: 'An email address and a password are required.' });
+      }
+
+      const weak = validatePasswordStrength(String(password));
+      if (weak) return res.status(400).json({ error: weak });
+
+      const cleanEmail = String(email).trim().toLowerCase();
+      if (await storage.getMerchantByEmail(cleanEmail)) {
+        return res.status(409).json({ error: 'Someone already signs in with that email address.' });
+      }
+
+      const user = await storage.createMerchantUser({
+        shopId: req.params.shopId,
+        email: cleanEmail,
+        passwordHash: hashPassword(String(password)),
+        name: name ? String(name).trim().slice(0, 80) : undefined,
+        role: 'staff',
+      });
+
+      return res.status(201).json({ user });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /** Disables or re-enables a staff account. */
+  app.post('/api/shops/:shopId/staff/:userId/status', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res, { requireOwner: true });
+    if (!merchant) return;
+
+    try {
+      const { shopId, userId } = req.params;
+      const status = req.body?.status === 'active' ? 'active' : 'disabled';
+
+      // Locking yourself out of your own shop is not a thing anyone means to
+      // do, and there is nobody above the owner to undo it.
+      if (userId === merchant.sub) {
+        return res.status(409).json({ error: 'You cannot disable your own account.' });
+      }
+
+      const target = await storage.getMerchantUser(userId);
+      if (!target || target.shopId !== shopId) {
+        return res.status(404).json({ error: 'That person does not work at this shop.' });
+      }
+
+      if (target.role === 'owner') {
+        return res.status(409).json({ error: 'The shop owner cannot be disabled.' });
+      }
+
+      const updated = await storage.updateMerchantUser(userId, { status });
+      if (!updated) {
+        return res.status(500).json({ error: 'That account could not be updated. Try again.' });
+      }
+
+      return res.json({ user: updated });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/shops/:shopId/portal-config', async (req: Request, res: Response) => {
     try {
       const config = await storage.getShopPortalConfig(req.params.shopId);

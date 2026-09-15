@@ -83,6 +83,20 @@ export interface PairingCodeRecord {
 }
 
 /** A shop owner or staff member who signs in to the dashboard (PRD 20). */
+/** Editable shop details. Absent fields are left alone; empty strings clear. */
+export interface ShopProfileUpdate {
+  name?: string;
+  contactPhone?: string;
+  addressStreet1?: string;
+  addressStreet2?: string;
+  addressCity?: string;
+  addressState?: string;
+  addressPostalCode?: string;
+  addressCountry?: string;
+  gstin?: string;
+  upiId?: string;
+}
+
 export interface MerchantUserRecord {
   id: string;
   shopId: string;
@@ -354,6 +368,14 @@ export interface IStorageProvider {
   }): Promise<MerchantUserRecord>;
   getMerchantByEmail(email: string): Promise<(MerchantUserRecord & { passwordHash: string }) | undefined>;
   getMerchantUser(id: string): Promise<MerchantUserRecord | undefined>;
+  /** Everyone who can sign in to this shop. */
+  listMerchantUsers(shopId: string): Promise<MerchantUserRecord[]>;
+  /** Changes a staff member's name, role or status. Never their password. */
+  updateMerchantUser(id: string, update: { name?: string; role?: string; status?: string }): Promise<MerchantUserRecord | undefined>;
+  /** Separate from the above so a profile edit can never rewrite a credential. */
+  updateMerchantPassword(id: string, passwordHash: string): Promise<boolean>;
+  /** The shop's own details: name, contact, registered address, GSTIN. */
+  updateShopProfile(shopId: string, update: ShopProfileUpdate): Promise<Shop | undefined>;
   countMerchantsForShop(shopId: string): Promise<number>;
   recordMerchantLogin(id: string): Promise<void>;
 
@@ -1273,6 +1295,67 @@ export class MemoryStorage implements IStorageProvider {
       isOnline,
       paperStatus: record.paperStatus || 'OK',
     };
+  }
+
+  public async listMerchantUsers(shopId: string): Promise<MerchantUserRecord[]> {
+    return [...this.merchantUsers.values()]
+      .filter((u) => u.shopId === shopId)
+      .map(({ passwordHash, ...rest }) => rest)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  /**
+   * Finds a merchant by id.
+   *
+   * The map is keyed by email, because that is what sign-in looks up. Anything
+   * working from an id has to scan — which is fine for one shop's staff, and a
+   * good deal better than a second index that can fall out of step.
+   */
+  private findMerchantById(id: string): (MerchantUserRecord & { passwordHash: string }) | undefined {
+    for (const user of this.merchantUsers.values()) {
+      if (user.id === id) return user;
+    }
+    return undefined;
+  }
+
+  public async updateMerchantUser(
+    id: string,
+    update: { name?: string; role?: string; status?: string }
+  ): Promise<MerchantUserRecord | undefined> {
+    const user = this.findMerchantById(id);
+    if (!user) return undefined;
+
+    if (update.name !== undefined) user.name = update.name;
+    if (update.role !== undefined) user.role = update.role;
+    if (update.status !== undefined) user.status = update.status;
+
+    this.merchantUsers.set(user.email, user);
+    const { passwordHash, ...rest } = user;
+    return rest;
+  }
+
+  public async updateMerchantPassword(id: string, passwordHash: string): Promise<boolean> {
+    const user = this.findMerchantById(id);
+    if (!user) return false;
+    user.passwordHash = passwordHash;
+    this.merchantUsers.set(user.email, user);
+    return true;
+  }
+
+  public async updateShopProfile(shopId: string, update: ShopProfileUpdate): Promise<Shop | undefined> {
+    const shop = this.shops.get(shopId);
+    if (!shop) return undefined;
+
+    const writable = shop as unknown as Record<string, unknown>;
+    for (const [key, value] of Object.entries(update)) {
+      if (value === undefined) continue;
+      // An empty string clears the field; undefined leaves it alone. Without
+      // that distinction a shop could never remove a GSTIN it entered wrongly.
+      writable[key] = value === '' ? undefined : value;
+    }
+
+    this.shops.set(shopId, shop);
+    return shop;
   }
 
   public async getShopRateCard(shopId: string): Promise<ShopRateCard> {

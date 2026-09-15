@@ -11,7 +11,7 @@ import {
   AgentDeviceRecord, AgentSecurityEventRecord, PairingCodeRecord, ReclaimResult,
   AdminUserRecord, ShopPlan, AdminShopSummary, AdminOverview,
   ShopRemovalSafety, ShopRemovalResult, AdminAuditEntry,
-  ContactEnquiryRecord, CreateContactEnquiryInput, MerchantUserRecord,
+  ContactEnquiryRecord, CreateContactEnquiryInput, MerchantUserRecord, ShopProfileUpdate,
 } from './storage';
 import { S3StorageService } from './s3Storage';
 import { calculateJobPriceBreakdown, calculateGridPriceBreakdown, buildDefaultRateCard, DEFAULT_PRICING_CONFIG } from './pricing';
@@ -1111,6 +1111,53 @@ export class PrismaStorage implements IStorageProvider {
   public async getMerchantUser(id: string): Promise<MerchantUserRecord | undefined> {
     const user = await this.prisma.merchantUser.findUnique({ where: { id } });
     return user ? this.mapMerchant(user) : undefined;
+  }
+
+  public async listMerchantUsers(shopId: string): Promise<MerchantUserRecord[]> {
+    const rows = await this.prisma.merchantUser.findMany({
+      where: { shopId },
+      orderBy: { createdAt: 'asc' },
+    });
+    return rows.map((u) => this.mapMerchant(u));
+  }
+
+  public async updateMerchantUser(
+    id: string,
+    update: { name?: string; role?: string; status?: string }
+  ): Promise<MerchantUserRecord | undefined> {
+    const data: Record<string, unknown> = {};
+    if (update.name !== undefined) data.name = update.name;
+    if (update.role !== undefined) data.role = update.role;
+    if (update.status !== undefined) data.status = update.status;
+    if (Object.keys(data).length === 0) return this.getMerchantUser(id);
+
+    try {
+      return this.mapMerchant(await this.prisma.merchantUser.update({ where: { id }, data }));
+    } catch {
+      return undefined;
+    }
+  }
+
+  public async updateMerchantPassword(id: string, passwordHash: string): Promise<boolean> {
+    const result = await this.prisma.merchantUser.updateMany({ where: { id }, data: { passwordHash } });
+    return result.count > 0;
+  }
+
+  public async updateShopProfile(shopId: string, update: ShopProfileUpdate): Promise<Shop | undefined> {
+    const data: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(update)) {
+      if (value === undefined) continue;
+      // Empty clears, undefined leaves alone — so a GSTIN entered wrongly can
+      // actually be removed rather than only overwritten.
+      data[key] = value === '' ? null : value;
+    }
+    if (Object.keys(data).length === 0) return this.getShop(shopId);
+
+    try {
+      return this.mapShop(await this.prisma.shop.update({ where: { id: shopId }, data }));
+    } catch {
+      return undefined;
+    }
   }
 
   public async countMerchantsForShop(shopId: string): Promise<number> {

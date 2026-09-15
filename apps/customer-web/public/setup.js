@@ -35,6 +35,7 @@
   /** What was loaded, and what the shop has changed. Compared to detect edits. */
   let saved = null;
   let draft = null;
+  let staff = [];
 
   // ------------------------------------------------------------------ utils ---
 
@@ -143,6 +144,13 @@
 
     if (draft.portal.separatorMode !== 'none' && !(draft.portal.separatorMinQueue >= 1)) {
       problems.tabAutomation = 'Say how many waiting jobs counts as busy';
+    }
+
+    if (!String(draft.profile?.name || '').trim()) {
+      problems.tabAccount = 'Your shop needs a name';
+    } else if (draft.profile.gstin
+               && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]{3}$/.test(String(draft.profile.gstin).toUpperCase())) {
+      problems.tabAccount = 'That GSTIN does not look right';
     }
 
     // Required without asked is unsatisfiable — the field would never show and
@@ -275,6 +283,168 @@
         });
       });
     });
+  }
+
+  // ---------------------------------------------------------------- account ---
+
+  const PROFILE_FIELDS = {
+    shopName: 'name',
+    shopPhone: 'contactPhone',
+    shopStreet1: 'addressStreet1',
+    shopStreet2: 'addressStreet2',
+    shopCity: 'addressCity',
+    shopState: 'addressState',
+    shopPin: 'addressPostalCode',
+    shopGstin: 'gstin',
+  };
+
+  function bindAccount() {
+    for (const [inputId, field] of Object.entries(PROFILE_FIELDS)) {
+      const el = document.getElementById(inputId);
+      if (!el) continue;
+      el.value = draft.profile[field] ?? '';
+      el.addEventListener('input', () => {
+        draft.profile[field] = el.value;
+        refreshSaveButton();
+      });
+    }
+
+    document.getElementById('btnChangePassword')?.addEventListener('click', changePassword);
+    document.getElementById('btnAddStaff')?.addEventListener('click', addStaff);
+
+    renderStaff();
+  }
+
+  /**
+   * Password change is its own action, not part of Save.
+   *
+   * Saving the whole wizard should never carry a credential change along with
+   * it: the two have different failure modes, and a rate card that saved while
+   * a password quietly did not is the kind of thing nobody notices until they
+   * cannot sign in.
+   */
+  async function changePassword() {
+    const current = document.getElementById('pwCurrent');
+    const next = document.getElementById('pwNew');
+    if (!current.value || !next.value) {
+      toast('warning', 'Both needed', 'Enter your current password and the new one.');
+      return;
+    }
+
+    try {
+      const res = await api('/api/merchant/password', {
+        method: 'POST',
+        body: JSON.stringify({ currentPassword: current.value, newPassword: next.value }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'The password could not be changed.');
+
+      current.value = '';
+      next.value = '';
+      toast('success', 'Password changed', 'Use the new one next time you sign in.');
+    } catch (err) {
+      toast('danger', 'Not changed', err.message);
+    }
+  }
+
+  function renderStaff() {
+    const host = document.getElementById('staffList');
+    if (!host) return;
+
+    if (!staff.length) {
+      host.innerHTML = '<p class="form-help">Only you can sign in to this shop.</p>';
+      return;
+    }
+
+    host.innerHTML = staff.map((u) => {
+      const isOwner = u.role === 'owner';
+      const disabled = u.status !== 'active';
+
+      return `<div class="staff-row ${disabled ? 'is-disabled' : ''}">
+        <div>
+          <div class="staff-name">${escapeHtml(u.name || u.email)}</div>
+          <div class="staff-meta">${escapeHtml(u.email)} · ${isOwner ? 'Owner' : 'Staff'}${disabled ? ' · disabled' : ''}</div>
+        </div>
+        ${isOwner
+          ? '<span class="form-help">Cannot be removed</span>'
+          : `<button type="button" class="btn btn-outline btn-sm" data-staff="${escapeHtml(u.id)}"
+                     data-next="${disabled ? 'active' : 'disabled'}">
+               ${disabled ? 'Let back in' : 'Disable'}
+             </button>`}
+      </div>`;
+    }).join('');
+
+    host.querySelectorAll('[data-staff]').forEach((btn) => {
+      btn.addEventListener('click', () => setStaffStatus(
+        btn.getAttribute('data-staff'),
+        btn.getAttribute('data-next'),
+        btn
+      ));
+    });
+  }
+
+  async function setStaffStatus(userId, status, button) {
+    const label = button.textContent;
+    try {
+      button.disabled = true;
+      button.textContent = 'Saving…';
+
+      const res = await api(`/api/shops/${encodeURIComponent(shopId)}/staff/${encodeURIComponent(userId)}/status`, {
+        method: 'POST',
+        body: JSON.stringify({ status }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'That could not be changed.');
+
+      await loadStaff();
+    } catch (err) {
+      toast('danger', 'Not changed', err.message);
+      button.disabled = false;
+      button.textContent = label;
+    }
+  }
+
+  async function addStaff() {
+    const name = document.getElementById('staffName');
+    const email = document.getElementById('staffEmail');
+    const password = document.getElementById('staffPassword');
+
+    if (!email.value.trim() || !password.value) {
+      toast('warning', 'Almost', 'An email address and a password are needed.');
+      return;
+    }
+
+    try {
+      const res = await api(`/api/shops/${encodeURIComponent(shopId)}/staff`, {
+        method: 'POST',
+        body: JSON.stringify({
+          name: name.value.trim(),
+          email: email.value.trim(),
+          password: password.value,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'That person could not be added.');
+
+      name.value = '';
+      email.value = '';
+      password.value = '';
+      await loadStaff();
+      toast('success', 'Added', 'Give them the password you set — they can sign in now.');
+    } catch (err) {
+      toast('danger', 'Not added', err.message);
+    }
+  }
+
+  async function loadStaff() {
+    try {
+      const res = await api(`/api/shops/${encodeURIComponent(shopId)}/staff`);
+      if (!res.ok) return;
+      staff = ((await res.json()).staff) || [];
+      renderStaff();
+    } catch {
+      // The list is supplementary; a failure here must not break the tab.
+    }
   }
 
   // ---------------------------------------------------------------- preview ---
@@ -537,6 +707,12 @@
       });
       if (!portal.ok) throw new Error((await portal.json()).error || 'Could not save your portal settings.');
 
+      const profile = await api(`/api/shops/${encodeURIComponent(shopId)}/profile`, {
+        method: 'POST',
+        body: JSON.stringify(draft.profile),
+      });
+      if (!profile.ok) throw new Error((await profile.json()).error || 'Could not save your shop details.');
+
       saved = JSON.parse(JSON.stringify(draft));
       toast('success', 'Saved', 'Your shop is updated. Customers see the change on their next order.');
     } catch (err) {
@@ -558,10 +734,11 @@
     }
 
     try {
-      const [cat, card, portal] = await Promise.all([
+      const [cat, card, portal, profileBody] = await Promise.all([
         api('/api/service-catalogue').then((r) => r.json()),
         api(`/api/shops/${encodeURIComponent(shopId)}/rates`).then((r) => r.json()),
         api(`/api/shops/${encodeURIComponent(shopId)}/portal-config`).then((r) => r.json()),
+        api(`/api/shops/${encodeURIComponent(shopId)}/profile`).then((r) => r.json()),
       ]);
 
       catalogue = cat;
@@ -573,8 +750,12 @@
           additionalCopyEnabled: card.additionalCopyEnabled,
         },
         portal,
+        profile: profileBody.profile || {},
       };
       draft = JSON.parse(JSON.stringify(saved));
+
+      const shopName = document.getElementById('setupShopName');
+      if (shopName && saved.profile.name) shopName.textContent = saved.profile.name;
 
       document.getElementById('setupMain').hidden = false;
       renderServices();
@@ -582,6 +763,8 @@
       bindDiscounts();
       bindAutomation();
       bindPortal();
+      bindAccount();
+      loadStaff();
       bindTabs();
       refreshSaveButton();
 

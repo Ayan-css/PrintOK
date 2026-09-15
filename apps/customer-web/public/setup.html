@@ -115,6 +115,9 @@
             <button class="setup-tab" data-tab="tabAutomation" role="tab" aria-selected="false" type="button" tabindex="-1">
               <span class="setup-tab-chip" data-chip="tabAutomation">✓</span> Automation
             </button>
+            <button class="setup-tab" data-tab="tabAccount" role="tab" aria-selected="false" type="button" tabindex="-1">
+              <span class="setup-tab-chip" data-chip="tabAccount">✓</span> Shop &amp; people
+            </button>
           </div>
 
           <!-- ============================ PROFILE =========================== -->
@@ -307,6 +310,101 @@
               <label class="form-label" for="separatorMinQueue">Only when this many jobs are waiting</label>
               <input type="number" id="separatorMinQueue" class="form-input" min="1" step="1">
             </div>
+          </section>
+          <!-- ============================ ACCOUNT =========================== -->
+          <section id="tabAccount" class="setup-pane" role="tabpanel">
+            <h2 class="setup-pane-title">Shop details</h2>
+            <p class="setup-pane-sub">
+              Your registered details. These appear on receipts and are what
+              Razorpay checks against when settling money to you.
+            </p>
+
+            <div class="field-grid">
+              <div class="form-group">
+                <label class="form-label" for="shopName">Shop name</label>
+                <input type="text" id="shopName" class="form-input" maxlength="120">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="shopPhone">Contact number</label>
+                <input type="tel" id="shopPhone" class="form-input" maxlength="20">
+              </div>
+              <div class="form-group form-group--wide">
+                <label class="form-label" for="shopStreet1">Address</label>
+                <input type="text" id="shopStreet1" class="form-input" maxlength="160" placeholder="Building and street">
+              </div>
+              <div class="form-group form-group--wide">
+                <label class="sr-only" for="shopStreet2">Address line 2</label>
+                <input type="text" id="shopStreet2" class="form-input" maxlength="160" placeholder="Area (optional)">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="shopCity">City</label>
+                <input type="text" id="shopCity" class="form-input" maxlength="80">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="shopState">State</label>
+                <input type="text" id="shopState" class="form-input" maxlength="80">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="shopPin">PIN code</label>
+                <input type="text" id="shopPin" class="form-input" maxlength="12" inputmode="numeric">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="shopGstin">GSTIN <span class="form-help">(if registered)</span></label>
+                <input type="text" id="shopGstin" class="form-input" maxlength="20"
+                       placeholder="27ABCDE1234F1Z5" style="text-transform: uppercase;">
+              </div>
+            </div>
+
+            <hr class="setup-rule">
+
+            <h2 class="setup-pane-title">Your password</h2>
+            <p class="setup-pane-sub">
+              Changing it needs your current one — a counter PC is not a private
+              device, and anyone who finds it unlocked should not be able to lock
+              you out of your own shop.
+            </p>
+
+            <div class="field-grid">
+              <div class="form-group">
+                <label class="form-label" for="pwCurrent">Current password</label>
+                <input type="password" id="pwCurrent" class="form-input" autocomplete="current-password">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="pwNew">New password</label>
+                <input type="password" id="pwNew" class="form-input" autocomplete="new-password">
+              </div>
+            </div>
+            <button type="button" id="btnChangePassword" class="btn btn-outline">Change password</button>
+
+            <hr class="setup-rule">
+
+            <h2 class="setup-pane-title">People who can sign in</h2>
+            <p class="setup-pane-sub">
+              Staff can work the queue and release jobs. They cannot change your
+              rates, your settings, or move money.
+            </p>
+
+            <div id="staffList" class="staff-list"></div>
+
+            <details class="staff-add">
+              <summary>Add someone</summary>
+              <div class="field-grid" style="margin-top: 12px;">
+                <div class="form-group">
+                  <label class="form-label" for="staffName">Name</label>
+                  <input type="text" id="staffName" class="form-input" maxlength="80">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="staffEmail">Email they sign in with</label>
+                  <input type="email" id="staffEmail" class="form-input" autocomplete="off">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="staffPassword">Password to give them</label>
+                  <input type="text" id="staffPassword" class="form-input" autocomplete="off"
+                         placeholder="At least 12 characters">
+                </div>
+              </div>
+              <button type="button" id="btnAddStaff" class="btn btn-primary">Add to the shop</button>
+            </details>
           </section>
         </div>
       </main>

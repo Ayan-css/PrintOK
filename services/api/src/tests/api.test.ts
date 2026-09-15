@@ -2060,6 +2060,153 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.deepStrictEqual(unbucketed, [], 'every print state must belong to a bucket');
   });
 
+  await t.test('69. A shop can edit its own profile, within limits', async () => {
+    const reg = await (await fetch(`${baseUrl}/api/shops/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopName: 'Profile Shop', ownerEmail: 'prof@example.com', printerName: 'P' }),
+    })).json() as any;
+    const claimRes = await fetch(`${baseUrl}/api/merchant/claim`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId: reg.shop.id, ownerEmail: 'prof@example.com', password: 'ProfileShop12', name: 'P' }),
+    });
+    const claim = (await claimRes.json()) as any;
+    assert.strictEqual(claimRes.status, 201, `claim must succeed: ${JSON.stringify(claim)}`);
+    const auth = { Authorization: `Bearer ${claim.token}`, 'Content-Type': 'application/json' };
+
+    const save = (body: Record<string, unknown>) => fetch(`${baseUrl}/api/shops/${reg.shop.id}/profile`, {
+      method: 'POST', headers: auth, body: JSON.stringify(body),
+    });
+
+    const ok = await save({
+      name: '  A1  Stationery ', contactPhone: '9820012345',
+      addressStreet1: '12 Station Road', addressCity: 'Mumbai',
+      addressState: 'Maharashtra', addressPostalCode: '400071',
+      gstin: '27abcde1234f1z5',
+    });
+    assert.strictEqual(ok.status, 200);
+
+    const saved = ((await (await fetch(`${baseUrl}/api/shops/${reg.shop.id}/profile`, { headers: auth })).json()) as any).profile;
+    assert.strictEqual(saved.name, 'A1 Stationery', 'whitespace is collapsed');
+    assert.strictEqual(saved.gstin, '27ABCDE1234F1Z5', 'a GSTIN is stored upper case');
+    assert.strictEqual(saved.addressCity, 'Mumbai');
+
+    // A GSTIN that is plainly not one is refused.
+    assert.strictEqual((await save({ gstin: 'NOT-A-GSTIN' })).status, 400);
+
+    // But it can be cleared, which matters when one was entered wrongly.
+    assert.strictEqual((await save({ gstin: '' })).status, 200);
+    const cleared = ((await (await fetch(`${baseUrl}/api/shops/${reg.shop.id}/profile`, { headers: auth })).json()) as any).profile;
+    assert.strictEqual(cleared.gstin, '');
+    assert.strictEqual(cleared.addressCity, 'Mumbai', 'clearing one field leaves the others');
+
+    // A shop still needs a name.
+    assert.strictEqual((await save({ name: '   ' })).status, 400);
+
+    // The payout details are not part of this form.
+    assert.ok(!('bankAccountNumber' in cleared), 'a profile form has no business carrying a bank account');
+  });
+
+  await t.test('70. Changing a password needs the current one', async () => {
+    const reg = await (await fetch(`${baseUrl}/api/shops/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopName: 'Password Shop', ownerEmail: 'pw@example.com', printerName: 'P' }),
+    })).json() as any;
+    const claimRes = await fetch(`${baseUrl}/api/merchant/claim`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId: reg.shop.id, ownerEmail: 'pw@example.com', password: 'OriginalPass1', name: 'P' }),
+    });
+    const claim = (await claimRes.json()) as any;
+    assert.strictEqual(claimRes.status, 201, `claim must succeed: ${JSON.stringify(claim)}`);
+    const auth = { Authorization: `Bearer ${claim.token}`, 'Content-Type': 'application/json' };
+
+    const change = (body: Record<string, unknown>) => fetch(`${baseUrl}/api/merchant/password`, {
+      method: 'POST', headers: auth, body: JSON.stringify(body),
+    });
+
+    // A shop PC is not a private device. Someone finding it unlocked must not
+    // be able to lock the owner out of their own shop.
+    const guessed = await change({ currentPassword: 'WrongPassword1', newPassword: 'BrandNewPass1' });
+    assert.strictEqual(guessed.status, 403);
+
+    assert.strictEqual((await change({ currentPassword: 'OriginalPass1', newPassword: 'short' })).status, 400);
+
+    const good = await change({ currentPassword: 'OriginalPass1', newPassword: 'BrandNewPass1' });
+    assert.strictEqual(good.status, 200);
+
+    // The new one works and the old one does not.
+    const relogin = await fetch(`${baseUrl}/api/merchant/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'pw@example.com', password: 'BrandNewPass1' }),
+    });
+    assert.strictEqual(relogin.status, 200);
+
+    const stale = await fetch(`${baseUrl}/api/merchant/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'pw@example.com', password: 'OriginalPass1' }),
+    });
+    assert.strictEqual(stale.status, 401, 'the old password must stop working');
+  });
+
+  await t.test('71. Staff accounts are staff, and the owner cannot be locked out', async () => {
+    const reg = await (await fetch(`${baseUrl}/api/shops/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopName: 'Staff Shop', ownerEmail: 'boss@example.com', printerName: 'P' }),
+    })).json() as any;
+    const claimRes = await fetch(`${baseUrl}/api/merchant/claim`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId: reg.shop.id, ownerEmail: 'boss@example.com', password: 'BossPassword1', name: 'Boss' }),
+    });
+    const claim = (await claimRes.json()) as any;
+    assert.strictEqual(claimRes.status, 201, `claim must succeed: ${JSON.stringify(claim)}`);
+    const owner = { Authorization: `Bearer ${claim.token}`, 'Content-Type': 'application/json' };
+
+    const added = await fetch(`${baseUrl}/api/shops/${reg.shop.id}/staff`, {
+      method: 'POST', headers: owner,
+      body: JSON.stringify({ email: 'helper@example.com', name: 'Helper', password: 'HelperPass123' }),
+    });
+    assert.strictEqual(added.status, 201);
+    const helper = ((await added.json()) as any).user;
+    assert.strictEqual(helper.role, 'staff', 'this screen never hands out ownership');
+
+    // Even asking for owner gets staff.
+    const sneaky = await fetch(`${baseUrl}/api/shops/${reg.shop.id}/staff`, {
+      method: 'POST', headers: owner,
+      body: JSON.stringify({ email: 'sneaky@example.com', password: 'SneakyPass123', role: 'owner' }),
+    });
+    assert.strictEqual(((await sneaky.json()) as any).user.role, 'staff');
+
+    const staffLogin = await (await fetch(`${baseUrl}/api/merchant/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'helper@example.com', password: 'HelperPass123' }),
+    })).json() as any;
+    const staffAuth = { Authorization: `Bearer ${staffLogin.token}`, 'Content-Type': 'application/json' };
+
+    // Staff can work the queue but cannot change money or add people.
+    assert.strictEqual((await fetch(`${baseUrl}/api/shops/${reg.shop.id}/jobs`, { headers: staffAuth })).status, 200);
+    assert.strictEqual((await fetch(`${baseUrl}/api/shops/${reg.shop.id}/staff`, { headers: staffAuth })).status, 403);
+    assert.strictEqual((await fetch(`${baseUrl}/api/shops/${reg.shop.id}/rates`, {
+      method: 'POST', headers: staffAuth, body: JSON.stringify({ bulkEnabled: true }),
+    })).status, 403, 'staff must not be able to change what customers are charged');
+
+    // The owner cannot disable themselves, and nobody can disable an owner.
+    const self = await fetch(`${baseUrl}/api/shops/${reg.shop.id}/staff/${claim.user.id}/status`, {
+      method: 'POST', headers: owner, body: JSON.stringify({ status: 'disabled' }),
+    });
+    assert.strictEqual(self.status, 409, 'there is nobody above the owner to undo it');
+
+    // Disabling a staff member stops them signing in.
+    const off = await fetch(`${baseUrl}/api/shops/${reg.shop.id}/staff/${helper.id}/status`, {
+      method: 'POST', headers: owner, body: JSON.stringify({ status: 'disabled' }),
+    });
+    assert.strictEqual(off.status, 200);
+
+    assert.strictEqual(
+      (await fetch(`${baseUrl}/api/shops/${reg.shop.id}/jobs`, { headers: staffAuth })).status,
+      401,
+      'a disabled account loses access immediately, not at token expiry'
+    );
+  });
+
   await t.test('28. A brand new shop can find itself from its session alone', async () => {
     // The dashboard has no shop id of its own when a merchant signs in: not in
     // the URL, and nothing in localStorage on a fresh browser. It asks this
