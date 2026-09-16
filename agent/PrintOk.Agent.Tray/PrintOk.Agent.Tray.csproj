@@ -50,7 +50,9 @@
   <ItemGroup>
     <!-- System.Drawing.Printing, for enumerating the installed printers the
          settings and printers tabs show. -->
-    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
+    <!-- Kept in step with PrintOk.Agent.Core, which now needs it for printing.
+         A lower version here is a NuGet downgrade error, not a silent pick. -->
+    <PackageReference Include="System.Drawing.Common" Version="8.0.10" />
   </ItemGroup>
 
 </Project>

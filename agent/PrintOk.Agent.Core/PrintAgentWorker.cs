@@ -284,7 +284,7 @@ public class PrintAgentWorker : BackgroundService
         try
         {
             _logger.LogInformation("Printing a '{Mode}' separator before {Count} job(s).", mode, jobCount);
-            await _spooler.PrintDocumentAsync(path, "PrintOk separator", 1, false, cancellationToken);
+            await _spooler.PrintDocumentAsync(path, new PrintOptions("PrintOk separator"), cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -327,7 +327,10 @@ public class PrintAgentWorker : BackgroundService
             await File.WriteAllBytesAsync(tempFilePath, fileBytes, cancellationToken);
 
             // 5. Spool to Printer
-            bool printSuccess = await _spooler.PrintDocumentAsync(tempFilePath, job.FileName, job.Copies, job.IsColor, cancellationToken);
+            bool printSuccess = await _spooler.PrintDocumentAsync(
+                tempFilePath,
+                new PrintOptions(job.FileName, job.Copies, job.IsColor, job.IsDuplex, job.PaperSize),
+                cancellationToken);
 
             if (printSuccess)
             {

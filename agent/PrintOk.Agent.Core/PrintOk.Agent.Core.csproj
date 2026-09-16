@@ -31,6 +31,23 @@
     <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.0" />
     <!-- DPAPI, for encrypting the device token at rest on Windows (PRD 7.2). -->
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+
+    <!-- Printing without a human in the loop.
+
+         The agent used to hand files to Windows with ShellExecute's "print"
+         verb, which is not printing so much as asking whichever application
+         owns the file type to print it. For a photo that application is the
+         Windows Photo Printing Wizard, which opens a dialog on the counter PC
+         and waits for someone to click Print. An unattended agent that needs a
+         human to click Print is not unattended.
+
+         So the agent renders the page itself and sends pixels to the spooler.
+         PDFtoImage carries PDFium for the PDFs, SkiaSharp decodes every image
+         format the customer upload form accepts (including webp, which
+         System.Drawing cannot read), and System.Drawing.Printing is the only
+         way to reach a Windows print queue directly. -->
+    <PackageReference Include="PDFtoImage" Version="4.1.1" />
+    <PackageReference Include="System.Drawing.Common" Version="8.0.10" />
   </ItemGroup>
 
 </Project>

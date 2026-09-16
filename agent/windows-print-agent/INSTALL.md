@@ -194,6 +194,31 @@ The desktop agent does this for you. For the console agent, press `Win+R`, type
 that opens. Note that this only starts it at sign-in; nothing restarts it if it
 crashes.
 
+## What it can print
+
+The agent renders PDFs and images itself and sends the pages straight to the
+Windows print queue. Nothing opens, nothing asks to be clicked, and the copies,
+colour, double-sided and paper size the customer chose and paid for are applied
+to the job.
+
+| Format | How it prints |
+| --- | --- |
+| `.pdf` | Rendered by the agent at 300dpi |
+| `.png` `.jpg` `.jpeg` `.webp` `.bmp` `.gif` `.tif` | Rendered by the agent |
+| `.doc` `.docx` `.xls` `.xlsx` `.csv` `.ppt` `.pptx` | Handed to Word/Excel/PowerPoint, which print without showing a window |
+
+Office formats are the one case that still needs other software on the PC. If
+a shop has no Office installed, those jobs fail with a message saying so rather
+than opening anything on the counter screen.
+
+This used to work differently, and badly. The agent asked Windows to print the
+file, which really means asking whichever application owns that file type to
+print it — and for an image that application is the Windows Photo Printing
+Wizard. It opened a dialog on the shop's counter PC, defaulted the paper type
+to "Labels", and waited for the owner to press Print on every single customer
+job. It also took no options at all, so colour, duplex and paper size were
+whatever the printer driver happened to default to.
+
 ## Troubleshooting
 
 **"This agent is not paired and has no API key"**

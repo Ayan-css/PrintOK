@@ -11,7 +11,13 @@ public record PrintJob(
     [property: JsonPropertyName("pageCount")] int PageCount,
     [property: JsonPropertyName("copies")] int Copies,
     [property: JsonPropertyName("isColor")] bool IsColor,
-    [property: JsonPropertyName("printState")] string PrintState
+    [property: JsonPropertyName("printState")] string PrintState,
+    // Both of these have been in the server's response all along; the agent
+    // simply never deserialised them, so every job printed single-sided on
+    // whatever paper the driver defaulted to no matter what was paid for.
+    // Defaulted so an older server, which omits them, changes nothing.
+    [property: JsonPropertyName("isDuplex")] bool IsDuplex = false,
+    [property: JsonPropertyName("paperSize")] string? PaperSize = null
 );
 
 public record AgentPollResponse(

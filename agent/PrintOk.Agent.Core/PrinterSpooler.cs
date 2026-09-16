@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using Microsoft.Extensions.Logging;
 using PrintOk.WindowsPrintAgent.Models;
 
@@ -7,11 +8,23 @@ namespace PrintOk.WindowsPrintAgent.Services;
 
 public interface IPrinterSpooler
 {
-    Task<bool> PrintDocumentAsync(string tempFilePath, string fileName, int copies, bool isColor, CancellationToken cancellationToken);
+    Task<bool> PrintDocumentAsync(string tempFilePath, PrintOptions options, CancellationToken cancellationToken);
 }
 
 public class WindowsPrinterSpooler : IPrinterSpooler
 {
+    /// <summary>
+    /// Formats that need another application installed to print at all.
+    ///
+    /// Word and Excel do print silently through the "printto" verb, so these
+    /// still go through the shell — but only these. Everything a customer can
+    /// actually upload in bulk (PDFs and images) is rendered by the agent.
+    /// </summary>
+    private static readonly HashSet<string> ShellPrintable = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".doc", ".docx", ".xls", ".xlsx", ".csv", ".ppt", ".pptx", ".txt", ".rtf",
+    };
+
     private readonly ILogger<WindowsPrinterSpooler> _logger;
     private readonly AgentSettings _settings;
 
@@ -21,57 +34,112 @@ public class WindowsPrinterSpooler : IPrinterSpooler
         _settings = settings;
     }
 
-    public async Task<bool> PrintDocumentAsync(string tempFilePath, string fileName, int copies, bool isColor, CancellationToken cancellationToken)
+    public async Task<bool> PrintDocumentAsync(
+        string tempFilePath, PrintOptions options, CancellationToken cancellationToken)
     {
-        int copyCount = Math.Max(1, copies);
-
         _logger.LogInformation(
-            "Spooling '{FileName}' ({Copies} copies, Color: {IsColor}) to printer '{Printer}'...",
-            fileName, copyCount, isColor, _settings.PrinterName ?? "(system default)");
+            "Printing '{FileName}': {Copies} copy/copies, {Colour}, {Sides}, {Paper}, to '{Printer}'.",
+            options.FileName,
+            Math.Max(1, options.Copies),
+            options.IsColor ? "colour" : "black and white",
+            options.IsDuplex ? "double-sided" : "single-sided",
+            options.PaperSize ?? "printer default",
+            _settings.PrinterName ?? "(system default)");
 
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        // OperatingSystem.IsWindows rather than RuntimeInformation: they mean the
+        // same thing, but only this one narrows the platform for the analyser,
+        // which is what lets the Windows-only printing below be called at all.
+        if (!OperatingSystem.IsWindows())
         {
-            _logger.LogInformation("[Cross-Platform Simulation Mode] Simulating print of '{FileName}'.", fileName);
+            _logger.LogInformation("[Cross-Platform Simulation Mode] Simulating print of '{FileName}'.", options.FileName);
             await Task.Delay(500, cancellationToken);
             return true;
         }
 
-        // The Windows shell print verbs spool a single copy per invocation, so issue
-        // one job per requested copy rather than silently printing just one.
-        for (int copy = 1; copy <= copyCount; copy++)
+        // Rendered by the agent, which is the only way this prints without a
+        // person at the counter clicking through a dialog.
+        if (DocumentRasterizer.CanRender(tempFilePath))
         {
-            if (!await SpoolSingleCopyAsync(tempFilePath, fileName, copy, copyCount, cancellationToken))
-            {
-                return false;
-            }
+            // The guard is repeated inside the lambda because the analyser does
+            // not carry the one above across the closure boundary.
+            return await Task.Run(
+                () => OperatingSystem.IsWindows() && RenderAndPrint(tempFilePath, options),
+                cancellationToken);
         }
 
-        _logger.LogInformation("All {Copies} copy/copies of '{FileName}' handed to the Windows spooler.", copyCount, fileName);
-        return true;
+        string extension = Path.GetExtension(tempFilePath);
+        if (!ShellPrintable.Contains(extension))
+        {
+            // Better to fail the job with a reason than to open something on the
+            // counter PC and leave it sitting there.
+            _logger.LogError(
+                "The agent cannot print '{Extension}' files. '{FileName}' was not printed.",
+                extension, options.FileName);
+            return false;
+        }
+
+        return await PrintViaInstalledApplicationAsync(tempFilePath, options, cancellationToken);
     }
 
-    private async Task<bool> SpoolSingleCopyAsync(string tempFilePath, string fileName, int copy, int copyCount, CancellationToken cancellationToken)
+    /// <summary>
+    /// Draws the document and sends it to the print queue.
+    /// </summary>
+    /// <remarks>
+    /// A method of its own, and annotated, because the platform analyser does
+    /// not carry an OperatingSystem.IsWindows() guard across a lambda boundary
+    /// — and this runs inside a Task.Run so that rendering a long PDF does not
+    /// block the polling loop.
+    /// </remarks>
+    [SupportedOSPlatform("windows")]
+    private bool RenderAndPrint(string tempFilePath, PrintOptions options)
     {
-        // "printto" targets a named printer; "print" only ever reaches the machine
-        // default, so it is a fallback for when no printer name is configured.
-        bool hasNamedPrinter = !string.IsNullOrWhiteSpace(_settings.PrinterName);
-
-        if (hasNamedPrinter && await TryRunPrintVerbAsync(tempFilePath, "printto", $"\"{_settings.PrinterName}\"", cancellationToken))
+        using DocumentRasterizer? document = DocumentRasterizer.Open(tempFilePath, _logger);
+        if (document is null)
         {
-            _logger.LogInformation("Copy {Copy}/{Total} of '{FileName}' spooled to '{Printer}'.", copy, copyCount, fileName, _settings.PrinterName);
-            return true;
+            _logger.LogError("'{FileName}' could not be read as a document or an image.", options.FileName);
+            return false;
         }
 
-        if (await TryRunPrintVerbAsync(tempFilePath, "print", null, cancellationToken))
+        return WindowsRasterPrinter.Print(document, options, _settings.PrinterName, _logger);
+    }
+
+    /// <summary>
+    /// Office documents, handed to Word or Excel.
+    ///
+    /// The "printto" verb prints to a named printer without showing anything,
+    /// which is why it is still used here — but only for formats the agent
+    /// cannot render itself, and only when an application is actually
+    /// registered for them.
+    /// </summary>
+    private async Task<bool> PrintViaInstalledApplicationAsync(
+        string tempFilePath, PrintOptions options, CancellationToken cancellationToken)
+    {
+        int copyCount = Math.Max(1, options.Copies);
+
+        // These applications spool one copy per invocation.
+        for (int copy = 1; copy <= copyCount; copy++)
         {
-            _logger.LogInformation("Copy {Copy}/{Total} of '{FileName}' spooled to the default printer.", copy, copyCount, fileName);
-            return true;
+            bool named = !string.IsNullOrWhiteSpace(_settings.PrinterName);
+
+            if (named && await TryRunPrintVerbAsync(tempFilePath, "printto", $"\"{_settings.PrinterName}\"", cancellationToken))
+            {
+                continue;
+            }
+
+            if (await TryRunPrintVerbAsync(tempFilePath, "print", null, cancellationToken))
+            {
+                continue;
+            }
+
+            _logger.LogError(
+                "Nothing on this PC is registered to print '{FileName}'. Install the application that opens "
+                + "this file type, or ask the customer for a PDF.",
+                options.FileName);
+            return false;
         }
 
-        _logger.LogError(
-            "Windows refused to print copy {Copy}/{Total} of '{FileName}'. No application is registered to print this file type, or the printer is unavailable.",
-            copy, copyCount, fileName);
-        return false;
+        _logger.LogInformation("All {Copies} copy/copies of '{FileName}' handed to the spooler.", copyCount, options.FileName);
+        return true;
     }
 
     private async Task<bool> TryRunPrintVerbAsync(string tempFilePath, string verb, string? arguments, CancellationToken cancellationToken)

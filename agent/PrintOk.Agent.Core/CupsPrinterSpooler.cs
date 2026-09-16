@@ -29,13 +29,17 @@ public class CupsPrinterSpooler : IPrinterSpooler
     }
 
     public async Task<bool> PrintDocumentAsync(
-        string tempFilePath, string fileName, int copies, bool isColor, CancellationToken cancellationToken)
+        string tempFilePath, PrintOptions options, CancellationToken cancellationToken)
     {
-        int copyCount = Math.Max(1, copies);
+        string fileName = options.FileName;
+        int copyCount = Math.Max(1, options.Copies);
 
         _logger.LogInformation(
-            "Spooling '{FileName}' ({Copies} copies, Color: {IsColor}) to CUPS printer '{Printer}'...",
-            fileName, copyCount, isColor, _settings.PrinterName ?? "(system default)");
+            "Spooling '{FileName}' to CUPS printer '{Printer}': {Copies} copy/copies, {Colour}, {Sides}, {Paper}.",
+            fileName, _settings.PrinterName ?? "(system default)", copyCount,
+            options.IsColor ? "colour" : "black and white",
+            options.IsDuplex ? "double-sided" : "single-sided",
+            options.PaperSize ?? "printer default");
 
         var args = new List<string>();
 
@@ -55,7 +59,21 @@ public class CupsPrinterSpooler : IPrinterSpooler
         // colour request rather than failing, which is what we want — the
         // customer has already been charged at the rate they chose.
         args.Add("-o");
-        args.Add(isColor ? "print-color-mode=color" : "print-color-mode=monochrome");
+        args.Add(options.IsColor ? "print-color-mode=color" : "print-color-mode=monochrome");
+
+        // Duplex and paper were never sent, so a customer who chose and paid for
+        // A4 double-sided got whatever the queue's defaults were.
+        args.Add("-o");
+        args.Add(options.IsDuplex ? "sides=two-sided-long-edge" : "sides=one-sided");
+
+        if (!string.IsNullOrWhiteSpace(options.PaperSize))
+        {
+            // A printer with no such tray ignores this rather than refusing the
+            // job: wrong paper is fixable at the counter, a job that never
+            // printed is not.
+            args.Add("-o");
+            args.Add($"media={options.PaperSize}");
+        }
 
         // Names the job in the CUPS queue, so `lpstat` shows something a shop
         // owner recognises instead of the temp file's random name.

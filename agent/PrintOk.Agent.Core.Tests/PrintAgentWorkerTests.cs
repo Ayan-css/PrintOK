@@ -48,7 +48,7 @@ public class PrintAgentWorkerTests
     private sealed class NoPrinter : IPrinterSpooler
     {
         public Task<bool> PrintDocumentAsync(
-            string tempFilePath, string fileName, int copies, bool isColor, CancellationToken ct)
+            string tempFilePath, PrintOptions options, CancellationToken ct)
             => Task.FromResult(true);
     }
 
