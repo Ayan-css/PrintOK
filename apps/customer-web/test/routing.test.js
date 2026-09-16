@@ -109,5 +109,38 @@ test('customer web routing', async (t) => {
     );
   });
 
+  await t.test('a merchant can sign out, and signing out clears the whole session', async () => {
+    // There was no sign-out at all on either merchant page: the way to hand a
+    // shared counter PC to the next person was to close the tab. This checks
+    // both that the button exists and that it clears every key the session is
+    // actually made of — a sign-out that leaves the shop context behind points
+    // the next person at the previous shop.
+    const fs = require('fs');
+    const path = require('path');
+    const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
+
+    const app = read('app.js');
+    const session = read('session.js');
+
+    const sessionKey = app.match(/KEY:\s*'([^']*merchant[^']*)'/)?.[1];
+    const contextKey = app.match(/localStorage\.getItem\('([^']*shopContext[^']*)'\)/)?.[1];
+
+    for (const key of [sessionKey, contextKey]) {
+      assert.ok(
+        session.includes(`'${key}'`),
+        `session.js must clear '${key}' or a stale session survives sign-out`
+      );
+    }
+    assert.match(session, /removeItem/, 'session.js must actually remove the keys');
+    // The theme belongs to the machine, not the person signed in.
+    assert.doesNotMatch(session, /removeItem\(['"`]?printok\.theme/);
+
+    for (const page of ['dashboard.html', 'setup.html']) {
+      const html = read(page);
+      assert.match(html, /id="btnSignOut"/, `${page} needs a sign-out control`);
+      assert.match(html, /src="\/session\.js"/, `${page} must load session.js`);
+    }
+  });
+
   await new Promise((resolve) => server.close(resolve));
 });

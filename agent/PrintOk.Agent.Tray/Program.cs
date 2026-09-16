@@ -132,18 +132,24 @@ internal static class Program
         builder.Services.AddHttpClient("PrintOkApi", client =>
         {
             client.BaseAddress = new Uri(settings.ApiBaseUrl);
-            client.Timeout = TimeSpan.FromSeconds(30);
+            // 90s, not 30. A cloud host that scales to zero takes over half a
+            // minute to answer the first request after an idle spell — measured
+            // at 33s against ours — so a 30s timeout guarantees that every first
+            // contact of the morning fails, which is the first contact of the
+            // shop's day.
+            client.Timeout = TimeSpan.FromSeconds(90);
         });
         builder.Logging.ClearProviders();
         builder.Logging.AddProvider(new FileLoggerProvider(logPath));
 
-        // The worker only starts once there is something to authenticate with.
-        // Starting it unpaired would fill the log with 401s and tell the shop
-        // owner nothing they can act on.
-        if (settings.IsConfigured)
-        {
-            builder.Services.AddHostedService<PrintAgentWorker>();
-        }
+        // Always registered. It was conditional on being paired already, which
+        // is wrong for an agent whose whole point is that you pair it from its
+        // own window: an unpaired install started with no worker, pairing from
+        // the window then succeeded, and there was no loop for the credential to
+        // reach. The window said it would start printing and the log went silent
+        // from that moment. The worker now waits for the credential itself, so
+        // it neither spins on 401s nor needs a restart.
+        builder.Services.AddHostedService<PrintAgentWorker>();
 
         var host = builder.Build();
         host.Start();
@@ -175,6 +181,12 @@ internal static class Program
 
             await credentials.SaveAsync(result.Credentials);
 
+            // Handed to the running worker, not just to disk. This is what it
+            // is waiting on; without it the credential would sit in a file that
+            // nothing reads again until the next launch.
+            settings.DeviceToken = result.Credentials.DeviceToken;
+            settings.DeviceId = result.Credentials.DeviceId;
+
             status.DeviceId = result.Credentials.DeviceId;
             status.PrinterId = result.Credentials.PrinterId;
             status.ShopId = result.Credentials.ShopId;
@@ -182,7 +194,7 @@ internal static class Program
             status.AuthMethod = "Device credential";
             status.SetState(ConnectionState.Starting);
 
-            log.LogInformation("Paired from the desktop agent. Restart required to begin printing.");
+            log.LogInformation("Paired from the desktop agent. The print loop starts on the next poll.");
             return true;
         }
 

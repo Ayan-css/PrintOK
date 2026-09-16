@@ -56,6 +56,10 @@
 
         <div class="header-actions">
           <a href="/dashboard" class="btn btn-outline btn-sm">← Dashboard</a>
+          <button type="button" id="btnSignOut" class="btn btn-outline btn-sm"
+                  title="Sign out of this shop on this PC">
+            ⏻ Sign out
+          </button>
           <button type="button" id="btnThemeToggle" class="btn btn-outline btn-sm"
                     aria-pressed="false" title="Switch between light and dark">
               <span id="themeToggleIcon" aria-hidden="true">🌙</span>
@@ -417,6 +421,7 @@
   </div>
 
   <script src="/theme.js" defer></script>
+  <script src="/session.js" defer></script>
   <script src="/setup.js" defer></script>
 </body>
 </html>

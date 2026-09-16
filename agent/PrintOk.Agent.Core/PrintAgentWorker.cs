@@ -40,6 +40,15 @@ public class PrintAgentWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Nothing can be polled without a credential, but the host must not be
+        // the one to decide that. The desktop agent pairs from its own window
+        // while it is already running: when the host skipped registering this
+        // worker because the PC was unpaired at startup, pairing succeeded, the
+        // window said "This PC is paired and will start printing", and nothing
+        // ever printed — there was no loop to start. Waiting here instead means
+        // the credential arriving is enough, with no restart.
+        if (!await WaitForCredentialAsync(stoppingToken)) return;
+
         _logger.LogInformation("PrintOk Windows Print Agent started. Polling interval: {Interval}ms", _pollIntervalMs);
 
         // Start background WebSocket push listener with auto-reconnect
@@ -67,6 +76,38 @@ public class PrintAgentWorker : BackgroundService
 
             await Task.Delay(_pollIntervalMs, stoppingToken);
         }
+    }
+
+    /// <summary>
+    /// Blocks until this PC has something to authenticate with.
+    /// </summary>
+    /// <returns>false only if the agent is shutting down.</returns>
+    private async Task<bool> WaitForCredentialAsync(CancellationToken stoppingToken)
+    {
+        if (_settings.IsConfigured) return true;
+
+        _logger.LogInformation("No credential yet. Waiting for this PC to be paired before polling for jobs.");
+        _status?.SetState(ConnectionState.NotPaired, "This PC has not been paired yet.");
+
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(1000, stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                return false;
+            }
+
+            if (!_settings.IsConfigured) continue;
+
+            _logger.LogInformation("Credential received. Starting the print loop — no restart needed.");
+            _status?.SetState(ConnectionState.Starting);
+            return true;
+        }
+
+        return false;
     }
 
     private async Task StartHeartbeatLoopAsync(CancellationToken cancellationToken)
@@ -98,6 +139,19 @@ public class PrintAgentWorker : BackgroundService
                         _settings.HasDeviceToken
                             ? "Cloud API rejected this device's token. It may have been revoked from the dashboard. Re-pair with a new pairing code."
                             : "Cloud API rejected the agent API key. Re-download appsettings.json from the PrintOk dashboard.");
+                }
+                else
+                {
+                    // Every other failure used to land here and vanish: no log
+                    // line, no state change. The window sat on "Connecting…",
+                    // the dashboard said the agent was offline, and the log file
+                    // — the only thing a support request has — was silent about
+                    // it. A 502 from a host still waking up is exactly this.
+                    _status?.SetState(ConnectionState.Offline,
+                        $"The server answered the heartbeat with {(int)response.StatusCode}.");
+                    _logger.LogWarning(
+                        "Heartbeat was refused with {Code} ({Reason}). Nothing will print until this clears.",
+                        (int)response.StatusCode, response.ReasonPhrase);
                 }
             }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
@@ -191,6 +245,11 @@ public class PrintAgentWorker : BackgroundService
             }
             return;
         }
+
+        // Polling working is proof the platform is reachable, whatever the
+        // heartbeat is doing. Without this the window could report "Connecting…"
+        // indefinitely while jobs were in fact being collected and printed.
+        _status?.SetState(_status.PushConnected ? ConnectionState.Connected : ConnectionState.Degraded);
 
         var pollResult = await response.Content.ReadFromJsonAsync<AgentPollResponse>(cancellationToken: cancellationToken);
         if (pollResult == null || pollResult.Jobs.Count == 0)

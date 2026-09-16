@@ -300,7 +300,9 @@ else
 builder.Services.AddHttpClient("PrintOkApi", client =>
 {
     client.BaseAddress = new Uri(settings.ApiBaseUrl);
-    client.Timeout = TimeSpan.FromSeconds(30);
+    // See the desktop host: a cloud instance waking from idle answers in ~33s,
+    // so 30 was short enough to fail every first request after a quiet period.
+    client.Timeout = TimeSpan.FromSeconds(90);
 });
 
 builder.Services.AddHostedService<PrintAgentWorker>();
