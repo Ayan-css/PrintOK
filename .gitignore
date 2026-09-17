@@ -82,9 +82,11 @@ coverage/
 playwright-report/
 test-results/
 
-# Consolidated status, security findings and competitive gap analysis.
-# Kept out of git so it can name findings, hosts and numbers freely.
+# Consolidated status and security findings, and the commercial model. Kept out
+# of git so they can name findings, hosts, a competitor's figures and
+# unfinalised prices freely.
 STATUS.md
+PRICING.md
 
 # Local database exports (may contain customer data)
 backups/
