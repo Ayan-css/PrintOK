@@ -254,6 +254,17 @@ export interface IStorageProvider {
   createPrinter(shopId: string, printerName: string, baseUrlOrTargetUrl: string, qrCodeDataUrl?: string, qrGeneratorFn?: (url: string) => Promise<string>): Promise<Printer>;
   getPrinter(id: string): Promise<Printer | undefined>;
   getPrinterByApiKey(apiKey: string): Promise<Printer | undefined>;
+
+  /**
+   * Issues a new legacy agent key for a printer, invalidating the old one.
+   *
+   * The key was minted once when the printer was created and there was no way
+   * to change it — so a key that leaked was a permanent full-access agent
+   * credential for that printer, for the life of the printer. Device-scoped
+   * tokens already had per-device revocation; this gives the older shared
+   * credential the same escape route.
+   */
+  rotatePrinterApiKey(printerId: string): Promise<{ apiKey: string } | undefined>;
   /** Printers belonging to a shop, for the dashboard after sign-in. */
   listPrintersForShop(shopId: string): Promise<Printer[]>;
   /**
@@ -326,6 +337,23 @@ export interface IStorageProvider {
   getAdminUserByEmail(email: string): Promise<(AdminUserRecord & { passwordHash: string }) | undefined>;
   getAdminUser(id: string): Promise<AdminUserRecord | undefined>;
   countAdminUsers(): Promise<number>;
+
+  /**
+   * Claims the very first operator account, atomically.
+   *
+   * The bootstrap route counted admins and then created one, with no
+   * transaction, lock or singleton constraint — only email @unique. A COUNT
+   * takes no lock and does not see uncommitted inserts, so under READ
+   * COMMITTED two concurrent requests with different emails both counted zero
+   * and both succeeded, producing two full-privilege owner accounts. Narrow
+   * window, on a freshly deployed instance, and unrecoverable once it happens.
+   *
+   * Returns a refusal rather than throwing, so the route answers 409 exactly as
+   * it did when it lost the race by luck instead of by design.
+   */
+  createFirstAdminUser(input: {
+    email: string; passwordHash: string; name?: string;
+  }): Promise<{ ok: true; user: AdminUserRecord } | { ok: false; reason: string }>;
   recordAdminLogin(id: string): Promise<void>;
   getShopPlan(shopId: string): Promise<ShopPlan | undefined>;
   updateShopPlan(shopId: string, plan: Partial<ShopPlan>): Promise<ShopPlan | undefined>;
@@ -573,6 +601,14 @@ export class MemoryStorage implements IStorageProvider {
 
   public async getPrinter(id: string): Promise<Printer | undefined> {
     return this.printers.get(id);
+  }
+
+  public async rotatePrinterApiKey(printerId: string): Promise<{ apiKey: string } | undefined> {
+    const printer = this.printers.get(printerId);
+    if (!printer) return undefined;
+    printer.apiKey = `prn_key_${crypto.randomBytes(16).toString('hex')}`;
+    this.printers.set(printerId, printer);
+    return { apiKey: printer.apiKey };
   }
 
   public async getPrinterByApiKey(apiKey: string): Promise<Printer | undefined> {
@@ -922,6 +958,31 @@ export class MemoryStorage implements IStorageProvider {
 
   public async countAdminUsers(): Promise<number> {
     return this.adminUsers.size;
+  }
+
+  public async createFirstAdminUser(input: {
+    email: string; passwordHash: string; name?: string;
+  }): Promise<{ ok: true; user: AdminUserRecord } | { ok: false; reason: string }> {
+    // Deliberately no await between the check and the write: Node runs this
+    // body to completion before any other request is served, so the pair is
+    // atomic here without a lock. The Postgres path cannot rely on that and
+    // takes an advisory lock instead.
+    if (this.adminUsers.size > 0) {
+      return { ok: false, reason: 'An administrator already exists. Sign in instead.' };
+    }
+
+    const record: AdminUserRecord & { passwordHash: string } = {
+      id: `adm_${crypto.randomBytes(8).toString('hex')}`,
+      email: input.email.trim().toLowerCase(),
+      passwordHash: input.passwordHash,
+      name: input.name,
+      role: 'owner',
+      status: 'active',
+      createdAt: new Date().toISOString(),
+    };
+    this.adminUsers.set(record.email, record);
+    const { passwordHash, ...safe } = record;
+    return { ok: true, user: safe };
   }
 
   public async recordAdminLogin(id: string): Promise<void> {

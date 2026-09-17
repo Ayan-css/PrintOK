@@ -400,4 +400,40 @@ test('PrismaStorage (PostgreSQL) integration', async (t) => {
     assert.ok(stats.todayJobsCount > 0, 'jobs created above must be counted');
     assert.ok(stats.todayRevenueCents > 0);
   });
+
+  await t.test('concurrent admin bootstrap produces exactly one owner', async () => {
+    // This is the test that needs a real database. The old code counted admins
+    // and then inserted, with no transaction and no lock: under READ COMMITTED
+    // a COUNT takes no lock and cannot see another transaction's uncommitted
+    // insert, and two different emails do not conflict on the only unique
+    // constraint that exists — so both requests committed an 'owner'.
+    //
+    // MemoryStorage cannot demonstrate it at all, because Node runs each
+    // handler body to completion. Only Postgres can.
+    const before = await storage.countAdminUsers();
+    assert.strictEqual(before, 0, 'this suite starts with no administrators');
+
+    const claim = (email: string) => storage.createFirstAdminUser({
+      email,
+      passwordHash: 'not-a-real-hash',
+      name: 'Racer',
+    });
+
+    const results = await Promise.all([
+      claim('race-one@printok.test'),
+      claim('race-two@printok.test'),
+      claim('race-three@printok.test'),
+    ]);
+
+    const won = results.filter((r) => r.ok);
+    assert.strictEqual(won.length, 1, 'exactly one concurrent bootstrap may succeed');
+    assert.strictEqual(await storage.countAdminUsers(), 1, 'and the table holds exactly one');
+
+    const loser = results.find((r) => !r.ok);
+    assert.match((loser as { reason: string }).reason, /already exists/i);
+
+    // A later attempt is refused too, not merely raced.
+    const late = await claim('race-late@printok.test');
+    assert.strictEqual(late.ok, false);
+  });
 });

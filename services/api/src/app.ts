@@ -1070,7 +1070,12 @@ export function createApp(
   });
 
   app.post('/api/shops/:shopId/portal-config', async (req: Request, res: Response) => {
-    const merchant = await authenticateMerchant(req, res);
+    // Owner only. This screen carries autoPrintMode, and 'all' queues every
+    // subsequent job for printing *before* payment clears — a shop-wide
+    // financial policy that a staff account had been able to set unilaterally.
+    // Every sibling settings route (pricing, rates, profile, razorpay-account)
+    // already required the owner; this one was simply missed.
+    const merchant = await authenticateMerchant(req, res, { requireOwner: true });
     if (!merchant) return;
 
     try {
@@ -1258,9 +1263,59 @@ export function createApp(
    * it can, and the download below carries only the resulting token — never the
    * printer's permanent API key.
    */
+  /**
+   * Issues a new legacy agent key for a printer, invalidating the old one.
+   *
+   * The key was minted once at printer creation with no way to change it, so
+   * one that leaked stayed valid for the life of the printer. Device-scoped
+   * tokens have had per-device revocation for a while; this gives the older
+   * shared credential the same escape route.
+   *
+   * Owner only, and returned exactly once — it is not readable afterwards
+   * except by downloading a fresh agent config, which is also owner-gated.
+   * Every agent still authenticating with the old key stops working until it is
+   * re-paired or reconfigured, which is the point of rotating it, so the
+   * response says so plainly.
+   */
+  app.post('/api/printers/:printerId/rotate-api-key', async (req: Request, res: Response) => {
+    try {
+      const ctx = await authorizePrinter(req, res, { requireOwner: true });
+      if (!ctx) return;
+
+      const rotated = await storage.rotatePrinterApiKey(ctx.printer.id);
+      if (!rotated) return res.status(404).json({ error: 'Printer not found.' });
+
+      await storage.recordSecurityEvent({
+        type: 'AUTH_REJECTED',
+        severity: 'info',
+        printerId: ctx.printer.id,
+        detail: {
+          reason: 'Legacy agent key rotated by the shop owner.',
+          rotatedBy: ctx.merchant.sub,
+        },
+      });
+
+      // Logged as an event, never as a value: this is a bearer credential.
+      console.log(`[PrintOk] Legacy agent key rotated for printer ${ctx.printer.id}.`);
+
+      return res.json({
+        apiKey: rotated.apiKey,
+        message:
+          'A new agent key has been issued. Any agent still using the old key will stop ' +
+          'printing until it is re-paired or given the new configuration.',
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/api/printers/:printerId/agent-config-token', async (req: Request, res: Response) => {
     try {
-      const ctx = await authorizePrinter(req, res);
+      // Owner only. The config this unlocks carries the printer's permanent
+      // apiKey — a credential minted once when the printer was created, good
+      // for full agent access, and until now with no way to rotate it. The
+      // strictly less sensitive regenerate-qr route already required the owner.
+      const ctx = await authorizePrinter(req, res, { requireOwner: true });
       if (!ctx) return;
 
       const issued = issueConfigDownloadToken({
@@ -1423,6 +1478,8 @@ export function createApp(
    */
   app.post('/api/admin/bootstrap', async (req: Request, res: Response) => {
     try {
+      // Cheap refusal first, so the common case — somebody finding this route
+      // on a long-running instance — costs no lock and no password hash.
       if ((await storage.countAdminUsers()) > 0) {
         return res.status(409).json({ error: 'An administrator already exists. Sign in instead.' });
       }
@@ -1435,13 +1492,20 @@ export function createApp(
       const weak = validatePasswordStrength(String(password));
       if (weak) return res.status(400).json({ error: weak });
 
-      const user = await storage.createAdminUser({
+      // The check above is a courtesy, not the guard. This is the guard: the
+      // count and the insert happen together under one lock, so two concurrent
+      // requests during the pre-bootstrap window cannot both create an owner.
+      const claim = await storage.createFirstAdminUser({
         email: String(email),
         passwordHash: hashPassword(String(password)),
         name,
-        role: 'owner',
       });
 
+      if (!claim.ok) {
+        return res.status(409).json({ error: claim.reason });
+      }
+
+      const user = claim.user;
       return res.status(201).json({ user, token: issueAdminToken(user) });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -2072,6 +2136,13 @@ export function createApp(
   app.post('/api/admin/reclaim-stale-jobs', async (req: Request, res: Response) => {
     const admin = await authenticateAdmin(req, res);
     if (!admin) return;
+
+    // This mutates print-job state across every shop on the platform, so it is
+    // a write. The support role exists precisely to look without touching —
+    // canWrite's own comment says so — and three sibling admin routes check it.
+    if (!canWrite(admin.role)) {
+      return res.status(403).json({ error: 'This account has read-only access.' });
+    }
 
     try {
       const result = await storage.reclaimStaleJobs();
@@ -2987,6 +3058,36 @@ export function createApp(
       const target = await storage.getPrintJob(id);
       if (!target || target.printerId !== printer.id) {
         return res.status(404).json({ error: 'Job not found for this printer.' });
+      }
+
+      // And it must belong to the device reporting on it, not merely to the
+      // printer. This checked the printer only and then overwrote target.deviceId
+      // with whoever was calling, so a second or stale credential for the same
+      // printer could drive another device's job straight to Completed — which
+      // purges the document, with no refund, because Completed is not Cancelled.
+      // The customer paid and got nothing.
+      //
+      // assignJobToDevice already enforces exclusive per-device claims, so the
+      // concept existed and was simply not applied on the way back.
+      //
+      // An unclaimed job is allowed through: the legacy shared-key agents have
+      // no device id of their own, and a job they were handed by polling is
+      // theirs to report on.
+      if (target.deviceId && target.deviceId !== deviceId) {
+        await storage.recordSecurityEvent({
+          type: 'AUTH_REJECTED',
+          severity: 'warning',
+          printerId: printer.id,
+          detail: {
+            reason: 'A device reported on a job claimed by a different device.',
+            jobId: id,
+            claimedBy: target.deviceId,
+            reportedBy: deviceId,
+          },
+        });
+        return res.status(409).json({
+          error: 'This job is assigned to a different device on this printer.',
+        });
       }
 
       const requestedState = parsePrintState(String(printState));

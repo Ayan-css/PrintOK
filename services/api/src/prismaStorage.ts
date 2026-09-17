@@ -33,6 +33,14 @@ const HEARTBEAT_ONLINE_WINDOW_MS = 45_000;
  * job lifecycle trail all live in the database rather than in process memory, so
  * they survive a restart and stay correct behind more than one API instance.
  */
+/**
+ * Advisory lock key for the one-time admin bootstrap.
+ *
+ * An arbitrary but fixed constant. Only bootstrap takes it, so it contends with
+ * nothing else.
+ */
+const ADMIN_BOOTSTRAP_LOCK_KEY = 828_141_001;
+
 export class PrismaStorage implements IStorageProvider {
   private prisma = new PrismaClient();
   private s3Service = new S3StorageService();
@@ -868,6 +876,49 @@ export class PrismaStorage implements IStorageProvider {
 
   public async countAdminUsers(): Promise<number> {
     return this.prisma.adminUser.count();
+  }
+
+  public async rotatePrinterApiKey(printerId: string): Promise<{ apiKey: string } | undefined> {
+    const apiKey = `prn_key_${crypto.randomBytes(16).toString('hex')}`;
+    const updated = await this.prisma.printer.updateMany({
+      where: { id: printerId },
+      data: { apiKey },
+    });
+    return updated.count > 0 ? { apiKey } : undefined;
+  }
+
+  public async createFirstAdminUser(input: {
+    email: string; passwordHash: string; name?: string;
+  }): Promise<{ ok: true; user: AdminUserRecord } | { ok: false; reason: string }> {
+    return this.prisma.$transaction(async (tx) => {
+      // A transaction alone is not enough. Under READ COMMITTED — Postgres's
+      // default, and Prisma's — a COUNT takes no lock and cannot see another
+      // transaction's uncommitted insert, so two concurrent bootstraps would
+      // both count zero and both commit. The rows do not conflict either: the
+      // only unique constraint is on email, and two different emails satisfy
+      // it. So the mutual exclusion has to be explicit.
+      //
+      // A transaction-scoped advisory lock is released on commit or rollback
+      // with no cleanup path to get wrong, and it serialises this one operation
+      // without raising the isolation level of anything else.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${ADMIN_BOOTSTRAP_LOCK_KEY})`;
+
+      if ((await tx.adminUser.count()) > 0) {
+        return { ok: false as const, reason: 'An administrator already exists. Sign in instead.' };
+      }
+
+      const user = await tx.adminUser.create({
+        data: {
+          id: `adm_${crypto.randomBytes(8).toString('hex')}`,
+          email: input.email.trim().toLowerCase(),
+          passwordHash: input.passwordHash,
+          name: input.name,
+          role: 'owner',
+        },
+      });
+
+      return { ok: true as const, user: this.mapAdmin(user) };
+    });
   }
 
   public async recordAdminLogin(id: string): Promise<void> {

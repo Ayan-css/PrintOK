@@ -14,13 +14,20 @@ export class AgentWebSocketServer {
     this.wss = new WebSocketServer({ server, path: '/ws/agent' });
 
     this.wss.on('connection', async (ws: WebSocket, req) => {
-      const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
-
+      // Headers only. The query string was also accepted, and a URL is the
+      // worst place to carry a bearer credential: it lands in access logs, in
+      // proxy logs and in any error report that echoes the request line, where
+      // a device token grants an authenticated agent session for that printer.
+      //
+      // The project's own client was fixed to stop sending it long ago —
+      // AgentSettings.BuildWebSocketUri adds no query string and
+      // WebSocketAuthHeaders sends x-agent-device-token or x-agent-api-key — so
+      // the server was keeping a channel open that nothing used.
+      //
       // Device-scoped token first; the shared printer key remains accepted for
       // agents installed before pairing existed (PRD 7.2).
-      const deviceToken =
-        url.searchParams.get('deviceToken') || (req.headers['x-agent-device-token'] as string);
-      const apiKey = url.searchParams.get('apiKey') || (req.headers['x-agent-api-key'] as string);
+      const deviceToken = req.headers['x-agent-device-token'] as string | undefined;
+      const apiKey = req.headers['x-agent-api-key'] as string | undefined;
 
       if (!deviceToken && !apiKey) {
         const errPayload: AgentWsMessage = { type: 'AUTH_ERROR', payload: 'Missing credentials' };
@@ -33,7 +40,7 @@ export class AgentWebSocketServer {
       if (deviceToken) {
         const device = await this.storage.getActiveDeviceByTokenHash(hashDeviceToken(deviceToken));
         printer = device ? await this.storage.getPrinter(device.printerId) : undefined;
-      } else {
+      } else if (apiKey) {
         printer = await this.storage.getPrinterByApiKey(apiKey);
       }
 

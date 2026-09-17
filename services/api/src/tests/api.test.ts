@@ -68,6 +68,7 @@ function signCheckout(orderId: string, paymentId: string): string {
 }
 import http from 'http';
 import { createApp } from '../app';
+import { hashPassword } from '../adminAuth';
 import { MemoryStorage } from '../storage';
 import { PrintState, PaymentState } from '@printok/shared-types';
 
@@ -3644,6 +3645,212 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const status = await (await fetch(`${baseUrl}/api/print-jobs/${jobId}`)).json() as any;
     assert.strictEqual(status.job.printState, PrintState.Printed);
     assert.ok(status.job.tokenNumber, 'the token they collect against still stands');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Authorization
+  // ---------------------------------------------------------------------------
+
+  await t.test('87. Staff cannot change shop-wide money policy or extract the agent key', async () => {
+    const shop = await shopWithAuth('Staff Limits Co', 'stafflimits@example.com', 'StaffLimitsPass1');
+
+    const added = await fetch(`${baseUrl}/api/shops/${shop.shopId}/staff`, {
+      method: 'POST', headers: shop.auth,
+      body: JSON.stringify({ email: 'counter@example.com', name: 'Counter', password: 'CounterPass123' }),
+    });
+    assert.strictEqual(added.status, 201);
+
+    const login = await (await fetch(`${baseUrl}/api/merchant/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'counter@example.com', password: 'CounterPass123' }),
+    })).json() as any;
+    const staff = { Authorization: `Bearer ${login.token}`, 'Content-Type': 'application/json' };
+
+    // autoPrintMode 'all' queues every job for printing before payment clears.
+    // That is a shop-wide financial policy, and a staff account could set it —
+    // while every sibling settings route already required the owner.
+    const flip = await fetch(`${baseUrl}/api/shops/${shop.shopId}/portal-config`, {
+      method: 'POST', headers: staff, body: JSON.stringify({ autoPrintMode: 'all' }),
+    });
+    assert.strictEqual(flip.status, 403, 'staff must not be able to switch off paying first');
+
+    const stillSafe = await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/portal-config`)).json() as any;
+    assert.strictEqual(stillSafe.autoPrintMode, 'after-payment', 'and the policy is unchanged');
+
+    // The owner still can.
+    const ownerFlip = await fetch(`${baseUrl}/api/shops/${shop.shopId}/portal-config`, {
+      method: 'POST', headers: shop.auth, body: JSON.stringify({ collectCustomerName: true }),
+    });
+    assert.strictEqual(ownerFlip.status, 200, 'the owner is not locked out of their own settings');
+
+    // The agent config carries the printer's permanent key, which until now had
+    // no rotation route at all — so a staff member could take a credential the
+    // shop could never invalidate.
+    const token = await fetch(`${baseUrl}/api/printers/${shop.printerId}/agent-config-token`, {
+      method: 'POST', headers: staff,
+    });
+    assert.strictEqual(token.status, 403, 'staff must not be able to mint an agent config');
+  });
+
+  await t.test('88. The legacy agent key can be rotated', async () => {
+    const shop = await shopWithAuth('Rotate Co', 'rotate@example.com', 'RotatePass123');
+    const original = shop.agentApiKey;
+
+    // The old key works.
+    assert.strictEqual((await fetch(`${baseUrl}/api/agent/jobs/pending`, {
+      headers: { 'x-agent-api-key': original },
+    })).status, 200);
+
+    // Staff cannot rotate it.
+    const added = await fetch(`${baseUrl}/api/shops/${shop.shopId}/staff`, {
+      method: 'POST', headers: shop.auth,
+      body: JSON.stringify({ email: 'rot-staff@example.com', password: 'RotStaffPass1' }),
+    });
+    assert.strictEqual(added.status, 201);
+    const staffLogin = await (await fetch(`${baseUrl}/api/merchant/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'rot-staff@example.com', password: 'RotStaffPass1' }),
+    })).json() as any;
+    assert.strictEqual((await fetch(`${baseUrl}/api/printers/${shop.printerId}/rotate-api-key`, {
+      method: 'POST', headers: { Authorization: `Bearer ${staffLogin.token}` },
+    })).status, 403);
+
+    // The owner can.
+    const rotated = await fetch(`${baseUrl}/api/printers/${shop.printerId}/rotate-api-key`, {
+      method: 'POST', headers: shop.auth,
+    });
+    assert.strictEqual(rotated.status, 200);
+    const { apiKey: replacement } = (await rotated.json()) as any;
+    assert.ok(replacement && replacement !== original, 'a new key is issued');
+
+    // The old one stops working; the new one works.
+    assert.strictEqual((await fetch(`${baseUrl}/api/agent/jobs/pending`, {
+      headers: { 'x-agent-api-key': original },
+    })).status, 401, 'a rotated key is dead');
+    assert.strictEqual((await fetch(`${baseUrl}/api/agent/jobs/pending`, {
+      headers: { 'x-agent-api-key': replacement },
+    })).status, 200);
+  });
+
+  await t.test('89. A device cannot report on another device\'s job', async () => {
+    // The status endpoint checked that the job belonged to the authenticated
+    // printer, but not to the authenticated device, and then overwrote the
+    // job's deviceId with whoever called. So a second or stale credential for
+    // the same printer could drive another device's job to Completed — which
+    // purges the document, with no refund, because Completed is not Cancelled.
+    const shop = await shopWithAuth('Device Co', 'device@example.com', 'DevicePass123');
+
+    const created = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: shop.printerId, fileName: 'd.pdf',
+        fileBase64: makePdf(1).toString('base64'),
+        copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+      }),
+    });
+    const jobId = ((await created.json()) as any).job.id;
+    await fetch(`${baseUrl}/api/print-jobs/${jobId}/manual-override`, {
+      method: 'POST', headers: shop.auth,
+    });
+
+    // Device A claims it by polling.
+    const polled = await (await fetch(`${baseUrl}/api/agent/jobs/pending`, {
+      headers: { 'x-agent-api-key': shop.agentApiKey, 'x-agent-device-id': 'device-A' },
+    })).json() as any;
+    assert.ok(polled.jobs.some((j: any) => j.id === jobId));
+
+    const report = (deviceId: string, printState: string) =>
+      fetch(`${baseUrl}/api/agent/jobs/${jobId}/status`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-agent-api-key': shop.agentApiKey,
+          'x-agent-device-id': deviceId,
+        },
+        body: JSON.stringify({ jobId, printState }),
+      });
+
+    // Device B, same printer, same shop, valid credential — and not its job.
+    const intruder = await report('device-B', PrintState.Completed);
+    assert.strictEqual(intruder.status, 409, 'another device must not close this job');
+
+    const untouched = await storage.getPrintJob(jobId);
+    assert.notStrictEqual(untouched?.printState, PrintState.Completed);
+    assert.ok(!untouched?.documentDeletedAt, 'and the document survives');
+
+    // The device that actually holds it still works.
+    assert.strictEqual((await report('device-A', PrintState.Printing)).status, 200);
+    assert.strictEqual((await report('device-A', PrintState.Printed)).status, 200);
+  });
+
+  await t.test('90. A read-only admin cannot mutate platform job state', async () => {
+    // reclaim-stale-jobs mutates print state across every shop, so it is a
+    // write — but it only checked that the caller was an admin. The support
+    // role exists precisely to look without touching.
+    // The owner the suite bootstrapped in test 14.
+    const owner = await (await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'ops@printok.test', password: 'CorrectHorse99x' }),
+    })).json() as any;
+    assert.ok(owner.token, 'the suite bootstrapped an admin earlier');
+    const ownerAuth = { Authorization: `Bearer ${owner.token}`, 'Content-Type': 'application/json' };
+
+    // There is no route that creates an admin account beyond bootstrap, so the
+    // support-tier account is seeded through the storage port.
+    await storage.createAdminUser({
+      email: 'support-ro@printok.test',
+      passwordHash: hashPassword('SupportPass123x'),
+      name: 'Support',
+      role: 'support',
+    });
+
+    const supportLogin = await (await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'support-ro@printok.test', password: 'SupportPass123x' }),
+    })).json() as any;
+    assert.ok(supportLogin.token, 'the support account can sign in');
+    const supportAuth = { Authorization: `Bearer ${supportLogin.token}`, 'Content-Type': 'application/json' };
+
+    // Looking is fine.
+    assert.strictEqual((await fetch(`${baseUrl}/api/admin/shops`, { headers: supportAuth })).status, 200);
+
+    // Touching is not.
+    const sweep = await fetch(`${baseUrl}/api/admin/reclaim-stale-jobs`, {
+      method: 'POST', headers: supportAuth,
+    });
+    assert.strictEqual(sweep.status, 403, 'support can look but not touch');
+
+    // The owner can.
+    assert.strictEqual((await fetch(`${baseUrl}/api/admin/reclaim-stale-jobs`, {
+      method: 'POST', headers: ownerAuth,
+    })).status, 200);
+  });
+
+  await t.test('91. Only one owner can win the admin bootstrap', async () => {
+    // countAdminUsers() then createAdminUser() with no transaction or lock. A
+    // COUNT takes no lock and cannot see an uncommitted insert, and two
+    // different emails do not conflict on the only unique constraint there is —
+    // so two concurrent requests both created a full-privilege owner.
+    //
+    // An admin already exists by this point in the suite, so the route's own
+    // refusal is what is asserted here; the race itself is covered against a
+    // real database in the Postgres suite, where the lock actually matters.
+    const attempt = (email: string) => fetch(`${baseUrl}/api/admin/bootstrap`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: 'RaceyPass123x', name: 'Racer' }),
+    });
+
+    const [a, b] = await Promise.all([attempt('race-a@printok.in'), attempt('race-b@printok.in')]);
+    assert.strictEqual(a.status, 409);
+    assert.strictEqual(b.status, 409);
+
+    for (const email of ['race-a@printok.in', 'race-b@printok.in']) {
+      const login = await fetch(`${baseUrl}/api/admin/login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password: 'RaceyPass123x' }),
+      });
+      assert.strictEqual(login.status, 401, `${email} must never have been created`);
+    }
   });
 
   server.close();
