@@ -1,0 +1,712 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>PrintOk — Your printer already works</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@700;900&family=Noto+Sans+Devanagari:wght@700&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      :root {
+        --black: #0d0d0d;
+        --paper: #f5f2ec;
+        --paper-dark: #ece8df;
+        --white: #fafaf8;
+        --primary: #6c2cff;
+        --primary-hover: #5518e8;
+        --secondary: #f5c400;
+        --mint: #2dd4a0;
+        --success: #1db87a;
+        --ink: #1a1a1a;
+        --muted: #55554e;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: var(--paper);
+        font-family: "Inter", system-ui, sans-serif;
+        color: var(--ink);
+      }
+
+      #root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
+
+      .scene {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .scene-bg {
+        position: absolute;
+        inset: 0;
+      }
+
+      .paper {
+        background: var(--paper);
+      }
+
+      .paper::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: radial-gradient(rgba(13, 13, 13, 0.035) 1.5px, transparent 1.5px);
+        background-size: 22px 22px;
+      }
+
+      .display {
+        font-family: "Space Grotesk", "Inter", system-ui, sans-serif;
+      }
+
+      /* ---------- Scene 1: Hook ---------- */
+
+      .hook-card {
+        position: relative;
+        background: var(--black);
+        border-radius: 28px;
+        padding: 64px 96px;
+        display: flex;
+        align-items: center;
+        gap: 40px;
+        box-shadow: 18px 18px 0 rgba(108, 44, 255, 0.35);
+      }
+
+      .hook-qr {
+        width: 120px;
+        height: 120px;
+        border-radius: 20px;
+        background: var(--secondary);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 64px;
+        flex: none;
+      }
+
+      .hook-text {
+        margin: 0;
+        color: var(--white);
+        font-weight: 900;
+        font-size: 84px;
+        line-height: 1.05;
+        max-width: 900px;
+        letter-spacing: -0.02em;
+      }
+
+      /* ---------- Scene 2: Reveal ---------- */
+
+      .poster-card {
+        position: absolute;
+        width: 620px;
+        background: #faf9f5;
+        border: 6px solid var(--black);
+        border-radius: 24px;
+        overflow: hidden;
+        text-align: center;
+      }
+
+      .poster-band {
+        background: var(--primary);
+        color: var(--white);
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        font-size: 40px;
+        padding: 22px 0;
+      }
+
+      .poster-hindi {
+        font-family: "Noto Sans Devanagari", "Inter", sans-serif;
+        font-weight: 700;
+        font-size: 52px;
+        color: var(--ink);
+        margin: 28px 0 6px;
+      }
+
+      .poster-eng {
+        font-size: 24px;
+        color: var(--muted);
+        margin-bottom: 22px;
+      }
+
+      .poster-qr {
+        width: 220px;
+        height: 220px;
+        margin: 0 auto 22px;
+        border: 4px solid var(--black);
+        border-radius: 12px;
+        background: var(--white);
+        display: grid;
+        grid-template-columns: repeat(9, 1fr);
+        grid-template-rows: repeat(9, 1fr);
+        padding: 12px;
+        gap: 2px;
+      }
+
+      .qr-cell {
+        border-radius: 1px;
+      }
+
+      .qr-cell.on {
+        background: var(--black);
+      }
+
+      .poster-steps {
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--primary);
+        padding-bottom: 26px;
+      }
+
+      .phone-frame {
+        position: absolute;
+        width: 380px;
+        height: 676px;
+        border-radius: 42px;
+        border: 10px solid var(--black);
+        background: #000;
+        overflow: hidden;
+        box-shadow: 0 30px 60px rgba(13, 13, 13, 0.25);
+      }
+
+      .phone-frame img {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: top center;
+      }
+
+      .flow-img {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: top center;
+      }
+
+      .scene-label {
+        position: absolute;
+        bottom: 130px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        font-size: 44px;
+        color: var(--ink);
+        background: var(--white);
+        border: 4px solid var(--black);
+        border-radius: 16px;
+        padding: 14px 36px;
+        white-space: nowrap;
+      }
+
+      /* ---------- Scene 3: Flow speedrun ---------- */
+
+      .flow-label {
+        position: absolute;
+        bottom: 110px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        font-size: 42px;
+        color: var(--white);
+        background: var(--primary);
+        border-radius: 14px;
+        padding: 14px 34px;
+        white-space: nowrap;
+      }
+
+      /* ---------- Scene 4: Payoff ---------- */
+
+      .payoff-card {
+        position: absolute;
+        width: 640px;
+        background: var(--white);
+        border: 6px solid var(--black);
+        border-radius: 28px;
+        overflow: hidden;
+      }
+
+      .token-panel {
+        background: var(--primary);
+        padding: 38px 0 34px;
+        text-align: center;
+      }
+
+      .token-eyebrow {
+        color: #d9c8ff;
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      .token-number {
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 900;
+        font-size: 96px;
+        color: var(--secondary);
+        margin: 6px 0;
+        letter-spacing: -0.01em;
+      }
+
+      .token-sub {
+        color: #ece2ff;
+        font-size: 22px;
+      }
+
+      .status-row {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+        padding: 30px 26px;
+      }
+
+      .status-badge {
+        border: 3px solid var(--black);
+        border-radius: 14px;
+        padding: 16px 8px;
+        text-align: center;
+        background: #eeece5;
+      }
+
+      .status-check {
+        display: block;
+        font-size: 30px;
+        margin-bottom: 6px;
+        opacity: 0;
+      }
+
+      .status-label {
+        font-size: 18px;
+        font-weight: 700;
+        color: var(--ink);
+      }
+
+      /* ---------- Scene 5: Outro ---------- */
+
+      .stat-row {
+        position: absolute;
+        display: flex;
+        gap: 28px;
+      }
+
+      .stat-chip {
+        background: var(--black);
+        color: var(--white);
+        border-radius: 18px;
+        padding: 26px 40px;
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        font-size: 34px;
+        text-align: center;
+      }
+
+      .stat-chip span {
+        display: block;
+        color: var(--secondary);
+        font-size: 42px;
+        font-weight: 900;
+      }
+
+      .closing-card {
+        position: absolute;
+        text-align: center;
+        background: var(--black);
+        border-radius: 32px;
+        padding: 70px 110px;
+      }
+
+      .closing-mark {
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 900;
+        font-size: 78px;
+        color: var(--white);
+        margin: 0 0 22px;
+      }
+
+      .closing-tagline {
+        font-size: 32px;
+        color: #e8e5db;
+        max-width: 760px;
+        margin: 0 auto;
+        line-height: 1.4;
+      }
+
+      .closing-disclaimer {
+        margin-top: 34px;
+        font-size: 22px;
+        font-style: italic;
+        color: #8d8980;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="printok-brag"
+      data-width="1920"
+      data-height="1080"
+      data-duration="19"
+    >
+      <!-- Scene 1: Hook — 0 to 2.5s -->
+      <section class="clip scene" id="sceneHook" data-start="0" data-duration="2.5">
+        <div class="scene-bg paper"></div>
+        <div class="hook-card" id="hookCard">
+          <div class="hook-qr" id="hookQr">▦</div>
+          <h1 class="hook-text display">Your printer already works.</h1>
+        </div>
+      </section>
+
+      <!-- Scene 2: Reveal — 2.5 to 5.5s -->
+      <section class="clip scene" id="sceneReveal" data-start="2.5" data-duration="3">
+        <div class="scene-bg paper"></div>
+
+        <div class="clip poster-card" id="posterCard" data-start="2.5" data-duration="2">
+          <div class="poster-band">🖨️ PrintOk</div>
+          <div class="poster-hindi">QR से Print करें</div>
+          <div class="poster-eng">Scan to print from your phone</div>
+          <div class="poster-qr" id="qrGrid"></div>
+          <div class="poster-steps">Scan → Upload → Pay → Collect</div>
+        </div>
+
+        <div class="clip phone-frame" id="revealPhone" data-start="4.3" data-duration="1.2">
+          <img src="assets/images/01-upload.webp" alt="PrintOk upload screen" />
+        </div>
+        <div class="clip scene-label" id="revealLabel" data-start="4.3" data-duration="1.2">
+          Scan. Upload.
+        </div>
+      </section>
+
+      <!-- Scene 3: Flow speedrun — 5.5 to 10.0s -->
+      <section class="clip scene" id="sceneFlow" data-start="5.5" data-duration="4.5">
+        <div class="scene-bg paper"></div>
+        <div class="phone-frame" id="flowPhoneFrame">
+          <img
+            class="clip flow-img"
+            id="flowImg1"
+            data-start="5.5"
+            data-duration="1.3"
+            src="assets/images/02-preview.webp"
+            alt="Uploaded PDF preview with page count"
+          />
+          <img
+            class="clip flow-img"
+            id="flowImg2"
+            data-start="6.8"
+            data-duration="1.3"
+            src="assets/images/03-configure.webp"
+            alt="Print options: copies, colour, sides, pages"
+          />
+          <img
+            class="clip flow-img"
+            id="flowImg3"
+            data-start="8.1"
+            data-duration="1.9"
+            src="assets/images/05-pay.webp"
+            alt="UPI and card payment options"
+          />
+        </div>
+        <div class="clip flow-label" id="flowLabel1" data-start="5.5" data-duration="1.3">
+          Sees the pages
+        </div>
+        <div class="clip flow-label" id="flowLabel2" data-start="6.8" data-duration="1.3">
+          Picks copies &amp; colour
+        </div>
+        <div class="clip flow-label" id="flowLabel3" data-start="8.1" data-duration="1.9">
+          Pays on their own phone
+        </div>
+      </section>
+
+      <!-- Scene 4: Payoff — 10.0 to 14.0s -->
+      <section class="clip scene" id="scenePayoff" data-start="10" data-duration="4">
+        <div class="scene-bg paper"></div>
+
+        <div class="clip phone-frame" id="tokenShot" data-start="10" data-duration="1.6">
+          <img src="assets/images/06-token.webp" alt="PrintOk token and order status screen" />
+        </div>
+
+        <div class="clip payoff-card" id="payoffCard" data-start="11.3" data-duration="2.7">
+          <div class="token-panel">
+            <div class="token-eyebrow">Your Print Token</div>
+            <div class="token-number display">Token #002</div>
+            <div class="token-sub">Show Token Number at Shop Counter</div>
+          </div>
+          <div class="status-row">
+            <div class="status-badge" id="badge1">
+              <span class="status-check" id="check1">✓</span>
+              <span class="status-label">Job Created</span>
+            </div>
+            <div class="status-badge" id="badge2">
+              <span class="status-check" id="check2">✓</span>
+              <span class="status-label">Payment Verified</span>
+            </div>
+            <div class="status-badge" id="badge3">
+              <span class="status-check" id="check3">✓</span>
+              <span class="status-label">Sent to Printer</span>
+            </div>
+            <div class="status-badge" id="badge4">
+              <span class="status-check" id="check4">✓</span>
+              <span class="status-label">Print Complete</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Scene 5: Outro — 14.0 to 19.0s -->
+      <section class="clip scene" id="sceneOutro" data-start="14" data-duration="5">
+        <div class="scene-bg paper"></div>
+
+        <div class="clip stat-row" id="statRow" data-start="14" data-duration="1.2">
+          <div class="stat-chip"><span>5 min</span>setup</div>
+          <div class="stat-chip"><span>₹0</span>new hardware</div>
+          <div class="stat-chip"><span>7</span>file types</div>
+        </div>
+
+        <div class="clip closing-card" id="closingCard" data-start="14.9" data-duration="4.1">
+          <p class="closing-mark">🖨️ PrintOk</p>
+          <p class="closing-tagline">
+            Turn the printer you already own into a print station.
+          </p>
+          <p class="clip closing-disclaimer" id="disclaimer" data-start="16.6" data-duration="2.4">
+            Untested on an actual printer. Confident anyway.
+          </p>
+        </div>
+      </section>
+
+      <!-- Audio -->
+      <audio
+        id="bgm"
+        data-start="0"
+        data-duration="19"
+        data-track-index="20"
+        data-volume="1"
+        src="assets/music/happy-beats-business-moves-vol-1-by-ende-dot-app.mp3"
+      ></audio>
+      <audio
+        id="sfxHook"
+        data-start="0.05"
+        data-duration="1"
+        data-track-index="21"
+        data-volume="0.85"
+        src="assets/sfx/impactSoft_medium_000.ogg"
+      ></audio>
+      <audio
+        id="sfxPosterCut"
+        data-start="4.15"
+        data-duration="0.6"
+        data-track-index="22"
+        data-volume="0.7"
+        src="assets/sfx/click_003.ogg"
+      ></audio>
+      <audio
+        id="sfxFlow1"
+        data-start="5.5"
+        data-duration="0.8"
+        data-track-index="23"
+        data-volume="0.6"
+        src="assets/sfx/card-slide-1.ogg"
+      ></audio>
+      <audio
+        id="sfxFlow3"
+        data-start="8.1"
+        data-duration="0.8"
+        data-track-index="24"
+        data-volume="0.6"
+        src="assets/sfx/card-slide-1.ogg"
+      ></audio>
+      <audio
+        id="sfxBell"
+        data-start="12.35"
+        data-duration="1.5"
+        data-track-index="25"
+        data-volume="0.85"
+        src="assets/sfx/impactBell_heavy_000.ogg"
+      ></audio>
+      <audio
+        id="sfxStat"
+        data-start="14.0"
+        data-duration="0.6"
+        data-track-index="26"
+        data-volume="0.55"
+        src="assets/sfx/drop_001.ogg"
+      ></audio>
+    </div>
+
+    <script>
+      // Deterministic fake QR pattern — decorative, not a scannable code. Fixed
+      // 9x9 bitmap, not runtime-random, so every render is identical.
+      var QR_ROWS = [
+        "111010111",
+        "101011101",
+        "111000111",
+        "000111000",
+        "101101101",
+        "000111000",
+        "111000111",
+        "101011101",
+        "111010111",
+      ];
+      (function buildQr() {
+        var grid = document.getElementById("qrGrid");
+        for (var r = 0; r < QR_ROWS.length; r++) {
+          var row = QR_ROWS[r];
+          for (var c = 0; c < row.length; c++) {
+            var cell = document.createElement("div");
+            cell.className = "qr-cell" + (row[c] === "1" ? " on" : "");
+            grid.appendChild(cell);
+          }
+        }
+      })();
+
+      var tl = gsap.timeline({ paused: true });
+
+      // ---------- Scene 1: Hook ----------
+      tl.fromTo(
+        "#hookCard",
+        { y: -70, opacity: 0, scale: 0.94 },
+        { y: 0, opacity: 1, scale: 1, duration: 0.45, ease: "back.out(1.6)" },
+        0.05,
+      );
+      tl.fromTo(
+        "#hookQr",
+        { scale: 0, opacity: 0, rotation: -12 },
+        { scale: 1, opacity: 1, rotation: 0, duration: 0.35, ease: "back.out(2.2)" },
+        0.35,
+      );
+
+      // ---------- Scene 2: Reveal ----------
+      tl.fromTo(
+        "#posterCard",
+        { y: 30, opacity: 0, scale: 0.96 },
+        { y: 0, opacity: 1, scale: 1, duration: 0.4, ease: "power3.out" },
+        2.55,
+      );
+      tl.to("#posterCard", { opacity: 0, duration: 0.25, ease: "power1.in" }, 4.05);
+      tl.fromTo(
+        "#revealPhone",
+        { scale: 0.9, opacity: 0 },
+        { scale: 1, opacity: 1, duration: 0.3, ease: "power2.out" },
+        4.15,
+      );
+      tl.fromTo(
+        "#revealLabel",
+        { y: 20, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.3, ease: "power2.out" },
+        4.35,
+      );
+
+      // ---------- Scene 3: Flow speedrun ----------
+      [
+        ["#flowImg1", 5.5],
+        ["#flowImg2", 6.8],
+        ["#flowImg3", 8.1],
+      ].forEach(function (pair) {
+        tl.fromTo(
+          pair[0],
+          { opacity: 0, scale: 1.04 },
+          { opacity: 1, scale: 1, duration: 0.25, ease: "power2.out" },
+          pair[1],
+        );
+      });
+      [
+        ["#flowLabel1", 5.5],
+        ["#flowLabel2", 6.8],
+        ["#flowLabel3", 8.1],
+      ].forEach(function (pair) {
+        tl.fromTo(
+          pair[0],
+          { y: 16, opacity: 0 },
+          { y: 0, opacity: 1, duration: 0.22, ease: "power2.out" },
+          pair[1],
+        );
+      });
+
+      // ---------- Scene 4: Payoff ----------
+      tl.fromTo(
+        "#tokenShot",
+        { scale: 0.92, opacity: 0 },
+        { scale: 1, opacity: 1, duration: 0.3, ease: "power2.out" },
+        10.05,
+      );
+      tl.to("#tokenShot", { opacity: 0, duration: 0.25, ease: "power1.in" }, 11.25);
+      tl.fromTo(
+        "#payoffCard",
+        { scale: 0.85, opacity: 0 },
+        { scale: 1, opacity: 1, duration: 0.35, ease: "back.out(1.5)" },
+        11.35,
+      );
+
+      var badgeSteps = [
+        { badge: "#badge2", check: "#check2", t: 11.75 },
+        { badge: "#badge3", check: "#check3", t: 12.0 },
+        { badge: "#badge4", check: "#check4", t: 12.3 },
+      ];
+      // Badge 1 (Job Created) is already resolved when the card lands.
+      tl.set("#badge1", { backgroundColor: "#d4f5eb" }, 11.35);
+      tl.to("#check1", { opacity: 1, duration: 0.01 }, 11.35);
+
+      badgeSteps.forEach(function (step, i) {
+        var isLast = i === badgeSteps.length - 1;
+        tl.to(step.badge, { backgroundColor: isLast ? "#d4f5eb" : "#fff3d6", duration: 0.18 }, step.t);
+        tl.to(step.check, { opacity: 1, duration: 0.15 }, step.t + 0.02);
+        if (isLast) {
+          tl.fromTo(
+            "#badge4",
+            { scale: 1 },
+            { scale: 1.08, duration: 0.16, yoyo: true, repeat: 1, ease: "power1.inOut" },
+            step.t,
+          );
+        }
+      });
+
+      // ---------- Scene 5: Outro ----------
+      tl.fromTo(
+        ".stat-chip",
+        { y: 24, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.28, ease: "back.out(1.6)", stagger: 0.08 },
+        14.05,
+      );
+      tl.to("#statRow", { opacity: 0, duration: 0.25, ease: "power1.in" }, 14.75);
+      tl.fromTo(
+        "#closingCard",
+        { y: 24, opacity: 0, scale: 0.97 },
+        { y: 0, opacity: 1, scale: 1, duration: 0.4, ease: "power3.out" },
+        14.95,
+      );
+      tl.fromTo(
+        "#disclaimer",
+        { opacity: 0 },
+        { opacity: 1, duration: 0.4, ease: "power1.out" },
+        16.65,
+      );
+
+      // ---------- Audio ----------
+      tl.fromTo("#bgm", { volume: 0 }, { volume: 0.32, duration: 0.4, ease: "power1.out" }, 0.1);
+      tl.to("#bgm", { volume: 0.38, duration: 0.25 }, 12.3);
+      tl.to("#bgm", { volume: 0.32, duration: 0.5 }, 12.9);
+      tl.to("#bgm", { volume: 0.18, duration: 0.5, ease: "power1.inOut" }, 16.6);
+      tl.to("#bgm", { volume: 0, duration: 0.9, ease: "power1.in" }, 18.1);
+
+      window.__timelines["printok-brag"] = tl;
+    </script>
+  </body>
+</html>

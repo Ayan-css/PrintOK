@@ -1,0 +1,1 @@
+Turned any shop's printer into a QR code. Scan, upload, pay, print — no new hardware. (Still waiting to test it on an actual printer.)
