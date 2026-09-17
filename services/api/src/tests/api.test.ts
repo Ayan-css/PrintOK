@@ -3585,6 +3585,67 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.ok(eventually.purged.includes(paidJob), 'retention is bounded even for paid jobs');
   });
 
+  await t.test('86. A printed document is deleted the moment it is printed', async () => {
+    // Not after a retention window — immediately, on the transition itself.
+    // The windows in the sweep exist only for documents that never reach this
+    // point: an abandoned checkout, or a paid job a shop never printed.
+    const shop = await shopWithAuth('Purge Now Co', 'purgenow@example.com', 'PurgeNowPass1');
+
+    const created = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: shop.printerId, fileName: 'collect.pdf',
+        fileBase64: makePdf(2).toString('base64'),
+        copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+      }),
+    });
+    const jobId = ((await created.json()) as any).job.id;
+
+    // Paid at the counter, so it reaches the queue.
+    await fetch(`${baseUrl}/api/print-jobs/${jobId}/manual-override`, {
+      method: 'POST', headers: shop.auth,
+    });
+
+    // The document is there for as long as the job needs it, and the agent can
+    // obtain a link to it.
+    assert.ok(await storage.createJobDownloadUrl(jobId), 'the agent must be able to fetch it');
+
+    // The real agent sequence: claim by polling, report Printing, then Printed.
+    const polled = await (await fetch(`${baseUrl}/api/agent/jobs/pending`, {
+      headers: { 'x-agent-api-key': shop.agentApiKey },
+    })).json() as any;
+    assert.ok(polled.jobs.some((j: any) => j.id === jobId), 'the agent receives the job');
+    assert.ok(
+      polled.jobs.find((j: any) => j.id === jobId).fileUrl,
+      'and receives a freshly minted link with it'
+    );
+
+    const report = (printState: string) =>
+      fetch(`${baseUrl}/api/agent/jobs/${jobId}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-agent-api-key': shop.agentApiKey },
+        body: JSON.stringify({ jobId, printState }),
+      });
+
+    await report(PrintState.Printing);
+    const stillNeeded = await storage.getPrintJob(jobId);
+    assert.ok(!stillNeeded?.documentDeletedAt, 'mid-print the document is still required');
+
+    assert.strictEqual((await report(PrintState.Printed)).status, 200);
+
+    // Gone. Not scheduled, not queued for a sweep — deleted on the transition.
+    const printed = await storage.getPrintJob(jobId);
+    assert.ok(printed?.documentDeletedAt, 'the document is deleted on being printed');
+    assert.strictEqual(printed?.fileUrl, '', 'and its reference is cleared');
+    assert.strictEqual(await storage.createJobDownloadUrl(jobId), null,
+      'no link can be minted for it afterwards');
+
+    // The customer can still see their job and collect it; only the file is gone.
+    const status = await (await fetch(`${baseUrl}/api/print-jobs/${jobId}`)).json() as any;
+    assert.strictEqual(status.job.printState, PrintState.Printed);
+    assert.ok(status.job.tokenNumber, 'the token they collect against still stands');
+  });
+
   server.close();
 });
 
