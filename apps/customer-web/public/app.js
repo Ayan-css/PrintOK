@@ -1634,7 +1634,10 @@ document.addEventListener('DOMContentLoaded', () => {
       btn.disabled = true;
       btn.textContent = 'Approving...';
       try {
-        const res = await fetch(`${API_BASE}/api/print-jobs/${encodeURIComponent(jobId)}/manual-override`, { method: 'POST' });
+        // shopFetch, not fetch: approving a cash job asserts that money changed
+        // hands, so the server now requires the merchant session that says who
+        // took it. A bare fetch here answers 401.
+        const res = await shopFetch(`/api/print-jobs/${encodeURIComponent(jobId)}/manual-override`, { method: 'POST' });
         const data = await res.json();
         if (res.ok && data.success) {
           showToast('success', 'Job Queued', 'Cash payment recorded — the job was sent to the printer.');

@@ -216,6 +216,58 @@ export class RazorpayService {
     }
   }
 
+  /**
+   * Asks Razorpay whether this order is really paid, and really ours.
+   *
+   * The checkout signature proves Razorpay issued a given (order, payment)
+   * pair, but not that the money was captured — an authorised-but-uncaptured
+   * payment produces a valid signature too. It also cannot prove which job the
+   * order belongs to, so the order's `notes.jobId` is checked here as a second,
+   * gateway-side binding independent of anything we store.
+   *
+   * Only called when credentials are configured. Returns rather than throws, so
+   * a gateway hiccup surfaces as a refusal the customer can retry rather than a
+   * 500 — and the webhook remains the backstop either way.
+   */
+  public async confirmOrderPaidForJob(
+    orderId: string,
+    jobId: string,
+    expectedAmountCents: number
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    try {
+      const Razorpay = require('razorpay');
+      const instance = new Razorpay({ key_id: this.keyId, key_secret: this.keySecret });
+      const order = await instance.orders.fetch(orderId);
+
+      if (!order) {
+        return { ok: false, error: 'That payment order could not be found at the gateway.' };
+      }
+
+      // Razorpay marks an order 'paid' once the payment against it is captured.
+      if (order.status !== 'paid') {
+        return {
+          ok: false,
+          error: `The gateway has not confirmed this payment yet (order status '${order.status}'). It may still be processing.`,
+        };
+      }
+
+      const notedJobId = order.notes?.jobId;
+      if (notedJobId && notedJobId !== jobId) {
+        return { ok: false, error: 'That payment belongs to a different order.' };
+      }
+
+      if (Number(order.amount) !== expectedAmountCents) {
+        return { ok: false, error: 'The amount paid does not match this order.' };
+      }
+
+      return { ok: true };
+    } catch (err: any) {
+      const reason = describeRazorpayError(err);
+      console.error(`[Razorpay Service] Could not verify order ${orderId}:`, reason);
+      return { ok: false, error: `The payment could not be verified with the gateway: ${reason}` };
+    }
+  }
+
   /** True when real Razorpay credentials are configured. */
   public get isLive(): boolean {
     return Boolean(this.keyId && this.keySecret);

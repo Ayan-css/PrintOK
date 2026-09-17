@@ -348,6 +348,35 @@ export interface IStorageProvider {
   recordJobSettlement(jobId: string, transferAmountCents: number, serviceFeeCents: number): Promise<void>;
 
   /**
+   * Records the gateway order minted for a job.
+   *
+   * This is what a later confirmation is checked against. Without it the
+   * confirm endpoint has nothing to bind a claimed payment to, and any real
+   * payment can be applied to any job.
+   */
+  attachGatewayOrder(jobId: string, gatewayOrderId: string, amountCents: number): Promise<void>;
+
+  /**
+   * Claims a gateway payment for exactly one job.
+   *
+   * Returns false when another job already holds that payment, which is what
+   * stops one payment settling several jobs. The uniqueness is enforced by the
+   * database rather than by a preceding read, so two concurrent confirmations
+   * naming the same payment cannot both win.
+   */
+  claimGatewayPayment(jobId: string, gatewayPaymentId: string): Promise<{ ok: boolean; reason?: string }>;
+
+  /**
+   * Records a webhook delivery, returning false if it has already been acted on.
+   *
+   * Keyed by the gateway's own event id, so a retry is idempotent independently
+   * of the job's current payment state — the two are different questions, and
+   * answering the first with the second is what let a retry walk a refunded job
+   * back to Paid.
+   */
+  markWebhookEventProcessed(eventId: string, event: string, jobId?: string): Promise<boolean>;
+
+  /**
    * The shop refuses a job it will not print.
    *
    * Cancels the print side and, where the customer has already paid, moves the
@@ -419,6 +448,11 @@ export class MemoryStorage implements IStorageProvider {
   private idempotencyRecords = new Map<string, StoredIdempotencyRecord>();
   private portalConfigs = new Map<string, ShopPortalConfig>();
   private rateCards = new Map<string, ShopRateCard>();
+  /// Gateway payment id -> the one job it settled. Stands in for the unique
+  /// index the Postgres path relies on.
+  private gatewayPayments = new Map<string, string>();
+  /// Webhook event ids already acted on, so a retry is a no-op.
+  private webhookEvents = new Set<string>();
   private agentDevices = new Map<string, AgentDeviceRecord & { tokenHash: string }>();
   private pairingCodes = new Map<string, PairingCodeRecord>();
   private securityEvents: AgentSecurityEventRecord[] = [];
@@ -1114,6 +1148,41 @@ export class MemoryStorage implements IStorageProvider {
     job.transferAmountCents = transferAmountCents;
     job.serviceFeeCents = serviceFeeCents;
     this.printJobs.set(jobId, job);
+  }
+
+  public async attachGatewayOrder(
+    jobId: string, gatewayOrderId: string, amountCents: number
+  ): Promise<void> {
+    const job = this.printJobs.get(jobId);
+    if (!job) return;
+    job.razorpayOrderId = gatewayOrderId;
+    job.razorpayOrderAmountCents = amountCents;
+    this.printJobs.set(jobId, job);
+  }
+
+  public async claimGatewayPayment(
+    jobId: string, gatewayPaymentId: string
+  ): Promise<{ ok: boolean; reason?: string }> {
+    const holder = this.gatewayPayments.get(gatewayPaymentId);
+    if (holder && holder !== jobId) {
+      return { ok: false, reason: 'That payment has already been used for another order.' };
+    }
+
+    const job = this.printJobs.get(jobId);
+    if (!job) return { ok: false, reason: `Job '${jobId}' not found.` };
+
+    this.gatewayPayments.set(gatewayPaymentId, jobId);
+    job.razorpayPaymentId = gatewayPaymentId;
+    this.printJobs.set(jobId, job);
+    return { ok: true };
+  }
+
+  public async markWebhookEventProcessed(
+    eventId: string, _event: string, _jobId?: string
+  ): Promise<boolean> {
+    if (this.webhookEvents.has(eventId)) return false;
+    this.webhookEvents.add(eventId);
+    return true;
   }
 
   public async createContactEnquiry(input: CreateContactEnquiryInput): Promise<ContactEnquiryRecord> {

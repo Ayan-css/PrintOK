@@ -10,6 +10,17 @@ import { PLAN_CATALOGUE, PAYMENT_GATEWAY_FEE_BPS, calculateShopNetCents } from '
 const TEST_WEBHOOK_SECRET = 'printok_test_webhook_secret';
 process.env.RAZORPAY_WEBHOOK_SECRET = TEST_WEBHOOK_SECRET;
 
+// The checkout confirmation path is signed with the API key secret, so the
+// suite needs one to exercise it at all.
+//
+// RAZORPAY_KEY_ID is deliberately left unset. verifyCheckoutSignature needs
+// only the secret, while isLive needs both — so with the id absent the suite
+// can sign a genuine checkout triple while createOrder still returns a
+// simulated order and never reaches the network, and the live gateway
+// cross-check in /verify stays switched off.
+const TEST_KEY_SECRET = 'printok_test_key_secret';
+process.env.RAZORPAY_KEY_SECRET = TEST_KEY_SECRET;
+
 // This suite imports ../app directly rather than booting the server, so it
 // deliberately never loads .env and never touches real credentials. That also
 // means it gets no JWT_SECRET, and without one every route that issues or
@@ -27,6 +38,17 @@ process.env.API_RATE_LIMIT_PER_MINUTE = '100000';
 /** Signs the exact bytes that will be sent, as Razorpay does. */
 function signWebhook(rawBody: string): string {
   return crypto.createHmac('sha256', TEST_WEBHOOK_SECRET).update(rawBody).digest('hex');
+}
+
+/**
+ * Signs a checkout result the way Razorpay Checkout does: an HMAC over
+ * "<order_id>|<payment_id>" with the API key secret.
+ *
+ * Note what it does not cover: the job. That omission is the whole reason the
+ * confirm endpoint needs a stored order id to bind a payment to a job.
+ */
+function signCheckout(orderId: string, paymentId: string): string {
+  return crypto.createHmac('sha256', TEST_KEY_SECRET).update(`${orderId}|${paymentId}`).digest('hex');
 }
 import http from 'http';
 import { createApp } from '../app';
@@ -124,11 +146,36 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(res.status, 201);
     const data = (await res.json()) as any;
     assert.ok(data.job.id);
-    assert.strictEqual(data.job.printState, PrintState.Queued);
+    // An anonymous customer cannot create a job that is already paid. This
+    // asserted Queued while autoApprove defaulted to true, which meant any
+    // caller who omitted a query parameter got a free print.
+    assert.strictEqual(data.job.printState, PrintState.AwaitingPayment);
+    assert.strictEqual(data.job.paymentState, PaymentState.Pending);
     assert.strictEqual(data.job.pageCount, 1); // Tamper-proof server override
     assert.strictEqual(data.job.totalPriceInCents, 200); // 1 page * 200 cents
 
     createdJobId = data.job.id;
+
+    // And asking for it explicitly, without a merchant session, is refused
+    // rather than honoured.
+    const unauthorised = await fetch(`${baseUrl}/api/print-jobs?autoApprove=true`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: createdPrinterId, fileName: 'free.pdf', fileBase64: samplePdfBase64,
+        pageCount: 1, copies: 1, isColor: false,
+      }),
+    });
+    assert.strictEqual(unauthorised.status, 401,
+      'only an authenticated shop may declare a job already paid');
+
+    // The shop takes the cash and approves it, which is what puts it in the
+    // queue for the agent tests that follow.
+    const approved = await fetch(`${baseUrl}/api/print-jobs/${createdJobId}/manual-override`, {
+      method: 'POST', headers: merchantAuth,
+    });
+    assert.strictEqual(approved.status, 200);
+    assert.strictEqual(((await approved.json()) as any).job.printState, PrintState.Queued);
   });
 
   await t.test('3. Windows Agent Polls Pending Jobs with Authorized API Key', async () => {
@@ -283,6 +330,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
 
     // Manual Override Endpoint
     const overrideRes = await fetch(`${baseUrl}/api/print-jobs/${data.job.id}/manual-override`, {
+      headers: merchantAuth,
       method: 'POST',
     });
     assert.strictEqual(overrideRes.status, 200);
@@ -634,7 +682,9 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
       'a cash job must wait for the shop to confirm payment');
 
     // The shop sees it and approves it.
-    const approve = await fetch(`${baseUrl}/api/print-jobs/${job.id}/manual-override`, { method: 'POST' });
+    const approve = await fetch(`${baseUrl}/api/print-jobs/${job.id}/manual-override`, {
+      method: 'POST', headers: merchantAuth,
+    });
     assert.strictEqual(approve.status, 200);
     const approved = (await approve.json()) as any;
     assert.strictEqual(approved.job.paymentState, PaymentState.Paid);
@@ -1874,7 +1924,9 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
 
     const j1 = await makeJob(dflt.reg.printer.id);
     assert.strictEqual(j1.printState, 'AwaitingPayment');
-    await fetch(`${baseUrl}/api/print-jobs/${j1.id}/manual-override`, { method: 'POST' });
+    await fetch(`${baseUrl}/api/print-jobs/${j1.id}/manual-override`, {
+      method: 'POST', headers: dflt.auth,
+    });
     const afterPay = await (await fetch(`${baseUrl}/api/print-jobs/${j1.id}`)).json() as any;
     assert.strictEqual(afterPay.job.printState, 'Queued', 'payment queues it');
 
@@ -1885,7 +1937,9 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     });
 
     const j2 = await makeJob(held.reg.printer.id);
-    await fetch(`${baseUrl}/api/print-jobs/${j2.id}/manual-override`, { method: 'POST' });
+    await fetch(`${baseUrl}/api/print-jobs/${j2.id}/manual-override`, {
+      method: 'POST', headers: held.auth,
+    });
     const heldJob = await (await fetch(`${baseUrl}/api/print-jobs/${j2.id}`)).json() as any;
     assert.strictEqual(heldJob.job.paymentState, 'Paid', 'the money is still taken');
     assert.strictEqual(heldJob.job.printState, 'HeldForRelease', 'but nothing prints yet');
@@ -2004,7 +2058,9 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     await order('Sita Rao', '9820099999', 'notes.pdf');
 
     // One paid so it lands in a different bucket from the other two.
-    await fetch(`${baseUrl}/api/print-jobs/${asha.id}/manual-override`, { method: 'POST' });
+    await fetch(`${baseUrl}/api/print-jobs/${asha.id}/manual-override`, {
+      method: 'POST', headers: auth,
+    });
 
     const query = async (qs: string) => {
       const res = await fetch(`${baseUrl}/api/shops/${reg.shop.id}/jobs?${qs}`, { headers: auth });
@@ -2234,7 +2290,9 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     };
 
     const paid = await makeJob();
-    await fetch(`${baseUrl}/api/print-jobs/${paid.id}/manual-override`, { method: 'POST' });
+    await fetch(`${baseUrl}/api/print-jobs/${paid.id}/manual-override`, {
+      method: 'POST', headers: auth,
+    });
     await makeJob(); // left unpaid
 
     const data = await (await fetch(`${baseUrl}/api/shops/${reg.shop.id}/earnings`, { headers: auth })).json() as any;
@@ -3019,6 +3077,279 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
       'and prices all twenty of them');
     assert.ok(fifty.job.totalPriceInCents > twenty.job.totalPriceInCents,
       'fifty pages still costs more than twenty, discount or not');
+  });
+
+  // ---------------------------------------------------------------------------
+  // The payment gate
+  // ---------------------------------------------------------------------------
+
+  await t.test('78. A payment settles the job it was taken for, and only that job', async () => {
+    // The confirm endpoint verified Razorpay's checkout signature — an HMAC over
+    // "<order_id>|<payment_id>", carrying no job reference — and then confirmed
+    // whatever jobId the request body named. Nothing connected the two, and the
+    // gateway order id was never stored, so there was nothing to connect them
+    // with. One genuine one-rupee payment could mark any job at any shop paid,
+    // for any amount, as often as it was replayed.
+    const shop = await shopWithAuth('Binding Co', 'binding@example.com', 'BindingPass123');
+
+    const newJob = async (fileName: string) => {
+      const res = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          printerId: shop.printerId, fileName,
+          fileBase64: makePdf(3).toString('base64'),
+          copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+        }),
+      });
+      return ((await res.json()) as any).job;
+    };
+
+    const openOrder = async (jobId: string) => {
+      const res = await fetch(`${baseUrl}/api/payments/create-order`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId }),
+      });
+      assert.strictEqual(res.status, 200, `create-order for ${jobId}`);
+      return ((await res.json()) as any).orderId as string;
+    };
+
+    const confirm = (body: Record<string, unknown>) =>
+      fetch(`${baseUrl}/api/payments/verify`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+    const jobA = await newJob('a.pdf');
+    const jobB = await newJob('b.pdf');
+    const orderA = await openOrder(jobA.id);
+    const orderB = await openOrder(jobB.id);
+
+    // Opening checkout again for an unchanged job reuses its order. Minting a
+    // second one would rebind the job and refuse the payment for the first.
+    assert.strictEqual(await openOrder(jobA.id), orderA, 'create-order is idempotent');
+    assert.notStrictEqual(orderA, orderB, 'but two jobs get two orders');
+
+    // --- the payment for job A settles job A ---
+    const payA = 'pay_A_genuine';
+    const goodA = await confirm({
+      jobId: jobA.id, razorpayOrderId: orderA, razorpayPaymentId: payA,
+      razorpaySignature: signCheckout(orderA, payA),
+    });
+    assert.strictEqual(goodA.status, 200);
+    assert.strictEqual(((await goodA.json()) as any).job.paymentState, PaymentState.Paid);
+
+    // --- the same payment must not settle job B ---
+    // Signed for job B's own order, so the signature itself is valid; what
+    // refuses it is that the payment is already spent.
+    const replay = await confirm({
+      jobId: jobB.id, razorpayOrderId: orderB, razorpayPaymentId: payA,
+      razorpaySignature: signCheckout(orderB, payA),
+    });
+    assert.strictEqual(replay.status, 409, 'a spent payment cannot settle a second job');
+    assert.match(((await replay.json()) as any).error, /already been used/i);
+
+    // --- job A's order must not settle job B either ---
+    const crossed = await confirm({
+      jobId: jobB.id, razorpayOrderId: orderA, razorpayPaymentId: 'pay_B_other',
+      razorpaySignature: signCheckout(orderA, 'pay_B_other'),
+    });
+    assert.strictEqual(crossed.status, 400, "another job's order cannot confirm this one");
+    assert.match(((await crossed.json()) as any).error, /different order/i);
+
+    // --- a genuine retry stays idempotent ---
+    const retry = await confirm({
+      jobId: jobA.id, razorpayOrderId: orderA, razorpayPaymentId: payA,
+      razorpaySignature: signCheckout(orderA, payA),
+    });
+    assert.strictEqual(retry.status, 200, 'the browser retrying its own confirmation is not an error');
+    assert.strictEqual(((await retry.json()) as any).job.paymentState, PaymentState.Paid);
+
+    // --- but a different payment against a settled job is not a retry ---
+    const second = await confirm({
+      jobId: jobA.id, razorpayOrderId: orderA, razorpayPaymentId: 'pay_A_second',
+      razorpaySignature: signCheckout(orderA, 'pay_A_second'),
+    });
+    assert.strictEqual(second.status, 409);
+
+    // --- an unsigned or wrongly signed claim is still refused ---
+    const forged = await confirm({
+      jobId: jobB.id, razorpayOrderId: orderB, razorpayPaymentId: 'pay_forged',
+      razorpaySignature: 'not-a-real-signature',
+    });
+    assert.strictEqual(forged.status, 400);
+
+    // --- a job with no order opened cannot be confirmed at all ---
+    const orphan = await newJob('orphan.pdf');
+    const noOrder = await confirm({
+      jobId: orphan.id, razorpayOrderId: 'order_never_minted', razorpayPaymentId: 'pay_x',
+      razorpaySignature: signCheckout('order_never_minted', 'pay_x'),
+    });
+    assert.strictEqual(noOrder.status, 409);
+    assert.match(((await noOrder.json()) as any).error, /no payment order/i);
+  });
+
+  await t.test('79. A re-priced order cannot be settled at the old figure', async () => {
+    const shop = await shopWithAuth('Reprice Co', 'reprice@example.com', 'RepricePass123');
+
+    const res = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: shop.printerId, fileName: 'r.pdf',
+        fileBase64: makePdf(2).toString('base64'),
+        copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+      }),
+    });
+    const job = ((await res.json()) as any).job;
+
+    const orderRes = await fetch(`${baseUrl}/api/payments/create-order`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jobId: job.id }),
+    });
+    const orderId = ((await orderRes.json()) as any).orderId as string;
+
+    // Re-record the order at a figure that no longer matches the job, which is
+    // what a price change between opening checkout and paying would look like.
+    // Driven through the storage port rather than an endpoint because a job's
+    // price is immutable by design and there is no route that would do this.
+    await storage.attachGatewayOrder(job.id, orderId, job.totalPriceInCents + 500);
+
+    const pay = 'pay_reprice';
+    const confirmed = await fetch(`${baseUrl}/api/payments/verify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jobId: job.id, razorpayOrderId: orderId, razorpayPaymentId: pay,
+        razorpaySignature: signCheckout(orderId, pay),
+      }),
+    });
+    assert.strictEqual(confirmed.status, 409);
+    assert.match(((await confirmed.json()) as any).error, /re-priced/i);
+
+    const after = await (await fetch(`${baseUrl}/api/print-jobs/${job.id}`)).json() as any;
+    assert.notStrictEqual(after.job.paymentState, PaymentState.Paid);
+  });
+
+  await t.test('80. A refunded order cannot be walked back to Paid', async () => {
+    // The checkout signature has no nonce and no timestamp, so it never
+    // expires. Idempotency was checked only against paymentState === Paid, and
+    // a refund moves the job off Paid — so a retained confirmation, or a
+    // Razorpay retry arriving after a refund, put the job back into the shop's
+    // revenue figures.
+    const shop = await shopWithAuth('Refund Guard Co', 'refundguard@example.com', 'RefundPass123');
+
+    const res = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: shop.printerId, fileName: 'g.pdf',
+        fileBase64: makePdf(1).toString('base64'),
+        copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+      }),
+    });
+    const job = ((await res.json()) as any).job;
+
+    const orderRes = await fetch(`${baseUrl}/api/payments/create-order`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jobId: job.id }),
+    });
+    const orderId = ((await orderRes.json()) as any).orderId as string;
+    const pay = 'pay_to_be_refunded';
+    const signature = signCheckout(orderId, pay);
+
+    const paid = await fetch(`${baseUrl}/api/payments/verify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jobId: job.id, razorpayOrderId: orderId, razorpayPaymentId: pay, razorpaySignature: signature,
+      }),
+    });
+    assert.strictEqual(paid.status, 200);
+
+    // The shop declines it, which moves the payment to RefundPending. Razorpay
+    // is not configured here, so the refund call itself fails and the job stays
+    // in RefundPending — which is exactly the window this guard covers.
+    const declined = await fetch(
+      `${baseUrl}/api/shops/${shop.shopId}/jobs/${job.id}/decline`,
+      {
+        method: 'POST', headers: shop.auth,
+        body: JSON.stringify({ reason: 'Out of paper' }),
+      }
+    );
+    // 202 when the refund was requested but the gateway has not confirmed it,
+    // which is what happens without Razorpay credentials; 200 once it has.
+    assert.ok([200, 202].includes(declined.status), `decline: ${declined.status}`);
+
+    const midRefund = await (await fetch(`${baseUrl}/api/print-jobs/${job.id}`)).json() as any;
+    assert.ok(
+      [PaymentState.RefundPending, PaymentState.Refunded].includes(midRefund.job.paymentState),
+      `expected a refund state, got ${midRefund.job.paymentState}`
+    );
+
+    // Replaying the original, still-valid confirmation must not resurrect it.
+    const resurrect = await fetch(`${baseUrl}/api/payments/verify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jobId: job.id, razorpayOrderId: orderId, razorpayPaymentId: pay, razorpaySignature: signature,
+      }),
+    });
+    assert.strictEqual(resurrect.status, 409, 'a refunded order is not confirmable');
+
+    // Nor may a signed webhook, which is the path Razorpay actually retries.
+    const raw = JSON.stringify({
+      event: 'payment.captured',
+      payload: { payment: { entity: { id: pay, notes: { jobId: job.id } } } },
+    });
+    const hook = await fetch(`${baseUrl}/api/payments/webhook`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-razorpay-signature': signWebhook(raw),
+        'x-razorpay-event-id': 'evt_after_refund',
+      },
+      body: raw,
+    });
+    // 200 so Razorpay stops retrying something it cannot fix by resending.
+    assert.strictEqual(hook.status, 200);
+
+    const final = await (await fetch(`${baseUrl}/api/print-jobs/${job.id}`)).json() as any;
+    assert.notStrictEqual(final.job.paymentState, PaymentState.Paid,
+      'the refund must stand');
+  });
+
+  await t.test('81. A retried webhook delivery is applied once', async () => {
+    const shop = await shopWithAuth('Retry Co', 'retry@example.com', 'RetryPass123');
+
+    const res = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: shop.printerId, fileName: 'w.pdf',
+        fileBase64: makePdf(1).toString('base64'),
+        copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+      }),
+    });
+    const job = ((await res.json()) as any).job;
+
+    const raw = JSON.stringify({
+      event: 'payment.captured',
+      payload: { payment: { entity: { id: 'pay_webhook_once', notes: { jobId: job.id } } } },
+    });
+    const deliver = () => fetch(`${baseUrl}/api/payments/webhook`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-razorpay-signature': signWebhook(raw),
+        'x-razorpay-event-id': 'evt_delivered_twice',
+      },
+      body: raw,
+    });
+
+    const first = await deliver();
+    assert.strictEqual(first.status, 200);
+    const afterFirst = await (await fetch(`${baseUrl}/api/print-jobs/${job.id}`)).json() as any;
+    assert.strictEqual(afterFirst.job.paymentState, PaymentState.Paid);
+
+    // Razorpay reuses the event id when it retries, so the second delivery is
+    // recognised as the same one rather than re-evaluated against job state.
+    const second = await deliver();
+    assert.strictEqual(second.status, 200);
+    assert.match(((await second.json()) as any).message, /already been processed/i);
   });
 
   server.close();

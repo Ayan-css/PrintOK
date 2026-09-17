@@ -1213,6 +1213,60 @@ export class PrismaStorage implements IStorageProvider {
     });
   }
 
+  public async attachGatewayOrder(
+    jobId: string, gatewayOrderId: string, amountCents: number
+  ): Promise<void> {
+    await this.prisma.printJob.updateMany({
+      where: { id: jobId },
+      data: { razorpayOrderId: gatewayOrderId, razorpayOrderAmountCents: amountCents },
+    });
+  }
+
+  public async claimGatewayPayment(
+    jobId: string, gatewayPaymentId: string
+  ): Promise<{ ok: boolean; reason?: string }> {
+    // Conditional on the column still being free for this job, so a second
+    // confirmation naming a payment another job already holds loses on the
+    // unique index rather than on a read that could be stale by the time the
+    // write lands.
+    try {
+      const claimed = await this.prisma.printJob.updateMany({
+        where: { id: jobId, OR: [{ razorpayPaymentId: null }, { razorpayPaymentId: gatewayPaymentId }] },
+        data: { razorpayPaymentId: gatewayPaymentId },
+      });
+
+      if (claimed.count === 0) {
+        const existing = await this.prisma.printJob.findUnique({ where: { id: jobId } });
+        if (!existing) return { ok: false, reason: `Job '${jobId}' not found.` };
+        return { ok: false, reason: 'This order is already settled by a different payment.' };
+      }
+
+      return { ok: true };
+    } catch (err: any) {
+      // P2002: the unique index refused it because another job holds this
+      // payment. That is the replay this column exists to stop.
+      if (err?.code === 'P2002') {
+        return { ok: false, reason: 'That payment has already been used for another order.' };
+      }
+      throw err;
+    }
+  }
+
+  public async markWebhookEventProcessed(
+    eventId: string, event: string, jobId?: string
+  ): Promise<boolean> {
+    try {
+      await this.prisma.webhookEvent.create({
+        data: { eventId, event, jobId: jobId ?? null },
+      });
+      return true;
+    } catch (err: any) {
+      // Already recorded, so this is a retry of a delivery we have acted on.
+      if (err?.code === 'P2002') return false;
+      throw err;
+    }
+  }
+
   public async createContactEnquiry(input: CreateContactEnquiryInput): Promise<ContactEnquiryRecord> {
     const enquiry = await this.prisma.contactEnquiry.create({
       data: {
@@ -1675,6 +1729,9 @@ export class PrismaStorage implements IStorageProvider {
       paymentState: j.paymentState as PaymentState,
       paymentProvider: j.paymentProvider ?? undefined,
       paymentRef: j.paymentRef ?? undefined,
+      razorpayOrderId: j.razorpayOrderId ?? undefined,
+      razorpayOrderAmountCents: j.razorpayOrderAmountCents ?? undefined,
+      razorpayPaymentId: j.razorpayPaymentId ?? undefined,
 
       declineReason: j.declineReason ?? undefined,
       refundId: j.refundId ?? undefined,

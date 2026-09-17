@@ -53,6 +53,38 @@ import {
 const BOOT_TIME = new Date().toISOString();
 
 /**
+ * Whether an inbound confirmation may move this job to Paid, and why not.
+ *
+ * `RefundPending -> Paid` is a legal transition and deliberately so: the state
+ * machine's own comment is "refund rejected by the provider; the payment
+ * stands". That is an internal reconciliation, not something a customer's
+ * browser or a replayed webhook gets to assert.
+ *
+ * The distinction matters because the checkout signature is an HMAC over two
+ * static ids with no nonce or timestamp, so it never expires. A retained
+ * confirmation replayed after a refund used to walk the job back to Paid, and
+ * it re-entered the shop's revenue and payout figures — no reprint and no
+ * double charge, since the print side stays terminally Cancelled, but the books
+ * were wrong.
+ *
+ * Returns a message when the confirmation must be refused, undefined when it
+ * may proceed.
+ */
+function refusePaymentConfirmation(state: PaymentState): string | undefined {
+  switch (state) {
+    case PaymentState.RefundPending:
+      return 'This order is being refunded, so a payment confirmation cannot be applied to it.';
+    case PaymentState.Refunded:
+    case PaymentState.PartiallyRefunded:
+      return 'This order has already been refunded.';
+    case PaymentState.Cancelled:
+      return 'This order was cancelled.';
+    default:
+      return undefined;
+  }
+}
+
+/**
  * Resolves the calling agent (PRD 7.2).
  *
  * Prefers a device-scoped token, which identifies one machine and can be
@@ -2245,7 +2277,6 @@ export function createApp(
       // that sends nothing must keep working, and "the way the document was
       // written" is the only safe reading of a value we cannot honour.
       const orientation = parseOrientation((req.body as CreatePrintJobDto).orientation);
-      const autoApprove = req.query.autoApprove !== 'false';
 
       if (!printerId || !fileName || !fileBase64) {
         return res.status(400).json({ error: 'printerId, fileName, and fileBase64 are required.' });
@@ -2254,6 +2285,22 @@ export function createApp(
       const printer = await storage.getPrinter(printerId);
       if (!printer) {
         return res.status(404).json({ error: 'Target printer not found.' });
+      }
+
+      // Creating a job that is *already paid* is a claim that money changed
+      // hands, and only the shop can make it — a customer handing over cash at
+      // the counter, recorded by whoever took it.
+      //
+      // This used to default to true: `req.query.autoApprove !== 'false'`. So a
+      // POST that merely omitted the parameter produced a Paid, Queued job and
+      // printed it, with no authentication and no money, and printer ids are
+      // public by design — they are on the QR poster. Opt-in now, and the
+      // opt-in has to be authenticated.
+      let autoApprove = false;
+      if (req.query.autoApprove === 'true') {
+        const merchant = await authenticateMerchant(req, res, { shopId: printer.shopId });
+        if (!merchant) return; // responds 401/403 itself
+        autoApprove = true;
       }
 
       // Customer identity, only if this shop asked for it.
@@ -2416,7 +2463,28 @@ export function createApp(
   app.post('/api/print-jobs/:id/manual-override', async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const result = await storage.confirmPaymentAndQueueJob(id, { actor: 'shop' });
+
+      // This asserts a merchant decision — "I took the cash" — and it used to
+      // assert it with no authentication at all, hardcoding actor: 'shop' for a
+      // caller it never identified. A customer always holds their own job id,
+      // so any customer could approve their own unpaid job.
+      //
+      // Authenticated first, then the job is bound to that merchant's shop, in
+      // that order: looking the job up first would tell an unauthenticated
+      // caller whether a job id exists. Mirrors the /release sibling, which had
+      // this right all along.
+      const merchant = await authenticateMerchant(req, res);
+      if (!merchant) return;
+
+      const existing = await storage.getPrintJob(id);
+      if (!existing || existing.shopId !== merchant.shopId) {
+        return res.status(404).json({ error: 'Job not found for this shop.' });
+      }
+
+      const blocked = refusePaymentConfirmation(existing.paymentState);
+      if (blocked) return res.status(409).json({ error: blocked });
+
+      const result = await storage.confirmPaymentAndQueueJob(id, { actor: `shop:${merchant.sub}` });
       if (!result.ok) {
         const status = result.code === 'NOT_FOUND' ? 404 : 409;
         return res.status(status).json({ error: result.reason });
@@ -2454,6 +2522,28 @@ export function createApp(
         return res.status(409).json({ error: 'This job has already been paid for.' });
       }
 
+      const refused = refusePaymentConfirmation(job.paymentState);
+      if (refused) return res.status(409).json({ error: refused });
+
+      // Opening checkout twice for the same unchanged job reuses the order it
+      // already has, rather than minting a second one.
+      //
+      // This endpoint needs no session — a customer has none — so without reuse
+      // a second call would overwrite the order id the job is bound to, and a
+      // customer who had already opened checkout would find their genuine
+      // payment refused as belonging to a different order. Razorpay keeps an
+      // unpaid order payable, so handing the same one back is also what a retry
+      // after a declined card should do.
+      if (job.razorpayOrderId && job.razorpayOrderAmountCents === job.totalPriceInCents) {
+        return res.json({
+          orderId: job.razorpayOrderId,
+          amountInCents: job.razorpayOrderAmountCents,
+          currency: 'INR',
+          keyId: razorpayService.publishableKeyId,
+          isSimulated: !razorpayService.isLive,
+        });
+      }
+
       // Split to the shop's own Razorpay account where Route is available, so
       // the money settles to the shop directly instead of pooling with us.
       // Falls back to the single-account flow when it is not.
@@ -2485,6 +2575,12 @@ export function createApp(
       }
 
       const orderResult = await razorpayService.createOrder(jobId, job.totalPriceInCents, transfer);
+
+      // Recorded before the id is handed to the browser, because this is the
+      // only thing a later confirmation can be checked against. Previously the
+      // gateway order id was returned and forgotten, so /verify had nothing to
+      // bind a claimed payment to and accepted any real payment for any job.
+      await storage.attachGatewayOrder(job.id, orderResult.orderId, orderResult.amountInCents);
 
       if (transfer && serviceFeeCents !== undefined) {
         await storage.recordJobSettlement(job.id, transfer.amount, serviceFeeCents);
@@ -2519,8 +2615,19 @@ export function createApp(
         return res.status(404).json({ error: 'Print job not found.' });
       }
 
-      // Replayed confirmation for an already-paid job is a success, not an error.
+      // A refunded or cancelled order is not confirmable, however valid the
+      // signature. The signature never expires, so without this a retained
+      // confirmation resurrects a refunded job into the revenue figures.
+      const blocked = refusePaymentConfirmation(job.paymentState);
+      if (blocked) return res.status(409).json({ error: blocked });
+
+      // Replayed confirmation for an already-paid job is a success, not an
+      // error — but only when it is the *same* payment. A different payment
+      // arriving for a settled job is a replay attempt, not a retry.
       if (job.paymentState === PaymentState.Paid) {
+        if (job.razorpayPaymentId && job.razorpayPaymentId !== String(razorpayPaymentId)) {
+          return res.status(409).json({ error: 'This order is already settled by a different payment.' });
+        }
         return res.json({ success: true, message: 'Payment already confirmed.', job });
       }
 
@@ -2529,6 +2636,56 @@ export function createApp(
       );
       if (!valid) {
         return res.status(400).json({ error: 'Payment signature could not be verified.' });
+      }
+
+      // The signature proves Razorpay issued this (order, payment) pair. It says
+      // nothing about *which job* the order was for — the signed message is
+      // "<order_id>|<payment_id>" and carries no job reference. So a genuine ₹1
+      // payment for one job used to confirm any other job at any shop, for any
+      // amount, as many times as it was replayed.
+      //
+      // The binding is the stored order id: we minted that order for this job
+      // and recorded it at /create-order. Signature plus order id together are
+      // what tie a payment to a job; neither alone does.
+      if (!job.razorpayOrderId) {
+        return res.status(409).json({
+          error: 'No payment order has been opened for this job. Start the payment again.',
+        });
+      }
+      if (job.razorpayOrderId !== String(razorpayOrderId)) {
+        return res.status(400).json({ error: 'That payment belongs to a different order.' });
+      }
+
+      // The order was opened for the job's total. If the two now disagree the
+      // job was re-priced after checkout opened, and settling it at the older
+      // figure would charge the wrong amount.
+      if (
+        job.razorpayOrderAmountCents !== undefined &&
+        job.razorpayOrderAmountCents !== job.totalPriceInCents
+      ) {
+        return res.status(409).json({
+          error: 'This order was re-priced after payment started. Start the payment again.',
+        });
+      }
+
+      // Burns the payment id. Enforced by a unique index, so the same payment
+      // cannot settle a second job even if two confirmations race.
+      const claim = await storage.claimGatewayPayment(job.id, String(razorpayPaymentId));
+      if (!claim.ok) {
+        return res.status(409).json({ error: claim.reason || 'That payment cannot be used for this order.' });
+      }
+
+      // Last, and only when live: ask the gateway what it thinks. This catches a
+      // payment that was authorised but never captured, which the signature
+      // alone cannot distinguish. Skipped without credentials, where the local
+      // binding above is already decisive.
+      if (razorpayService.isLive) {
+        const gateway = await razorpayService.confirmOrderPaidForJob(
+          String(razorpayOrderId), job.id, job.totalPriceInCents
+        );
+        if (!gateway.ok) {
+          return res.status(400).json({ error: gateway.error });
+        }
       }
 
       const result = await storage.confirmPaymentAndQueueJob(jobId, {
@@ -2609,14 +2766,53 @@ export function createApp(
         });
       }
 
+      // Deduplicated on the gateway's own event id, after the signature check
+      // so an unauthenticated caller cannot fill this table or suppress a real
+      // delivery by guessing an id.
+      //
+      // "Have we acted on this delivery" and "is this job already paid" are
+      // different questions, and the code below used to answer the first with
+      // the second. A refund landing between a delivery and its retry made the
+      // second answer "no", so the retry walked a refunded job back to Paid.
+      const eventId = req.headers['x-razorpay-event-id'] as string | undefined;
+      if (eventId) {
+        const first = await storage.markWebhookEventProcessed(eventId, event || 'legacy', jobId);
+        if (!first) {
+          return res.json({ success: true, message: 'This delivery has already been processed.' });
+        }
+      }
+
       const job = await storage.getPrintJob(jobId);
       if (!job) {
         return res.status(404).json({ error: 'Print job not found.' });
       }
 
+      // A refunded or cancelled order is not confirmable. Answered 200 so
+      // Razorpay stops retrying: the delivery was understood and deliberately
+      // not applied, which is not a failure it can fix by sending it again.
+      const blocked = refusePaymentConfirmation(job.paymentState);
+      if (blocked) {
+        console.warn(
+          `[Webhook] Refused '${event || 'legacy'}' for job ${jobId}: ${blocked}`
+        );
+        return res.json({ success: true, ignored: event, message: blocked });
+      }
+
       // Idempotency: If job is already paid, return existing status
       if (job.paymentState === PaymentState.Paid) {
         return res.json({ success: true, message: 'Payment already processed.', job });
+      }
+
+      // Records which gateway payment settled the job, the same way the browser
+      // path does, so the ledger is complete whichever path confirmed it. A
+      // payment already held by another job loses here rather than being
+      // silently attached to a second one.
+      if (paymentRef) {
+        const claim = await storage.claimGatewayPayment(jobId, String(paymentRef));
+        if (!claim.ok) {
+          console.warn(`[Webhook] Refused '${event || 'legacy'}' for job ${jobId}: ${claim.reason}`);
+          return res.json({ success: true, ignored: event, message: claim.reason });
+        }
       }
 
       const paymentResult = await storage.confirmPaymentAndQueueJob(jobId, {

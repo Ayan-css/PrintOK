@@ -14,7 +14,7 @@ datasource db {
 
   // Pooled connection (Supabase transaction pooler, port 6543). Correct for the
   // application: many short-lived queries, no session state.
-  url      = env("DATABASE_URL")
+  url = env("DATABASE_URL")
 
   // Direct/session connection (port 5432) used only by Prisma Migrate.
   //
@@ -30,13 +30,13 @@ generator client {
 }
 
 model Shop {
-  id                String       @id
+  id                String  @id
   name              String
   ownerEmail        String
   upiId             String?
   bankAccountNumber String?
   bankIfsc          String?
-  payoutStatus      String       @default("active")
+  payoutStatus      String  @default("active")
 
   // --- Contact & registered address ---
   /// Razorpay will not create a Route linked account without a phone number,
@@ -47,24 +47,24 @@ model Shop {
   addressCity       String?
   addressState      String?
   addressPostalCode String?
-  addressCountry    String?      @default("IN")
+  addressCountry    String? @default("IN")
   /// GST registration number, where the shop has one. Shape-checked only.
   gstin             String?
 
   /// Subscription tier: start | smart | business | enterprise (PRD 41).
   /// Canonical definitions live in PLAN_CATALOGUE in @printok/shared-types.
-  planTier          String       @default("start")
+  planTier      String @default("start")
   /// PrintOk service fee in basis points (800 = 8.00%). Integer so money
   /// arithmetic stays exact. Defaults to the tier's published rate.
-  commissionBps     Int          @default(800)
+  commissionBps Int    @default(800)
   /// active | suspended | cancelled
-  planStatus        String       @default("active")
+  planStatus    String @default("active")
 
   // --- Razorpay Route (automatic split settlement) ---
   /// Linked account id (acc_...). Present once the shop is onboarded to Route.
   razorpayAccountId     String?
   /// not_linked | created | needs_kyc | activated | suspended
-  razorpayAccountStatus String   @default("not_linked")
+  razorpayAccountStatus String    @default("not_linked")
   razorpayLinkedAt      DateTime?
   /// Last error Razorpay returned, so a stuck onboarding is explainable.
   razorpayAccountError  String?
@@ -72,19 +72,19 @@ model Shop {
   /// Soft delete. An archived shop is hidden from normal listings but keeps its
   /// jobs and payment records, which is the only safe option once real money
   /// has moved through it.
-  archivedAt        DateTime?
-  archivedBy        String?
-  archiveReason     String?
+  archivedAt    DateTime?
+  archivedBy    String?
+  archiveReason String?
 
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 
-  printers          Printer[]
-  jobs              PrintJob[]
-  pricing           ShopPricing?
-  rates             ShopRate[]
-  portalConfig      ShopPortalConfig?
-  merchants         MerchantUser[]
+  printers     Printer[]
+  jobs         PrintJob[]
+  pricing      ShopPricing?
+  rates        ShopRate[]
+  portalConfig ShopPortalConfig?
+  merchants    MerchantUser[]
 
   @@index([ownerEmail])
   @@index([archivedAt])
@@ -95,33 +95,33 @@ model Shop {
 /// the merchant "Rates Matrix" a no-op on the Postgres path. Rates are stored in
 /// paise (integer cents) to keep money arithmetic exact.
 model ShopPricing {
-  shopId                 String   @id
-  shop                   Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopId String @id
+  shop   Shop   @relation(fields: [shopId], references: [id], onDelete: Cascade)
 
-  bwSinglePerPageCents   Int      @default(200)
-  bwDuplexPerPageCents   Int      @default(150)
-  colorSinglePerPageCents Int     @default(1000)
-  colorDuplexPerPageCents Int     @default(800)
+  bwSinglePerPageCents    Int @default(200)
+  bwDuplexPerPageCents    Int @default(150)
+  colorSinglePerPageCents Int @default(1000)
+  colorDuplexPerPageCents Int @default(800)
 
   /// Legacy. Superseded by ShopRate, which stores A3 as its own rate rather
   /// than deriving it. Kept so the compatibility facade on /api/shops/:id/pricing
   /// keeps answering, and so a rate card written before the grid is readable.
-  a3Multiplier           Float    @default(2.0)
-  bulkDiscountThreshold  Int      @default(50)
-  bulkDiscountPercent    Int      @default(10)
+  a3Multiplier          Float @default(2.0)
+  bulkDiscountThreshold Int   @default(50)
+  bulkDiscountPercent   Int   @default(10)
 
   // --- Discounts (the grid's, not the legacy ones above) ---
   /// Lower per-page rates once an order's normal value crosses the threshold.
-  bulkEnabled            Boolean  @default(false)
+  bulkEnabled           Boolean @default(false)
   /// Order value in paise at which the bulk rates take over.
-  bulkThresholdCents     Int      @default(10000)
+  bulkThresholdCents    Int     @default(10000)
   /// Copy 1 at the normal rate, copies 2+ at the per-configuration rate.
-  additionalCopyEnabled  Boolean  @default(false)
-  enableSeparatorPage    Boolean  @default(false)
-  separatorMinPages      Int      @default(5)
+  additionalCopyEnabled Boolean @default(false)
+  enableSeparatorPage   Boolean @default(false)
+  separatorMinPages     Int     @default(5)
 
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @updatedAt @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 }
 
 /// What the customer portal asks for and offers, decided by the shop.
@@ -134,13 +134,13 @@ model ShopPricing {
 /// "A3 colour costs the same as A4 colour" or "Letter is cheaper than A4" —
 /// both of which are ordinary things for a shop to want.
 model ShopRate {
-  id                         String   @id
-  shopId                     String
-  shop                       Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  id     String @id
+  shopId String
+  shop   Shop   @relation(fields: [shopId], references: [id], onDelete: Cascade)
 
-  paperSize                  String
-  isColor                    Boolean
-  isDuplex                   Boolean
+  paperSize String
+  isColor   Boolean
+  isDuplex  Boolean
 
   perPageCents               Int
   /// Rate once the order clears the bulk threshold. Null means no discount for
@@ -150,59 +150,59 @@ model ShopRate {
   additionalCopyPerPageCents Int?
 
   /// Whether a customer may choose this combination at all.
-  enabled                    Boolean  @default(true)
+  enabled Boolean @default(true)
 
-  createdAt                  DateTime @default(now())
-  updatedAt                  DateTime @updatedAt @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 
   @@unique([shopId, paperSize, isColor, isDuplex])
   @@index([shopId])
 }
 
 model ShopPortalConfig {
-  shopId                String   @id
-  shop                  Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopId String @id
+  shop   Shop   @relation(fields: [shopId], references: [id], onDelete: Cascade)
 
   /// Whether the portal asks for a name, and whether it insists.
   /// Default false: a shop that has not opted in collects nothing, which is
   /// what its customers were promised.
-  collectCustomerName   Boolean  @default(false)
-  customerNameRequired  Boolean  @default(false)
-  collectCustomerPhone  Boolean  @default(false)
-  customerPhoneRequired Boolean  @default(false)
+  collectCustomerName   Boolean @default(false)
+  customerNameRequired  Boolean @default(false)
+  collectCustomerPhone  Boolean @default(false)
+  customerPhoneRequired Boolean @default(false)
 
   /// Capability keys this shop offers, in the order it wants them shown.
   /// Empty means "the defaults" rather than "nothing" — a shop that has never
   /// opened the setup screen must still be able to sell.
-  enabledServices       String[] @default([])
+  enabledServices String[] @default([])
 
   // --- Automation ---
   /// after-payment | all | off. Default preserves what PrintOk always did.
-  autoPrintMode         String   @default("after-payment")
+  autoPrintMode     String @default("after-payment")
   /// none | blank | invoice — a sheet printed between jobs on a busy counter.
-  separatorMode         String   @default("none")
+  separatorMode     String @default("none")
   /// How many jobs waiting counts as a backlog worth separating.
-  separatorMinQueue     Int      @default(3)
+  separatorMinQueue Int    @default(3)
 
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 }
 
 model Printer {
-  id            String            @id
+  id            String   @id
   shopId        String
-  shop          Shop              @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shop          Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
   printerName   String
   qrTargetUrl   String
   qrCodeDataUrl String
-  apiKey        String            @unique
-  status        String            @default("online")
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt @default(now())
+  apiKey        String   @unique
+  status        String   @default("online")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @default(now()) @updatedAt
 
-  jobs          PrintJob[]
-  telemetry     PrinterTelemetry?
-  devices       AgentDevice[]
+  jobs      PrintJob[]
+  telemetry PrinterTelemetry?
+  devices   AgentDevice[]
 
   @@index([shopId])
 }
@@ -210,65 +210,65 @@ model Printer {
 /// Agent liveness. Previously held in a process-local Map, so it was lost on every
 /// API restart and wrong behind more than one instance.
 model PrinterTelemetry {
-  printerId     String   @id
-  printer       Printer  @relation(fields: [printerId], references: [id], onDelete: Cascade)
+  printerId String  @id
+  printer   Printer @relation(fields: [printerId], references: [id], onDelete: Cascade)
 
   lastHeartbeat DateTime
   paperStatus   String   @default("OK")
   agentVersion  String?
   deviceId      String?
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 
   @@index([lastHeartbeat])
 }
 
 model PrintJob {
-  id                String   @id
+  id String @id
 
   /// Customer-facing order reference. Distinct from the internal job id so an
   /// order can later fan out to multiple jobs without changing customer links.
-  orderId           String   @unique
+  orderId String @unique
 
-  shopId            String
-  shop              Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
-  printerId         String
-  printer           Printer  @relation(fields: [printerId], references: [id], onDelete: Cascade)
+  shopId    String
+  shop      Shop    @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  printerId String
+  printer   Printer @relation(fields: [printerId], references: [id], onDelete: Cascade)
 
   /// Agent device that claimed the job. Null until assignment.
-  deviceId          String?
+  deviceId String?
 
   /// Counter shown to the customer at the counter, e.g. "001".
-  tokenNumber       String?
+  tokenNumber String?
 
   // ---- Customer identity (optional, opt-in per shop) ----
   /// Only set when the shop has asked for it. The published privacy policy
   /// promises anonymity by default, and that holds for any shop that leaves
   /// collection off — see ShopPortalConfig.
-  customerName      String?
-  customerPhone     String?
+  customerName  String?
+  customerPhone String?
 
   // ---- Document reference ----
-  fileName          String
-  s3Key             String?
-  fileUrl           String
-  fileChecksum      String
-  fileSizeBytes     Int      @default(0)
+  fileName      String
+  s3Key         String?
+  fileUrl       String
+  fileChecksum  String
+  fileSizeBytes Int     @default(0)
 
   // ---- Immutable print configuration snapshot ----
-  pageCount         Int
-  copies            Int
-  isColor           Boolean
-  isDuplex          Boolean  @default(false)
-  paperSize         String   @default("A4")
-  pageRange         String?
+  pageCount   Int
+  copies      Int
+  isColor     Boolean
+  isDuplex    Boolean @default(false)
+  paperSize   String  @default("A4")
+  pageRange   String?
   /// auto | portrait | landscape. "auto" prints the document the way up it was
   /// written, which is what every job did before the customer could choose, so
   /// it is the default and every existing row reads back unchanged.
-  orientation       String   @default("auto")
+  orientation String  @default("auto")
   /// Frozen copy of the above as submitted, for audit and dispute resolution.
-  printConfig       Json?
+  printConfig Json?
 
   // ---- Immutable price snapshot ----
   totalPriceInCents Int
@@ -277,25 +277,40 @@ model PrintJob {
   priceSnapshot     Json?
 
   // ---- Payment ----
-  paymentState      String
-  paymentProvider   String?
-  paymentRef        String?
+  paymentState    String
+  paymentProvider String?
+  paymentRef      String?
+
+  /// The gateway's own order id, distinct from `orderId` above — that one is
+  /// PrintOk's customer-facing reference. Persisted so a browser-reported
+  /// payment can be bound to the job the order was actually opened for.
+  /// Without it the confirm endpoint had nothing to check a claimed payment
+  /// against, and one real payment could mark any job at any shop as paid.
+  razorpayOrderId          String?
+  /// What the gateway order was opened for. Compared against the job total at
+  /// confirmation, so a job whose price moved after the order was created
+  /// cannot be settled at the older figure.
+  razorpayOrderAmountCents Int?
+  /// The gateway payment that settled this job. Unique across the platform, so
+  /// the same payment cannot be replayed onto a second job — the database
+  /// refuses it rather than the check having to be remembered.
+  razorpayPaymentId        String? @unique
 
   // ---- Print lifecycle ----
-  printState        String
+  printState String
 
   // ---- Idempotency (PRD 11) ----
   /// Client-supplied key deduplicating repeated submissions of the same order.
-  idempotencyKey    String?  @unique
+  idempotencyKey String? @unique
 
   // ---- Retry metadata ----
-  attemptCount      Int      @default(0)
-  maxAttempts       Int      @default(3)
-  lastAttemptAt     DateTime?
+  attemptCount  Int       @default(0)
+  maxAttempts   Int       @default(3)
+  lastAttemptAt DateTime?
 
   // ---- Failure classification (PRD 12) ----
-  errorMessage      String?
-  failureCategory   String?
+  errorMessage    String?
+  failureCategory String?
 
   // ---- Lifecycle timestamps ----
   queuedAt          DateTime?
@@ -316,17 +331,17 @@ model PrintJob {
 
   // --- Route settlement ---
   /// Razorpay transfer id (trf_...) for the shop's share of this payment.
-  transferId        String?
+  transferId          String?
   /// What the shop is owed from this order, after the PrintOk service fee.
   transferAmountCents Int?
   /// What PrintOk retained. Stored per job so payouts reconcile without
   /// recomputing against a commission rate that may have changed since.
-  serviceFeeCents   Int?
+  serviceFeeCents     Int?
 
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  events            JobEvent[]
+  events JobEvent[]
 
   @@index([printerId, printState])
   @@index([shopId, createdAt])
@@ -339,19 +354,19 @@ model PrintJob {
 /// Append-only lifecycle trail (PRD 9 and 22). One row per meaningful transition
 /// or side effect; never updated or deleted alongside normal job mutation.
 model JobEvent {
-  id         String   @id @default(uuid())
-  jobId      String
-  job        PrintJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  id    String   @id @default(uuid())
+  jobId String
+  job   PrintJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   /// e.g. JOB_CREATED, PAYMENT_CONFIRMED, ASSIGNED, PRINT_FAILED.
-  type       String
-  fromState  String?
-  toState    String?
+  type      String
+  fromState String?
+  toState   String?
   /// Who caused it: customer, agent:<deviceId>, shop:<userId>, system, webhook.
-  actor      String?
-  detail     Json?
+  actor     String?
+  detail    Json?
 
-  createdAt  DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([jobId, createdAt])
   @@index([type, createdAt])
@@ -383,26 +398,26 @@ model IdempotencyRecord {
 /// install. Only the SHA-256 of the token is stored — the plaintext is shown
 /// once at pairing and never again.
 model AgentDevice {
-  id             String    @id
-  printerId      String
-  printer        Printer   @relation(fields: [printerId], references: [id], onDelete: Cascade)
+  id        String  @id
+  printerId String
+  printer   Printer @relation(fields: [printerId], references: [id], onDelete: Cascade)
 
-  deviceName     String?
-  osVersion      String?
-  agentVersion   String?
+  deviceName   String?
+  osVersion    String?
+  agentVersion String?
 
   tokenHash      String    @unique
   tokenIssuedAt  DateTime  @default(now())
   tokenExpiresAt DateTime?
 
   /// active | revoked
-  status         String    @default("active")
-  revokedAt      DateTime?
-  revokedReason  String?
+  status        String    @default("active")
+  revokedAt     DateTime?
+  revokedReason String?
 
-  lastSeenAt     DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt @default(now())
+  lastSeenAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @default(now()) @updatedAt
 
   @@index([printerId, status])
   @@index([lastSeenAt])
@@ -412,12 +427,12 @@ model AgentDevice {
 /// Bound to one printer and expired aggressively so a leaked code is near
 /// worthless (PRD 7.1).
 model AgentPairingCode {
-  code      String   @id
-  printerId String
-  expiresAt DateTime
-  usedAt    DateTime?
+  code           String    @id
+  printerId      String
+  expiresAt      DateTime
+  usedAt         DateTime?
   usedByDeviceId String?
-  createdAt DateTime @default(now())
+  createdAt      DateTime  @default(now())
 
   @@index([printerId, expiresAt])
 }
@@ -439,29 +454,27 @@ model AgentSecurityEvent {
   @@index([type, createdAt])
 }
 
-
 /// Platform operator account (PRD 21).
 ///
 /// Separate from shops: these are PrintOk staff who can see across the whole
 /// network. Passwords are stored as scrypt hashes with a per-user salt, never
 /// reversibly.
 model AdminUser {
-  id           String    @id
-  email        String    @unique
+  id           String  @id
+  email        String  @unique
   passwordHash String
   name         String?
   /// owner | admin | support - support is read-only (PRD 24).
-  role         String    @default("admin")
+  role         String  @default("admin")
   /// active | disabled
-  status       String    @default("active")
+  status       String  @default("active")
 
-  lastLoginAt  DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt @default(now())
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @default(now()) @updatedAt
 
   @@index([email])
 }
-
 
 /// Record of destructive or commercially significant operator actions (PRD 21, 22).
 ///
@@ -490,17 +503,17 @@ model AdminAuditLog {
 /// configured, and so an enquiry cannot be silently lost. Notification can be
 /// layered on later without changing how they are captured.
 model ContactEnquiry {
-  id        String   @id
-  name      String
-  email     String
-  phone     String?
-  shopName  String?
-  message   String
+  id       String  @id
+  name     String
+  email    String
+  phone    String?
+  shopName String?
+  message  String
 
   /// new | read | replied | archived
-  status    String   @default("new")
+  status String @default("new")
   /// Where it came from, e.g. "landing". Useful once there is more than one form.
-  source    String   @default("landing")
+  source String @default("landing")
 
   /// Coarse origin for abuse investigation. Hashed, never the raw address.
   ipHash    String?
@@ -511,12 +524,11 @@ model ContactEnquiry {
   notes     String?
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 
   @@index([status, createdAt])
   @@index([email])
 }
-
 
 /// A shop owner or staff member who signs in to the merchant dashboard.
 ///
@@ -525,23 +537,46 @@ model ContactEnquiry {
 /// endpoint was unauthenticated — so anyone who knew a shop id could read that
 /// shop's revenue and payout details, change its prices, or trigger a payout.
 model MerchantUser {
-  id           String    @id
-  shopId       String
-  shop         Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  id     String @id
+  shopId String
+  shop   Shop   @relation(fields: [shopId], references: [id], onDelete: Cascade)
 
-  email        String    @unique
+  email        String  @unique
   passwordHash String
   name         String?
   phone        String?
   /// owner | staff — staff cannot change pricing or withdraw (PRD 20).
-  role         String    @default("owner")
+  role         String  @default("owner")
   /// active | disabled
-  status       String    @default("active")
+  status       String  @default("active")
 
-  lastLoginAt  DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt @default(now())
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @default(now()) @updatedAt
 
   @@index([shopId])
   @@index([email])
+}
+
+/// A webhook delivery we have already acted on, keyed by the gateway's own
+/// event id.
+///
+/// Razorpay retries a delivery until it gets a 2xx, and it reuses the event id
+/// when it does. Idempotency used to be inferred from the job's payment state
+/// alone, which conflated two different questions: "have we seen this delivery"
+/// and "is this job already paid". A refund landing between the original
+/// delivery and its retry answered the second question with "no", so the retry
+/// walked a refunded job back to Paid and it re-entered the revenue figures.
+///
+/// Recorded only after the signature is verified, so an unauthenticated caller
+/// cannot fill this table or suppress a real delivery by guessing its id.
+model WebhookEvent {
+  /// The gateway's x-razorpay-event-id.
+  eventId   String   @id
+  /// payment.captured | order.paid | … Kept for auditing which deliveries ran.
+  event     String
+  jobId     String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
 }

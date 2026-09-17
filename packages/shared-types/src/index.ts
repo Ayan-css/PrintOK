@@ -688,6 +688,18 @@ export interface PrintJob {
   paymentState: PaymentState;
   paymentProvider?: string;
   paymentRef?: string;
+  /**
+   * The gateway's own order id, and what it was opened for.
+   *
+   * A browser-reported payment is bound to the job through these: the checkout
+   * signature proves Razorpay issued a given (order, payment) pair, and the
+   * stored order id proves that order belongs to this job. Neither alone is
+   * enough, which is why both are kept.
+   */
+  razorpayOrderId?: string;
+  razorpayOrderAmountCents?: number;
+  /** The gateway payment that settled this job. Unique across the platform. */
+  razorpayPaymentId?: string;
 
   // Print lifecycle
   printState: PrintState;
