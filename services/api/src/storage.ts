@@ -348,6 +348,15 @@ export interface IStorageProvider {
   recordJobSettlement(jobId: string, transferAmountCents: number, serviceFeeCents: number): Promise<void>;
 
   /**
+   * A short-lived link to a job's document, for a caller already authorised to
+   * have it.
+   *
+   * Minted here rather than stored on the job, so a link cannot outlive the
+   * job's need for it. Returns null once the document has been purged.
+   */
+  createJobDownloadUrl(jobId: string): Promise<string | null>;
+
+  /**
    * Records the gateway order minted for a job.
    *
    * This is what a later confirmation is checked against. Without it the
@@ -642,6 +651,7 @@ export class MemoryStorage implements IStorageProvider {
       tokenNumber,
       fileName,
       fileUrl: storageResult.fileUrl,
+      s3Key: storageResult.s3Key,
       fileChecksum,
       fileSizeBytes: options.fileSizeBytes ?? fileBuffer.length,
       pageCount,
@@ -1150,6 +1160,12 @@ export class MemoryStorage implements IStorageProvider {
     this.printJobs.set(jobId, job);
   }
 
+  public async createJobDownloadUrl(jobId: string): Promise<string | null> {
+    const job = this.printJobs.get(jobId);
+    if (!job || !job.s3Key || job.documentDeletedAt) return null;
+    return this.s3Service.createDownloadUrl(job.s3Key);
+  }
+
   public async attachGatewayOrder(
     jobId: string, gatewayOrderId: string, amountCents: number
   ): Promise<void> {
@@ -1330,9 +1346,15 @@ export class MemoryStorage implements IStorageProvider {
 
     // Purge the stored document as soon as the state no longer needs it (PRD 15).
     if (isDocumentPurgeable(printState) && !job.documentDeletedAt) {
-      const s3Key = `temp_docs/${job.id}_${job.fileName}`;
-      await this.s3Service.deleteDocument(s3Key);
+      // The job's own recorded key, not a reconstruction of it. This used to
+      // rebuild `temp_docs/${job.id}_${job.fileName}` by hand, which stopped
+      // matching the moment the stored name stopped embedding the customer's
+      // filename — and a key that does not match deletes nothing.
+      if (job.s3Key) await this.s3Service.deleteDocument(job.s3Key);
       job.documentDeletedAt = nowIso;
+      // Cleared as well as recorded. A row that says the document is purged
+      // while still carrying a usable link to it is not purged.
+      job.fileUrl = '';
       this.printJobs.set(id, job);
       this.appendEvent(id, 'DOCUMENT_PURGED', printState, printState, { actor: 'system' });
     }

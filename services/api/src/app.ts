@@ -21,7 +21,7 @@ import {
 import {
   PLAN_CATALOGUE, PLAN_TIERS, getPlan,
   PAYMENT_GATEWAY_FEE_BPS, PAYMENT_GATEWAY_LABEL, calculateShopNetCents,
-  Printer, ShopPortalConfig, CUSTOMER_NAME_MAX, CUSTOMER_PHONE_MAX,
+  Printer, PrintJob, ShopPortalConfig, CUSTOMER_NAME_MAX, CUSTOMER_PHONE_MAX,
   ShopRate, ShopRateCard,
   SERVICE_CATALOGUE, SERVICE_GROUPS, defaultEnabledServices, resolveEnabledServices,
   derivePortalOptions, checkJobAgainstPortal,
@@ -70,6 +70,58 @@ const BOOT_TIME = new Date().toISOString();
  * Returns a message when the confirmation must be refused, undefined when it
  * may proceed.
  */
+/**
+ * What a customer may see of their own job.
+ *
+ * The job row used to be returned whole to anyone holding a job id, on an
+ * endpoint with no authentication — so the id doubled as an unrevocable bearer
+ * credential for `customerName`, `customerPhone`, `fileChecksum` and `fileUrl`,
+ * which was either a live presigned download or, on the local-disk fallback,
+ * the entire document inlined as base64. It survives in browser history,
+ * referrer headers and any forwarded status link.
+ *
+ * It also carried `priceSnapshot`, and that embeds `rateCardSnapshot` — the
+ * shop's whole rate grid, which is the shop's business and not the customer's.
+ *
+ * So this is an allowlist, not a redaction: a field reaches a customer only by
+ * being named here. What remains is what the status screen actually renders,
+ * plus the configuration the customer chose themselves.
+ */
+function customerJobView(job: PrintJob) {
+  return {
+    id: job.id,
+    orderId: job.orderId,
+    printerId: job.printerId,
+    tokenNumber: job.tokenNumber,
+
+    printState: job.printState,
+    paymentState: job.paymentState,
+
+    fileName: job.fileName,
+    pageCount: job.pageCount,
+    copies: job.copies,
+    isColor: job.isColor,
+    isDuplex: job.isDuplex,
+    paperSize: job.paperSize,
+    orientation: job.orientation,
+    pageRange: job.pageRange,
+    printConfig: job.printConfig,
+
+    totalPriceInCents: job.totalPriceInCents,
+
+    errorMessage: job.errorMessage,
+    declineReason: job.declineReason,
+    refundAmountCents: job.refundAmountCents,
+    refundedAt: job.refundedAt,
+
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    queuedAt: job.queuedAt,
+    printedAt: job.printedAt,
+    completedAt: job.completedAt,
+  };
+}
+
 function refusePaymentConfirmation(state: PaymentState): string | undefined {
   switch (state) {
     case PaymentState.RefundPending:
@@ -2392,7 +2444,9 @@ export function createApp(
         wsServer.notifyJobQueued(job);
       }
 
-      const response: CreatePrintJobResponse = { job };
+      // The same projection as the status endpoint. The customer is the one
+      // asking, and there is nothing here they need that it withholds.
+      const response = { job: customerJobView(job) } as unknown as CreatePrintJobResponse;
       return res.status(201).json(response);
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -2846,7 +2900,10 @@ export function createApp(
       if (!job) {
         return res.status(404).json({ error: 'Print job not found.' });
       }
-      return res.json({ job });
+      // Projected, not returned whole: this endpoint has no authentication, so
+      // the job id must not be authority over the customer's PII or their
+      // document. See customerJobView.
+      return res.json({ job: customerJobView(job) });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -2881,9 +2938,26 @@ export function createApp(
       const claimedJobs = [];
       for (const job of pendingJobs) {
         const claim = await storage.assignJobToDevice(job.id, deviceId);
-        if (claim.ok) {
-          claimedJobs.push(claim.job);
+        if (!claim.ok) continue;
+
+        // The document link is minted here, for this authenticated agent, and
+        // expires in minutes. It used to be generated once at upload and stored
+        // on the job row, which made the row itself a standing bearer token for
+        // a customer's file for an hour.
+        const fileUrl = await storage.createJobDownloadUrl(claim.job.id);
+        if (!fileUrl) {
+          // Nothing to print: the document is gone. Said out loud rather than
+          // handing the agent a link to nothing and letting it fail as a
+          // checksum mismatch.
+          await storage.updateJobPrintState(
+            claim.job.id, PrintState.RequiresShopAction,
+            'The stored document is no longer available, so this job cannot be printed.',
+            { actor: 'system' }
+          );
+          continue;
         }
+
+        claimedJobs.push({ ...claim.job, fileUrl });
       }
 
       const response: AgentPollResponse = { jobs: claimedJobs, separator };

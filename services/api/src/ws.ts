@@ -82,15 +82,35 @@ export class AgentWebSocketServer {
   /**
    * Broadcast real-time job push notification to connected agent socket
    */
-  public notifyJobQueued(job: PrintJob): boolean {
+  /**
+   * Broadcast a queued job to the shop's connected agent.
+   *
+   * Async because the document link is minted per push now rather than read off
+   * the job row. Callers deliberately do not await it — a push is a nicety on
+   * top of polling — so nothing is allowed to escape as a rejection.
+   */
+  public async notifyJobQueued(job: PrintJob): Promise<boolean> {
+    try {
+      return await this.pushJobQueued(job);
+    } catch (err) {
+      console.warn(`[WS] Could not push job ${job.id} to its agent:`, err);
+      return false;
+    }
+  }
+
+  private async pushJobQueued(job: PrintJob): Promise<boolean> {
     const ws = this.printerSockets.get(job.printerId);
     if (ws && ws.readyState === WebSocket.OPEN) {
+      // Minted for this push and good for minutes, not stored on the job for an
+      // hour where anyone holding the job id could use it.
+      const fileUrl = (await this.storage.createJobDownloadUrl(job.id)) || '';
+
       const eventPayload: JobQueuedEvent = {
         jobId: job.id,
         printerId: job.printerId,
         tokenNumber: job.tokenNumber,
         fileName: job.fileName,
-        fileUrl: job.fileUrl,
+        fileUrl,
         fileChecksum: job.fileChecksum,
         pageCount: job.pageCount,
         copies: job.copies,

@@ -193,7 +193,13 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const checkRes = await fetch(`${baseUrl}/api/print-jobs/${createdJobId}`);
     const checkData = (await checkRes.json()) as any;
     assert.strictEqual(checkData.job.printState, PrintState.Assigned);
-    assert.ok(checkData.job.deviceId, 'claimed job must record the owning device');
+
+    // The owning device is shop-internal and no longer travels on the customer's
+    // status endpoint, so it is asserted where it actually lives.
+    assert.strictEqual(checkData.job.deviceId, undefined,
+      'the public status view must not carry the shop\'s device id');
+    const claimed = await storage.getPrintJob(createdJobId);
+    assert.ok(claimed?.deviceId, 'claimed job must record the owning device');
 
     // A second poll must not hand the same job out again.
     const secondPoll = await fetch(`${baseUrl}/api/agent/jobs/pending`, {
@@ -1511,13 +1517,32 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const ok = await submit({ customerName: '  Asha   Menon ', customerPhone: '+91 98200 12345' });
     assert.strictEqual(ok.status, 201);
     const { job } = (await ok.json()) as any;
-    assert.strictEqual(job.customerName, 'Asha Menon');
-    assert.strictEqual(job.customerPhone, '+91 98200 12345');
+
+    // Identity is asserted against what was stored, not against the response.
+    // Job responses no longer echo PII at all: the status endpoint is
+    // unauthenticated, so anything it returns is readable by whoever comes by
+    // the job id.
+    assert.strictEqual(job.customerName, undefined, 'a job response carries no PII');
+    assert.strictEqual(job.customerPhone, undefined);
+
+    const stored = await storage.getPrintJob(job.id);
+    assert.strictEqual(stored?.customerName, 'Asha Menon');
+    assert.strictEqual(stored?.customerPhone, '+91 98200 12345');
+
+    // And the shop, which is the party that needs it, still sees it on its own
+    // authenticated queue.
+    const queue = await (await fetch(`${baseUrl}/api/shops/${createdShopId}/jobs`, {
+      headers: merchantAuth,
+    })).json() as any;
+    const mine = queue.jobs.find((j: any) => j.id === job.id);
+    assert.strictEqual(mine.customerName, 'Asha Menon', 'the shop can still call the customer');
+    assert.strictEqual(mine.customerPhone, '+91 98200 12345');
 
     // Phone was optional, so an order without one still goes through.
     const nameOnly = await submit({ customerName: 'Ravi' });
     assert.strictEqual(nameOnly.status, 201);
-    assert.strictEqual(((await nameOnly.json()) as any).job.customerPhone, undefined);
+    const ravi = await storage.getPrintJob(((await nameOnly.json()) as any).job.id);
+    assert.strictEqual(ravi?.customerPhone, undefined);
   });
 
   await t.test('53. Portal config cannot be set to an unsatisfiable state', async () => {
@@ -3350,6 +3375,101 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const second = await deliver();
     assert.strictEqual(second.status, 200);
     assert.match(((await second.json()) as any).message, /already been processed/i);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Document storage
+  // ---------------------------------------------------------------------------
+
+  await t.test('82. A customer filename cannot decide where a document is written', async () => {
+    // The stored name was `temp_docs/${jobId}_${fileName}` with the customer's
+    // filename interpolated raw, so "../../../x.pdf" walked out of the storage
+    // directory — and pointed back inside, overwrote another pending job's
+    // document, so the shop printed the attacker's content under someone
+    // else's token. The extension allowlist did not help: it reads that path
+    // as a perfectly good .pdf.
+    const shop = await shopWithAuth('Traversal Co', 'traversal@example.com', 'TraversalPass1');
+
+    const submit = (fileName: string) => fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: shop.printerId, fileName,
+        fileBase64: makePdf(1).toString('base64'),
+        copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+      }),
+    });
+
+    const hostile = '../../../../../../tmp/printok_pwned.pdf';
+    const res = await submit(hostile);
+    assert.strictEqual(res.status, 201, 'a hostile name is sanitised, not a reason to refuse the order');
+
+    const jobId = ((await res.json()) as any).job.id;
+    const stored = await storage.getPrintJob(jobId);
+
+    // The key is the job id and an extension, and nothing else.
+    assert.strictEqual(stored?.s3Key, `temp_docs/${jobId}.pdf`);
+    assert.ok(!stored!.s3Key!.includes('..'), 'no traversal survives into the key');
+
+    // The customer's own filename is still kept, for the queue to show.
+    assert.strictEqual(stored?.fileName, hostile);
+
+    // And nothing was written where the name was trying to point.
+    assert.ok(!fs.existsSync('/tmp/printok_pwned.pdf'), 'nothing escaped the storage directory');
+
+    // Two jobs cannot collide on one object, which is what let one customer's
+    // document be overwritten by another's.
+    const second = await submit('../../../../../../tmp/printok_pwned.pdf');
+    const secondId = ((await second.json()) as any).job.id;
+    const secondStored = await storage.getPrintJob(secondId);
+    assert.notStrictEqual(secondStored?.s3Key, stored?.s3Key, 'each job gets its own object');
+  });
+
+  await t.test('83. A job id is not authority over PII or the document', async () => {
+    // GET /api/print-jobs/:id is unauthenticated, so the id was effectively an
+    // unrevocable bearer credential for the customer's name, phone and file —
+    // and it survives in browser history, referrer headers and any forwarded
+    // status link. It also carried priceSnapshot, which embeds the shop's
+    // entire rate grid.
+    const shop = await shopWithAuth('Projection Co', 'projection@example.com', 'ProjectionPass1');
+
+    await fetch(`${baseUrl}/api/shops/${shop.shopId}/portal-config`, {
+      method: 'POST', headers: shop.auth,
+      body: JSON.stringify({ collectCustomerName: true, collectCustomerPhone: true }),
+    });
+
+    const created = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: shop.printerId, fileName: 'private.pdf',
+        fileBase64: makePdf(2).toString('base64'),
+        copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+        customerName: 'Meera Iyer', customerPhone: '+91 98111 22333',
+      }),
+    });
+    const jobId = ((await created.json()) as any).job.id;
+
+    const raw = await (await fetch(`${baseUrl}/api/print-jobs/${jobId}`)).text();
+    for (const leak of [
+      'Meera', '98111', 'fileUrl', 'fileChecksum', 's3Key',
+      'priceSnapshot', 'rateCardSnapshot', 'idempotencyKey', 'razorpay',
+    ]) {
+      assert.ok(!raw.includes(leak), `the public status view must not carry ${leak}`);
+    }
+
+    // What the status screen actually needs is still there.
+    const { job } = JSON.parse(raw);
+    assert.strictEqual(job.id, jobId);
+    assert.ok(job.tokenNumber);
+    assert.strictEqual(job.fileName, 'private.pdf');
+    assert.strictEqual(job.printState, PrintState.AwaitingPayment);
+    assert.strictEqual(job.paymentState, PaymentState.Pending);
+    assert.strictEqual(job.pageCount, 2);
+    assert.ok(job.totalPriceInCents > 0);
+
+    // The stored document is reachable only by minting a fresh link, which is
+    // what the authenticated agent path does.
+    const link = await storage.createJobDownloadUrl(jobId);
+    assert.ok(link, 'the agent can still obtain the document');
   });
 
   server.close();

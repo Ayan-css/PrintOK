@@ -665,7 +665,19 @@ export interface PrintJob {
 
   // Document reference
   fileName: string;
+  /**
+   * A usable link to the document, minted on demand for a caller already
+   * authorised to have it — empty on a stored job.
+   *
+   * It used to be generated once at upload and persisted: a one-hour presigned
+   * URL, or on the local-disk fallback the entire document inlined as a base64
+   * data URI. Either way the job row carried a standing bearer token for a
+   * customer's file, and the row reported the document purged while still
+   * serving it.
+   */
   fileUrl: string;
+  /** Where the document is stored. Server-side only; never sent to a customer. */
+  s3Key?: string;
   fileChecksum: string;
   fileSizeBytes?: number;
 

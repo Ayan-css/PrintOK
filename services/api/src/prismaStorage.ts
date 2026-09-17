@@ -310,7 +310,7 @@ export class PrismaStorage implements IStorageProvider {
         ...(printState === PrintState.Completed
           ? { completedAt: now, printedAt: existing.printedAt ?? now }
           : {}),
-        ...(purge ? { documentDeletedAt: now } : {}),
+        ...(purge ? { documentDeletedAt: now, fileUrl: '' } : {}),
         events: {
           create: {
             type: 'PRINT_STATE_CHANGED',
@@ -419,7 +419,7 @@ export class PrismaStorage implements IStorageProvider {
         printState: PrintState.Cancelled,
         declineReason: reason,
         ...(canMovePayment ? { paymentState: nextPayment } : {}),
-        ...(purge ? { documentDeletedAt: new Date() } : {}),
+        ...(purge ? { documentDeletedAt: new Date(), fileUrl: '' } : {}),
         events: {
           create: {
             type: 'JOB_DECLINED',
@@ -1213,6 +1213,12 @@ export class PrismaStorage implements IStorageProvider {
     });
   }
 
+  public async createJobDownloadUrl(jobId: string): Promise<string | null> {
+    const job = await this.prisma.printJob.findUnique({ where: { id: jobId } });
+    if (!job || !job.s3Key || job.documentDeletedAt) return null;
+    return this.s3Service.createDownloadUrl(job.s3Key);
+  }
+
   public async attachGatewayOrder(
     jobId: string, gatewayOrderId: string, amountCents: number
   ): Promise<void> {
@@ -1711,6 +1717,7 @@ export class PrismaStorage implements IStorageProvider {
 
       fileName: j.fileName,
       fileUrl: j.fileUrl,
+      s3Key: j.s3Key ?? undefined,
       fileChecksum: j.fileChecksum,
       fileSizeBytes: j.fileSizeBytes,
 

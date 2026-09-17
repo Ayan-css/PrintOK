@@ -205,6 +205,15 @@ test('PrismaStorage (PostgreSQL) integration', async (t) => {
 
     const reread = await storage.getPrintJob(job.id);
     assert.ok(reread!.documentDeletedAt, 'document retention must be closed out on completion');
+
+    // A row that records the document as purged while still carrying a usable
+    // link to it is not purged. On the local-disk fallback that link was the
+    // entire document, inlined as a base64 data URI.
+    assert.strictEqual(reread!.fileUrl, '', 'the usable document reference must be cleared');
+
+    // And nothing can mint a new link for it either.
+    const link = await storage.createJobDownloadUrl(job.id);
+    assert.strictEqual(link, null, 'a purged document cannot be handed out again');
   });
 
   await t.test('payment confirmation queues the job without asserting it printed', async () => {
