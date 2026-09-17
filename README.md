@@ -4,13 +4,13 @@ Hardware-free printing for stationery shops. A customer scans the shop's QR code
 uploads a document on their phone, pays, and the shop's existing Windows PC prints
 it automatically through a background agent. No new hardware, no counter queue.
 
-**Status:** core pipeline built and deployed; not yet launched. See
-[`docs/prd-status.md`](docs/prd-status.md) for a section-by-section assessment
-against the PRD.
+**Status:** core pipeline built and deployed; not yet launched.
 
-> **Nothing has physically printed through this system yet.** The agent is
-> code-complete and CI-built, but has never run on a real Windows PC against a
-> real printer. Treat everything in the agent path as unverified.
+> **A document has now physically printed through this system**, on real
+> hardware. That retires the project's largest unknown. The agent path is no
+> longer unverified — but it is verified on *two* printers, not a fleet: duplex,
+> paper trays and finishing are still untested anywhere, and there is no printer
+> compatibility matrix.
 
 ---
 
@@ -390,5 +390,5 @@ The API refuses to start, or refuses specific operations, when these are missing
 - `graphify query "<question>"` before exploring the codebase; run
   `graphify update .` after changing it
 - See [`AGENTS.md`](AGENTS.md) for AI agent operating rules
-- `plan.md`, `bugs.md` and `newFeatures.md` are local working notes and are
-  gitignored
+- `STATUS.md` is the single local, gitignored working document: delivery status,
+  security findings, competitive gap analysis and the open launch blockers

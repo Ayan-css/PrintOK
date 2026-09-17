@@ -48,6 +48,22 @@ downloads/
 graphify-out/
 .claude/
 
+# Installed agent skills and their lockfile (security-audit and friends).
+# Vendored tooling, not this project's source: `npx skills add` re-fetches it,
+# and skills-lock.json pins the hash it was fetched at.
+.agents/
+skills-lock.json
+
+# Security audit output, for the case where a run is pointed at the repo rather
+# than its default home outside it (~/security-audit-skill/<repo>/run-N). The
+# reports name unfixed findings with file:line, so they never get committed.
+# Directories only, deliberately: the skill's own artifact names are generic
+# (findings.json, run-metadata.json) and ignoring those by bare name would
+# silently swallow an unrelated file later. Point a run somewhere new and add
+# that directory here.
+security-audit-skill/
+security-audit-out/
+
 
 # OS & Editor Files
 .DS_Store
@@ -66,10 +82,9 @@ coverage/
 playwright-report/
 test-results/
 
-# Local working notes (not part of the codebase)
-plan.md
-bugs.md
-newFeatures.md
+# Consolidated status, security findings and competitive gap analysis.
+# Kept out of git so it can name findings, hosts and numbers freely.
+STATUS.md
 
 # Local database exports (may contain customer data)
 backups/
@@ -78,10 +93,6 @@ backups/
 # Kept out of git so it can name services and steps freely.
 taskFyou.prd
 
-# Competitor research — local analysis only, never published.
-printCatalyst/
-docs/competitor-print-catalyst.md
-docs/plan-match-and-exceed-print-catalyst.md
 
 # Agent build output staged for the installer.
 agent/dist/
