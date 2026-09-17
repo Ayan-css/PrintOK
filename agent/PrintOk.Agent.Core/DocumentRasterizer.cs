@@ -116,12 +116,66 @@ public sealed class DocumentRasterizer : IDisposable
     }
 
     /// <summary>A page as PNG bytes, which is how it crosses into System.Drawing.</summary>
-    public byte[] RenderPagePng(int index)
+    /// <param name="index">Zero-based page index.</param>
+    /// <param name="grayscale">
+    /// Whether to discard colour here, in the bitmap, rather than asking the
+    /// printer to. See <see cref="ToGrayscale"/> for why that is not the same
+    /// thing.
+    /// </param>
+    public byte[] RenderPagePng(int index, bool grayscale = false)
     {
-        using SKBitmap bitmap = RenderPage(index);
-        using SKImage image = SKImage.FromBitmap(bitmap);
+        using SKBitmap rendered = RenderPage(index);
+        // Held separately so the colour path does not dispose the same bitmap
+        // twice through two `using` declarations.
+        using SKBitmap? grey = grayscale ? ToGrayscale(rendered) : null;
+
+        using SKImage image = SKImage.FromBitmap(grey ?? rendered);
         using SKData data = image.Encode(SKEncodedImageFormat.Png, 100);
         return data.ToArray();
+    }
+
+    /// <summary>
+    /// Drains the colour out of a page before it ever reaches the driver.
+    ///
+    /// This is the difference between a customer getting the black and white
+    /// print they paid for and getting a colour one. Asking Windows for mono
+    /// sets <c>dmColor</c> in the DEVMODE, and a driver is free to ignore it —
+    /// plenty do, because colour mode is a private driver setting on many PCL
+    /// and PostScript models, and on some it only applies when the job is
+    /// submitted through that vendor's own UI. The same job then prints mono on
+    /// one printer in a shop and full colour on the next one along, which is
+    /// exactly what it did.
+    ///
+    /// A grey bitmap has no colour left to ignore. The DEVMODE request is still
+    /// made as well, because a printer that does honour it also saves its
+    /// colour toner.
+    ///
+    /// Weighted by luminance (Rec. 601) rather than averaged, so a red heading
+    /// and a blue one do not come out as the same flat grey.
+    /// </summary>
+    private static SKBitmap ToGrayscale(SKBitmap source)
+    {
+        var gray = new SKBitmap(source.Width, source.Height, source.ColorType, SKAlphaType.Premul);
+
+        using var canvas = new SKCanvas(gray);
+        using var paint = new SKPaint
+        {
+            ColorFilter = SKColorFilter.CreateColorMatrix(new[]
+            {
+                0.299f, 0.587f, 0.114f, 0f, 0f,
+                0.299f, 0.587f, 0.114f, 0f, 0f,
+                0.299f, 0.587f, 0.114f, 0f, 0f,
+                0f,     0f,     0f,     1f, 0f,
+            }),
+        };
+
+        // White first: a PDF page is transparent where nothing was drawn, and
+        // premultiplied transparent pixels go through the matrix as black.
+        canvas.Clear(SKColors.White);
+        canvas.DrawBitmap(source, 0, 0, paint);
+        canvas.Flush();
+
+        return gray;
     }
 
     public void Dispose() { /* nothing unmanaged is held between pages */ }

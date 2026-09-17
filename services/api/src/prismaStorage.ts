@@ -5,6 +5,7 @@ import {
   MerchantPricingConfig, MerchantStats, JobEvent, PriceSnapshot, PrintConfigSnapshot,
   FailureCategory,
   ShopContactDetails, ShopPortalConfig, DEFAULT_PORTAL_CONFIG, ShopRateCard,
+  parseOrientation,
 } from '@printok/shared-types';
 import {
   IStorageProvider, CreateJobOptions, TransitionMeta, StateChangeResult, StoredIdempotencyRecord,
@@ -202,8 +203,9 @@ export class PrismaStorage implements IStorageProvider {
       ? PrintState.Queued
       : PrintState.AwaitingPayment;
 
+    const orientation = options.orientation ?? 'auto';
     const printConfig: PrintConfigSnapshot = {
-      pageCount, copies, isColor, isDuplex, paperSize, pageRange: options.pageRange,
+      pageCount, copies, isColor, isDuplex, paperSize, pageRange: options.pageRange, orientation,
     };
 
     const job = await this.prisma.printJob.create({
@@ -224,6 +226,7 @@ export class PrismaStorage implements IStorageProvider {
         isDuplex,
         paperSize,
         pageRange: options.pageRange,
+        orientation,
         customerName: options.customerName ?? null,
         customerPhone: options.customerPhone ?? null,
         printConfig: printConfig as unknown as Prisma.InputJsonValue,
@@ -1663,6 +1666,7 @@ export class PrismaStorage implements IStorageProvider {
       isDuplex: j.isDuplex,
       paperSize: j.paperSize,
       pageRange: j.pageRange ?? undefined,
+      orientation: parseOrientation(j.orientation),
       printConfig: (j.printConfig as unknown as PrintConfigSnapshot) ?? undefined,
 
       totalPriceInCents: j.totalPriceInCents,

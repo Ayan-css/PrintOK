@@ -64,13 +64,39 @@ internal static class WindowsRasterPrinter
             }
         }
 
+        // Whether the printer is being *asked* for colour. The customer's choice
+        // is enforced in the bitmap as well — see the comment on the render call
+        // below, and DocumentRasterizer.ToGrayscale for the reason.
+        bool wantColour = options.IsColor && settings.SupportsColor;
+
+        // Set on the PrinterSettings too, not only on the document. These build
+        // separate DEVMODE structures, and a driver that reads its colour mode
+        // from the printer's rather than the page's would otherwise never see
+        // the request at all.
+        settings.DefaultPageSettings.Color = wantColour;
+
         using var doc = new PrintDocument { PrinterSettings = settings, DocumentName = options.FileName };
-        doc.DefaultPageSettings.Color = options.IsColor && settings.SupportsColor;
+        doc.DefaultPageSettings.Color = wantColour;
         doc.OriginAtMargins = false;
 
         ApplyPaperSize(doc, options.PaperSize, logger);
+        ApplyOrientation(doc, options.Orientation);
 
-        int page = 0;
+        // Re-asserted for every page. Some drivers rebuild page settings from
+        // the queue's defaults between pages, and a job that starts mono and
+        // finishes in colour is worse than one that was colour throughout.
+        doc.QueryPageSettings += (_, e) =>
+        {
+            e.PageSettings.Color = wantColour;
+            if (options.Orientation != PrintOrientation.Auto)
+            {
+                e.PageSettings.Landscape = options.Orientation == PrintOrientation.Landscape;
+            }
+        };
+
+        // Only what the customer selected and was billed for.
+        IReadOnlyList<int> pages = options.PagesWithin(document.PageCount);
+        int cursor = 0;
         Exception? failure = null;
 
         doc.PrintPage += (_, e) =>
@@ -80,14 +106,19 @@ internal static class WindowsRasterPrinter
                 // Rendered here, one page at a time: a fifty-page PDF at 300dpi
                 // is about 35MB a page, and holding them all would be worse
                 // than anything it saves.
-                byte[] png = document.RenderPagePng(page);
+                //
+                // Rendered in grey when the customer chose black and white, so
+                // the choice does not depend on the driver honouring dmColor.
+                // Two printers in the same shop disagreed about that, and the
+                // customer paid the mono rate at both.
+                byte[] png = document.RenderPagePng(pages[cursor] - 1, grayscale: !wantColour);
                 using var stream = new MemoryStream(png);
                 using var image = Image.FromStream(stream);
 
                 e.Graphics?.DrawImage(image, FitWithin(image, e.PageBounds));
 
-                page++;
-                e.HasMorePages = page < document.PageCount;
+                cursor++;
+                e.HasMorePages = cursor < pages.Count;
             }
             catch (Exception ex)
             {
@@ -111,17 +142,35 @@ internal static class WindowsRasterPrinter
 
         if (failure is not null)
         {
-            logger.LogError(failure, "Page {Page} of '{FileName}' could not be rendered.", page + 1, options.FileName);
+            logger.LogError(
+                failure, "Page {Page} of '{FileName}' could not be rendered.",
+                cursor < pages.Count ? pages[cursor] : cursor, options.FileName);
             return false;
         }
 
         logger.LogInformation(
-            "'{FileName}' sent to '{Printer}': {Pages} page(s), {Copies} copy/copies, {Colour}, {Sides}.",
-            options.FileName, settings.PrinterName, document.PageCount, settings.Copies,
-            doc.DefaultPageSettings.Color ? "colour" : "black and white",
-            settings.Duplex == Duplex.Simplex ? "single-sided" : "double-sided");
+            "'{FileName}' sent to '{Printer}': {Pages} page(s), {Copies} copy/copies, {Colour}, {Sides}, {Orientation}.",
+            options.FileName, settings.PrinterName, pages.Count, settings.Copies,
+            wantColour ? "colour" : "black and white (rendered grey, not left to the driver)",
+            settings.Duplex == Duplex.Simplex ? "single-sided" : "double-sided",
+            options.Orientation == PrintOrientation.Auto
+                ? "the document's own orientation"
+                : options.Orientation.ToString().ToLowerInvariant());
 
         return true;
+    }
+
+    /// <summary>
+    /// Turns the page the way the customer asked.
+    ///
+    /// Auto is left alone deliberately: PDFium reports a landscape page as a
+    /// landscape bitmap, so forcing portrait on it would letterbox a wide page
+    /// into a tall sheet. Only an explicit choice overrides the document.
+    /// </summary>
+    private static void ApplyOrientation(PrintDocument doc, PrintOrientation orientation)
+    {
+        if (orientation == PrintOrientation.Auto) return;
+        doc.DefaultPageSettings.Landscape = orientation == PrintOrientation.Landscape;
     }
 
     /// <summary>

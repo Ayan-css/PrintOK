@@ -237,6 +237,33 @@
             </div>
           </div>
 
+          <!--
+            Orientation. "Auto" is first and selected, because it is what every
+            job did before this control existed — a portrait document prints
+            portrait without anyone having to say so. The other two are for the
+            spreadsheet and the certificate, which auto gets wrong.
+          -->
+          <div class="form-group" id="groupOrientation" role="group" aria-labelledby="lblOrientation">
+            <span class="form-label" id="lblOrientation">Orientation</span>
+            <div class="option-pill-group">
+              <label class="option-pill active" id="pillOrientAuto">
+                <input type="radio" name="orientation" value="auto" class="sr-only" checked>
+                <span>🔎 Auto</span>
+              </label>
+              <label class="option-pill" id="pillOrientPortrait">
+                <input type="radio" name="orientation" value="portrait" class="sr-only">
+                <span>📄 Portrait</span>
+              </label>
+              <label class="option-pill" id="pillOrientLandscape">
+                <input type="radio" name="orientation" value="landscape" class="sr-only">
+                <span>📃 Landscape</span>
+              </label>
+            </div>
+            <div class="form-help" id="orientationHelp">
+              Auto keeps each page the way it was written.
+            </div>
+          </div>
+
           <!-- Paper Size & Copies Grid -->
           <div class="grid-2">
             <div class="form-group" id="groupPaperSize">

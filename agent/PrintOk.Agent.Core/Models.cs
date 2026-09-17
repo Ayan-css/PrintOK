@@ -17,7 +17,18 @@ public record PrintJob(
     // whatever paper the driver defaulted to no matter what was paid for.
     // Defaulted so an older server, which omits them, changes nothing.
     [property: JsonPropertyName("isDuplex")] bool IsDuplex = false,
-    [property: JsonPropertyName("paperSize")] string? PaperSize = null
+    [property: JsonPropertyName("paperSize")] string? PaperSize = null,
+    /// <summary>
+    /// "auto", "portrait" or "landscape". Defaults to auto, which is what every
+    /// job did before the customer could choose, so an older server that omits
+    /// it changes nothing.
+    /// </summary>
+    [property: JsonPropertyName("orientation")] string? Orientation = null,
+    /// <summary>
+    /// The customer's page selection, e.g. "1-3, 5". Null means the whole
+    /// document. The server has already billed for exactly these pages.
+    /// </summary>
+    [property: JsonPropertyName("pageRange")] string? PageRange = null
 );
 
 public record AgentPollResponse(

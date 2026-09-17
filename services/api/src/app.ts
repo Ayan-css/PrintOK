@@ -10,7 +10,7 @@ import { RazorpayService, MIN_ORDER_AMOUNT_PAISE } from './razorpayService';
 import { RazorpayRouteService } from './razorpayRoute';
 import { parsePrintState } from './jobStateMachine';
 import { classifyFailure } from './jobRecovery';
-import { buildDefaultRateCard } from './pricing';
+import { buildDefaultRateCard, calculateGridPriceBreakdown } from './pricing';
 import { corsOptions } from './corsPolicy';
 import {
   issueConfigDownloadToken,
@@ -25,6 +25,7 @@ import {
   ShopRate, ShopRateCard,
   SERVICE_CATALOGUE, SERVICE_GROUPS, defaultEnabledServices, resolveEnabledServices,
   derivePortalOptions, checkJobAgainstPortal,
+  parseOrientation, parsePageRange, billablePages,
   AUTO_PRINT_MODES, SEPARATOR_MODES, shouldPrintSeparator,
   bucketForState, countJobBuckets, jobMatchesSearch,
 } from '@printok/shared-types';
@@ -704,6 +705,64 @@ export function createApp(
         storage.getShopRateCard(req.params.shopId),
       ]);
       return res.json(derivePortalOptions(config.enabledServices, card));
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * What this configuration costs at this shop, priced by the same code that
+   * will charge for it.
+   *
+   * Public, and it has to be. The customer page used to quote by mirroring the
+   * flat four-rate card client-side — a card it could not even read, because
+   * GET /pricing requires a merchant token, so every customer was shown the
+   * hardcoded fallback rates. A shop could edit its whole grid in Business
+   * Setup and the price on the customer's screen would never move, then the
+   * server would charge something else entirely at checkout.
+   *
+   * No document and no auth: a quote is a function of the rate card and five
+   * numbers, all of which the customer already chose.
+   */
+  app.get('/api/shops/:shopId/quote', async (req: Request, res: Response) => {
+    try {
+      const whole = (v: unknown, fallback: number) => {
+        const n = Number(v);
+        return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
+      };
+
+      const totalPages = Math.min(whole(req.query.pages, 1), 10_000);
+      const copies = Math.min(whole(req.query.copies, 1), 999);
+      const isColor = req.query.isColor === 'true';
+      const isDuplex = req.query.isDuplex === 'true';
+      const paperSize = typeof req.query.paperSize === 'string' ? req.query.paperSize : 'A4';
+      const pageRange = typeof req.query.pageRange === 'string' ? req.query.pageRange : '';
+
+      const [card, pricingConfig] = await Promise.all([
+        storage.getShopRateCard(req.params.shopId),
+        storage.getShopPricing(req.params.shopId),
+      ]);
+
+      const pages = billablePages(pageRange, totalPages);
+      const snapshot = calculateGridPriceBreakdown(
+        pages, copies, isColor, isDuplex, paperSize, card, pricingConfig
+      );
+
+      // The snapshot carries the whole rate card, which is the shop's business
+      // and not the customer's. Only the figures the page displays go back.
+      return res.json({
+        quote: {
+          pages,
+          copies,
+          perPageRateCents: snapshot.perPageRateCents,
+          billableSheets: snapshot.billableSheets,
+          subtotalCents: snapshot.subtotalCents,
+          discountCents: snapshot.bulkDiscountCents,
+          discountPercent: snapshot.bulkDiscountPercent,
+          bulkApplied: !!snapshot.bulkApplied,
+          totalPriceInCents: snapshot.totalPriceInCents,
+        },
+      });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -2182,6 +2241,10 @@ export function createApp(
         printerId, fileName, fileBase64, copies, isColor, isDuplex, paperSize,
         customerName, customerPhone,
       } = req.body as CreatePrintJobDto;
+      // Anything unrecognised becomes `auto` rather than a 400: an older page
+      // that sends nothing must keep working, and "the way the document was
+      // written" is the only safe reading of a value we cannot honour.
+      const orientation = parseOrientation((req.body as CreatePrintJobDto).orientation);
       const autoApprove = req.query.autoApprove !== 'false';
 
       if (!printerId || !fileName || !fileBase64) {
@@ -2219,6 +2282,7 @@ export function createApp(
         paperSize: paperSize || 'A4',
         copies: copies || 1,
         pageRange: (req.body as any)?.pageRange,
+        orientation,
       });
       if (unavailable) {
         return res.status(400).json({ error: unavailable });
@@ -2235,6 +2299,21 @@ export function createApp(
       // Tamper-proof page count override
       const verifiedPageCount = docResult.pageCount;
 
+      // A page range was validated against the portal above and then thrown
+      // away, so a customer who picked three pages of a fifty-page thesis was
+      // quoted for three, charged for fifty, and handed fifty. Resolved against
+      // the verified count — not the client's — so the number billed is the
+      // number the agent is told to print.
+      const requestedRange =
+        typeof (req.body as any)?.pageRange === 'string' ? (req.body as any).pageRange.trim() : '';
+      const selectedPages = parsePageRange(requestedRange, verifiedPageCount);
+      if (selectedPages !== null && selectedPages.length === 0) {
+        return res.status(400).json({
+          error: `This document has ${verifiedPageCount} ${verifiedPageCount === 1 ? 'page' : 'pages'}, so that page selection prints nothing. Check the range.`,
+        });
+      }
+      const chargeablePages = selectedPages ? selectedPages.length : verifiedPageCount;
+
       // "Print everything" queues the job before payment clears. That is a
       // shop choosing to print first and collect at the counter — and choosing
       // to eat the paper when someone walks away. It is not a default.
@@ -2247,13 +2326,18 @@ export function createApp(
         printerId,
         fileName,
         fileBase64,
-        verifiedPageCount,
+        chargeablePages,
         copies || 1,
         !!isColor,
         autoApprove,
         !!isDuplex,
         paperSize || 'A4',
-        { ...identity.value, queueWithoutPayment }
+        {
+          ...identity.value,
+          queueWithoutPayment,
+          orientation,
+          pageRange: selectedPages ? requestedRange : undefined,
+        }
       );
 
       // If job is immediately queued, push notification to active WebSocket agent

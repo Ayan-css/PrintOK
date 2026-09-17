@@ -85,6 +85,76 @@ export interface PriceSnapshot {
 }
 
 /**
+ * Which way up the page is printed.
+ *
+ * `auto` means "whatever the document says" — a portrait PDF prints portrait, a
+ * landscape one prints landscape — and is the default because it is what every
+ * job did before the customer could choose. `portrait` and `landscape` override
+ * the document, which is what someone printing a spreadsheet or a certificate
+ * actually wants.
+ */
+export type PrintOrientation = 'auto' | 'portrait' | 'landscape';
+
+export const PRINT_ORIENTATIONS: readonly PrintOrientation[] = ['auto', 'portrait', 'landscape'];
+
+/** Reads an orientation off the wire, falling back to `auto` for anything else. */
+export function parseOrientation(value: unknown): PrintOrientation {
+  return PRINT_ORIENTATIONS.includes(value as PrintOrientation)
+    ? (value as PrintOrientation)
+    : 'auto';
+}
+
+/**
+ * Turns "1-3, 5, 8-10" into the pages that will actually print.
+ *
+ * Shared rather than reimplemented per caller, because three separate readings
+ * of the same string is how a customer comes to be shown one page count, billed
+ * for a second and handed a third. The customer page uses it to quote, the API
+ * to price and store, and the agent gets the resolved list.
+ *
+ * Pages outside the document are dropped rather than clamped: someone who typed
+ * "1-3, 90" on a ten-page file meant the first three, and printing page ten
+ * twice because 90 was clamped to it would be worse than ignoring it. Returns
+ * null for "every page", which is not the same as an empty selection.
+ */
+export function parsePageRange(range: string | null | undefined, totalPages: number): number[] | null {
+  if (!range || !range.trim()) return null;
+
+  const pages = new Set<number>();
+  for (const part of range.split(',')) {
+    const piece = part.trim();
+    if (!piece) continue;
+
+    const span = piece.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (span) {
+      const from = Math.min(Number(span[1]), Number(span[2]));
+      const to = Math.max(Number(span[1]), Number(span[2]));
+      for (let i = from; i <= to; i++) {
+        if (i >= 1 && i <= totalPages) pages.add(i);
+      }
+    } else if (/^\d+$/.test(piece)) {
+      const n = Number(piece);
+      if (n >= 1 && n <= totalPages) pages.add(n);
+    }
+  }
+
+  return pages.size > 0 ? [...pages].sort((a, b) => a - b) : [];
+}
+
+/**
+ * How many pages a job is billed and printed for.
+ *
+ * An unparseable or out-of-range selection bills the whole document, which is
+ * the same thing the agent will print — the two must not disagree, whichever
+ * way the disagreement falls.
+ */
+export function billablePages(range: string | null | undefined, totalPages: number): number {
+  const selected = parsePageRange(range, totalPages);
+  if (selected === null) return totalPages;
+  return selected.length > 0 ? selected.length : totalPages;
+}
+
+/**
  * Immutable copy of the print configuration as submitted (PRD 9).
  */
 export interface PrintConfigSnapshot {
@@ -94,6 +164,8 @@ export interface PrintConfigSnapshot {
   isDuplex: boolean;
   paperSize: string;
   pageRange?: string;
+  /** Optional so a snapshot written before orientation existed still reads. */
+  orientation?: PrintOrientation;
 }
 
 /**
@@ -275,6 +347,8 @@ export interface PortalOptions {
   colourModes: Array<'bw' | 'colour'>;
   sidedModes: Array<'single' | 'duplex'>;
   paperSizes: string[];
+  /** Orientations this shop lets a customer choose, in the order shown. */
+  orientations: PrintOrientation[];
   allowMultipleCopies: boolean;
   allowPageSelection: boolean;
 }
@@ -317,10 +391,21 @@ export function derivePortalOptions(
   if (offers.has('single-sided')) sidedModes.push('single');
   if (offers.has('duplex-auto') || offers.has('duplex-manual')) sidedModes.push('duplex');
 
+  // Orientation costs the same on every rate, so unlike colour and paper it is
+  // gated on the service toggles alone — there is no grid cell to consult.
+  const orientations: PrintOrientation[] = [];
+  if (offers.has('auto-orientation')) orientations.push('auto');
+  if (offers.has('portrait')) orientations.push('portrait');
+  if (offers.has('landscape')) orientations.push('landscape');
+
   return {
     colourModes,
     sidedModes,
     paperSizes,
+    // A shop that has switched off all three still prints: `auto` is what every
+    // job did before this choice existed, and refusing the lot would take a
+    // working shop offline over a setting it never knew was load-bearing.
+    orientations: orientations.length > 0 ? orientations : ['auto'],
     allowMultipleCopies: offers.has('multiple-copies'),
     allowPageSelection: offers.has('page-selection'),
   };
@@ -334,7 +419,14 @@ export function derivePortalOptions(
  */
 export function checkJobAgainstPortal(
   options: PortalOptions,
-  job: { isColor: boolean; isDuplex: boolean; paperSize: string; copies: number; pageRange?: string | null }
+  job: {
+    isColor: boolean;
+    isDuplex: boolean;
+    paperSize: string;
+    copies: number;
+    pageRange?: string | null;
+    orientation?: PrintOrientation;
+  }
 ): string | undefined {
   const wantedColour = job.isColor ? 'colour' : 'bw';
   if (!options.colourModes.includes(wantedColour)) {
@@ -360,6 +452,13 @@ export function checkJobAgainstPortal(
 
   if (job.pageRange && !options.allowPageSelection) {
     return 'This shop prints whole documents only.';
+  }
+
+  const wantedOrientation = job.orientation ?? 'auto';
+  if (!options.orientations.includes(wantedOrientation)) {
+    return wantedOrientation === 'auto'
+      ? 'This shop needs you to choose portrait or landscape.'
+      : `This shop does not print in ${wantedOrientation}.`;
   }
 
   return undefined;
@@ -577,6 +676,8 @@ export interface PrintJob {
   isDuplex?: boolean;
   paperSize?: string;
   pageRange?: string;
+  /** Undefined on jobs created before the customer could choose; means `auto`. */
+  orientation?: PrintOrientation;
   printConfig?: PrintConfigSnapshot;
 
   // Price
@@ -656,6 +757,7 @@ export interface CreatePrintJobDto {
   isColor: boolean;
   isDuplex?: boolean;
   paperSize?: string;
+  orientation?: PrintOrientation;
   /** Sent only when the shop's portal asks for them. */
   customerName?: string;
   customerPhone?: string;
@@ -786,6 +888,7 @@ export interface JobQueuedEvent {
   isColor: boolean;
   isDuplex?: boolean;
   paperSize?: string;
+  orientation?: PrintOrientation;
 }
 
 

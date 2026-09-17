@@ -329,7 +329,14 @@ public class PrintAgentWorker : BackgroundService
             // 5. Spool to Printer
             bool printSuccess = await _spooler.PrintDocumentAsync(
                 tempFilePath,
-                new PrintOptions(job.FileName, job.Copies, job.IsColor, job.IsDuplex, job.PaperSize),
+                new PrintOptions(
+                    job.FileName,
+                    job.Copies,
+                    job.IsColor,
+                    job.IsDuplex,
+                    job.PaperSize,
+                    PrintOptions.ParseOrientation(job.Orientation),
+                    PrintOptions.ParsePageRange(job.PageRange)),
                 cancellationToken);
 
             if (printSuccess)

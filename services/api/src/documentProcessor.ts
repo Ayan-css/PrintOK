@@ -1,7 +1,21 @@
-const pdfParse = require('pdf-parse');
+// pdf-parse v2 exports a class. v1 exported a callable, and this file called it
+// as one — `await pdfParse(buffer)` threw TypeError on every single PDF, the
+// catch below swallowed it, and every document in the system was counted as one
+// page. A fifty-page thesis was billed as one page and printed as fifty, so the
+// shop paid for the paper out of its own pocket on every large order.
+const { PDFParse } = require('pdf-parse');
 
 export interface ProcessedDocument {
   pageCount: number;
+  /**
+   * Whether the count was read out of the document or guessed.
+   *
+   * False for everything that is not a PDF or an image — a .docx page count
+   * needs a layout engine, and the one page reported for one is an estimate. It
+   * is surfaced rather than hidden so a guess is never quietly charged for as
+   * though it were measured.
+   */
+  pageCountVerified?: boolean;
   format: 'pdf' | 'image' | 'word' | 'excel' | 'csv' | 'unknown';
   mimeType: string;
   isSupported: boolean;
@@ -36,24 +50,16 @@ export async function processDocument(
 
   // 1. PDF Handling (Exact Parsing)
   if (ext === '.pdf') {
-    try {
-      const data = await pdfParse(fileBuffer);
-      const pages = data.numpages > 0 ? data.numpages : 1;
-      return {
-        pageCount: pages,
-        format: 'pdf',
-        mimeType: 'application/pdf',
-        isSupported: true,
-      };
-    } catch (err: any) {
-      // Fallback for minimal/malformed mock PDFs in testing
-      return {
-        pageCount: 1,
-        format: 'pdf',
-        mimeType: 'application/pdf',
-        isSupported: true,
-      };
-    }
+    const counted = await countPdfPages(fileBuffer);
+    return {
+      // Zero means nothing could read the file at all. One page is the only
+      // safe guess, and the caller is told it is a guess.
+      pageCount: counted > 0 ? counted : 1,
+      pageCountVerified: counted > 0,
+      format: 'pdf',
+      mimeType: 'application/pdf',
+      isSupported: true,
+    };
   }
 
   // 2. Image Handling (1 page per image)
@@ -114,6 +120,50 @@ function getExtension(fileName: string): string {
   const idx = fileName.lastIndexOf('.');
   if (idx === -1) return '';
   return fileName.substring(idx).toLowerCase();
+}
+
+/**
+ * How many pages a PDF actually has, or 0 if nothing could read it.
+ *
+ * This number is the price. Everything the customer is quoted and everything
+ * the shop is paid comes off it, so a wrong answer here is a wrong answer on
+ * every screen and in the ledger.
+ *
+ * Two readers, in order of trust:
+ *
+ *   1. **The parser.** `getInfo().total` is the document's own page tree.
+ *   2. **Counting `/Type /Page` markers.** Crude, and deliberately kept: PDFs
+ *      arrive from phone scanners and government portals with broken cross
+ *      reference tables that a strict parser refuses outright, and a shop would
+ *      rather print one of those for the right money than turn the customer
+ *      away. `/Pages` is excluded so the page-tree node is not counted as a page.
+ *
+ * A failure is logged loudly either way. The original swallowed every error and
+ * returned a confident "1 page", which is how a broken parser call went
+ * unnoticed through every order this system has taken.
+ */
+async function countPdfPages(fileBuffer: Buffer): Promise<number> {
+  let parser: any;
+  try {
+    parser = new PDFParse({ data: new Uint8Array(fileBuffer) });
+    const info = await parser.getInfo();
+    const total = Number(info?.total);
+    if (Number.isInteger(total) && total > 0) return total;
+    console.warn('[documentProcessor] The PDF parser reported no page total; falling back to counting markers.');
+  } catch (err: any) {
+    console.error(
+      '[documentProcessor] Could not parse a PDF (%s). Falling back to counting page markers.',
+      err?.message || err
+    );
+  } finally {
+    try { await parser?.destroy(); } catch { /* the parser is being discarded anyway */ }
+  }
+
+  const markers = fileBuffer.toString('latin1').match(/\/Type\s*\/Page[^s]/g);
+  if (markers && markers.length > 0) return markers.length;
+
+  console.error('[documentProcessor] A PDF could not be counted at all; it will be billed as one page.');
+  return 0;
 }
 
 /**

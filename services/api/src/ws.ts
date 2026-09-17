@@ -97,6 +97,7 @@ export class AgentWebSocketServer {
         isColor: job.isColor,
         isDuplex: job.isDuplex,
         paperSize: job.paperSize,
+        orientation: job.orientation,
       };
 
       const msg: AgentWsMessage = {

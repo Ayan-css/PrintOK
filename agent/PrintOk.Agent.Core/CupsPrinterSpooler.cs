@@ -35,11 +35,14 @@ public class CupsPrinterSpooler : IPrinterSpooler
         int copyCount = Math.Max(1, options.Copies);
 
         _logger.LogInformation(
-            "Spooling '{FileName}' to CUPS printer '{Printer}': {Copies} copy/copies, {Colour}, {Sides}, {Paper}.",
+            "Spooling '{FileName}' to CUPS printer '{Printer}': {Copies} copy/copies, {Colour}, {Sides}, {Paper}, {Orientation}.",
             fileName, _settings.PrinterName ?? "(system default)", copyCount,
             options.IsColor ? "colour" : "black and white",
             options.IsDuplex ? "double-sided" : "single-sided",
-            options.PaperSize ?? "printer default");
+            options.PaperSize ?? "printer default",
+            options.Orientation == PrintOrientation.Auto
+                ? "the document's own orientation"
+                : options.Orientation.ToString().ToLowerInvariant());
 
         var args = new List<string>();
 
@@ -61,6 +64,17 @@ public class CupsPrinterSpooler : IPrinterSpooler
         args.Add("-o");
         args.Add(options.IsColor ? "print-color-mode=color" : "print-color-mode=monochrome");
 
+        if (!options.IsColor)
+        {
+            // Said a second way, because print-color-mode is the standard option
+            // and ColorModel is the one a great many PPDs actually implement. A
+            // queue that has neither drops the unknown option rather than
+            // failing the job, so asking twice costs nothing and a customer
+            // getting a colour print they did not pay for costs the shop.
+            args.Add("-o");
+            args.Add("ColorModel=Gray");
+        }
+
         // Duplex and paper were never sent, so a customer who chose and paid for
         // A4 double-sided got whatever the queue's defaults were.
         args.Add("-o");
@@ -73,6 +87,24 @@ public class CupsPrinterSpooler : IPrinterSpooler
             // printed is not.
             args.Add("-o");
             args.Add($"media={options.PaperSize}");
+        }
+
+        // 3 is portrait and 4 is landscape in IPP's orientation-requested.
+        // Auto sends nothing at all, which leaves the document's own orientation
+        // alone — sending portrait for it would rotate a landscape spreadsheet.
+        if (options.Orientation != PrintOrientation.Auto)
+        {
+            args.Add("-o");
+            args.Add(options.Orientation == PrintOrientation.Landscape
+                ? "orientation-requested=4"
+                : "orientation-requested=3");
+        }
+
+        // Only the pages the customer selected and was billed for.
+        if (options.Pages is { Count: > 0 })
+        {
+            args.Add("-o");
+            args.Add($"page-ranges={string.Join(",", options.Pages)}");
         }
 
         // Names the job in the CUPS queue, so `lpstat` shows something a shop

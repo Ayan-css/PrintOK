@@ -1,0 +1,14 @@
+-- Which way up the customer wanted the page.
+--
+--   auto       print the document the way it was written — a portrait PDF
+--              portrait, a landscape one landscape. This is what every job did
+--              before the choice existed, so it is the default and every
+--              existing row reads back exactly as it printed.
+--   portrait   force upright, whatever the document says
+--   landscape  force sideways, which is what a spreadsheet or a certificate
+--              actually wants
+--
+-- Stored as its own column rather than only inside printConfig, because the
+-- agent poll response reads columns, and a setting that lives only in an audit
+-- blob is a setting the printer never sees.
+ALTER TABLE "PrintJob" ADD COLUMN "orientation" TEXT NOT NULL DEFAULT 'auto';

@@ -263,6 +263,10 @@ model PrintJob {
   isDuplex          Boolean  @default(false)
   paperSize         String   @default("A4")
   pageRange         String?
+  /// auto | portrait | landscape. "auto" prints the document the way up it was
+  /// written, which is what every job did before the customer could choose, so
+  /// it is the default and every existing row reads back unchanged.
+  orientation       String   @default("auto")
   /// Frozen copy of the above as submitted, for audit and dispute resolution.
   printConfig       Json?
 

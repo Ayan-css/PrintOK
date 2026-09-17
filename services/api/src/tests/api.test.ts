@@ -2780,6 +2780,247 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(bogus.status, 400);
   });
 
+  // ---------------------------------------------------------------------------
+  // What the customer is shown, and what the printer is told
+  // ---------------------------------------------------------------------------
+
+  /**
+   * A structurally valid PDF with the requested number of pages.
+   *
+   * Real rather than a stub string, because the page count is the price: the
+   * server reads it out of the document, and a fixture the parser cannot read
+   * would be billed as one page and prove nothing about billing.
+   */
+  function makePdf(pageCount: number): Buffer {
+    const kids = Array.from({ length: pageCount }, (_, i) => `${3 + i} 0 R`);
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      `<< /Type /Pages /Kids [${kids.join(' ')}] /Count ${pageCount} >>`,
+      ...Array.from({ length: pageCount }, () =>
+        '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>'),
+    ];
+
+    let body = '%PDF-1.4\n';
+    const offsets: number[] = [];
+    objects.forEach((obj, i) => {
+      offsets.push(body.length);
+      body += `${i + 1} 0 obj\n${obj}\nendobj\n`;
+    });
+
+    const xrefStart = body.length;
+    body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+    for (const offset of offsets) body += `${String(offset).padStart(10, '0')} 00000 n \n`;
+    body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`;
+
+    return Buffer.from(body, 'latin1');
+  }
+
+  /** A shop with a merchant session, which most of the tests below need. */
+  async function shopWithAuth(name: string, email: string, password: string) {
+    const reg = await (await fetch(`${baseUrl}/api/shops/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopName: name, ownerEmail: email, printerName: `${name} printer` }),
+    })).json() as any;
+
+    const claim = await (await fetch(`${baseUrl}/api/merchant/claim`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId: reg.shop.id, ownerEmail: email, password, name }),
+    })).json() as any;
+
+    return {
+      shopId: reg.shop.id,
+      printerId: reg.printer.id,
+      agentApiKey: reg.printer.apiKey,
+      auth: { Authorization: `Bearer ${claim.token}`, 'Content-Type': 'application/json' } as Record<string, string>,
+    };
+  }
+
+  await t.test('74. A customer is quoted the shop\'s own rates, with no session', async () => {
+    // The regression this exists for: the customer page quoted by mirroring the
+    // flat rate card client-side, and GET /pricing needs a merchant token — so
+    // every customer saw hardcoded fallback rates. A shop could rebuild its
+    // whole grid in Business Setup and the customer's screen never moved.
+    const shop = await shopWithAuth('Quote Co', 'quote@example.com', 'QuotePass123');
+
+    const quoteFor = async (params: Record<string, string>) => {
+      const q = new URLSearchParams(params);
+      const res = await fetch(`${baseUrl}/api/shops/${shop.shopId}/quote?${q}`);
+      assert.strictEqual(res.status, 200, 'a quote needs no authentication at all');
+      return ((await res.json()) as any).quote;
+    };
+
+    const before = await quoteFor({ pages: '10', copies: '1', isColor: 'false', isDuplex: 'false', paperSize: 'A4' });
+
+    // The merchant re-prices exactly one cell: A4, mono, single-sided.
+    const card = await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/rates`)).json() as any;
+    await fetch(`${baseUrl}/api/shops/${shop.shopId}/rates`, {
+      method: 'POST', headers: shop.auth,
+      body: JSON.stringify({
+        rates: card.rates
+          .filter((r: any) => r.paperSize === 'A4' && !r.isColor && !r.isDuplex)
+          .map((r: any) => ({ ...r, perPageCents: 777, bulkPerPageCents: null })),
+      }),
+    });
+
+    const after = await quoteFor({ pages: '10', copies: '1', isColor: 'false', isDuplex: 'false', paperSize: 'A4' });
+    assert.notStrictEqual(after.totalPriceInCents, before.totalPriceInCents,
+      'a rate card edit must move the price the customer is shown');
+    assert.strictEqual(after.perPageRateCents, 777);
+    assert.strictEqual(after.totalPriceInCents, 7770);
+
+    // And the quote is the amount actually charged, not a parallel calculation.
+    const job = await (await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: shop.printerId, fileName: 'q.pdf',
+        fileBase64: Buffer.from('%PDF-1.4 q').toString('base64'),
+        copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+      }),
+    })).json() as any;
+
+    const charged = await quoteFor({
+      pages: String(job.job.pageCount), copies: '1',
+      isColor: 'false', isDuplex: 'false', paperSize: 'A4',
+    });
+    assert.strictEqual(job.job.totalPriceInCents, charged.totalPriceInCents,
+      'the quoted price and the charged price are the same number');
+
+    // The shop's rate card is its own business; a quote must not hand it over.
+    const raw = await (await fetch(
+      `${baseUrl}/api/shops/${shop.shopId}/quote?pages=1&copies=1&isColor=false&isDuplex=false&paperSize=A4`
+    )).text();
+    assert.ok(!raw.includes('rateCardSnapshot'), 'a quote exposes figures, not the whole grid');
+    assert.ok(!raw.includes('bulkThresholdCents'), 'nor the thresholds behind them');
+  });
+
+  await t.test('75. A page selection is billed and printed as selected', async () => {
+    // Previously the range was validated against the portal and then dropped:
+    // a customer picking 3 pages of a 50-page file was quoted for 3, charged
+    // for 50, and handed 50.
+    const shop = await shopWithAuth('Range Co', 'range@example.com', 'RangePass123');
+
+    const pdf = makePdf(10);
+
+    const submit = (pageRange: string | null) => fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: shop.printerId, fileName: 'range.pdf',
+        fileBase64: pdf.toString('base64'),
+        copies: 1, isColor: false, isDuplex: false, paperSize: 'A4', pageRange,
+      }),
+    });
+
+    const whole = (await (await submit(null)).json()) as any;
+    const total = whole.job.pageCount;
+    assert.ok(total >= 3, `this fixture needs at least 3 pages, got ${total}`);
+
+    const partial = (await (await submit('1-3')).json()) as any;
+    assert.strictEqual(partial.job.pageCount, 3, 'billed for the pages selected');
+    assert.strictEqual(partial.job.pageRange, '1-3', 'and the selection reaches the agent');
+    assert.ok(partial.job.totalPriceInCents < whole.job.totalPriceInCents,
+      'three pages cost less than the whole document');
+
+    // A selection that lands entirely outside the document is a typo worth
+    // reporting, not a job that silently prints everything at full price.
+    const empty = await submit(`${total + 50}-${total + 60}`);
+    assert.strictEqual(empty.status, 400);
+    assert.match(((await empty.json()) as any).error, /page selection prints nothing/);
+  });
+
+  await t.test('76. Orientation is offered, carried to the printer, and enforced', async () => {
+    const shop = await shopWithAuth('Orient Co', 'orient@example.com', 'OrientPass123');
+
+    const options = await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/portal-options`)).json() as any;
+    assert.deepStrictEqual(options.orientations, ['auto', 'portrait', 'landscape'],
+      'a new shop offers all three');
+
+    const submit = (orientation?: string) => fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: shop.printerId, fileName: 'o.pdf',
+        fileBase64: Buffer.from('%PDF-1.4 o').toString('base64'),
+        copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+        ...(orientation === undefined ? {} : { orientation }),
+      }),
+    });
+
+    const landscape = (await (await submit('landscape')).json()) as any;
+    assert.strictEqual(landscape.job.orientation, 'landscape');
+    assert.strictEqual(landscape.job.printConfig.orientation, 'landscape',
+      'and it is frozen into the audit snapshot');
+
+    // An older customer page sends nothing, and must keep working.
+    const silent = (await (await submit(undefined)).json()) as any;
+    assert.strictEqual(silent.job.orientation, 'auto');
+
+    // So must a nonsense value, rather than 400-ing a paying customer.
+    const nonsense = (await (await submit('sideways-ish')).json()) as any;
+    assert.strictEqual(nonsense.job.orientation, 'auto');
+
+    // A shop that does not offer landscape does not sell it. Hiding the pill is
+    // presentation; this is the part that stops a stale page ordering it.
+    const portal = await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/portal-config`)).json() as any;
+    await fetch(`${baseUrl}/api/shops/${shop.shopId}/portal-config`, {
+      method: 'POST', headers: shop.auth,
+      body: JSON.stringify({
+        enabledServices: portal.enabledServices.filter((k: string) => k !== 'landscape'),
+      }),
+    });
+
+    const narrowed = await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/portal-options`)).json() as any;
+    assert.deepStrictEqual(narrowed.orientations, ['auto', 'portrait']);
+
+    const refused = await submit('landscape');
+    assert.strictEqual(refused.status, 400);
+    assert.match(((await refused.json()) as any).error, /does not print in landscape/);
+
+    // With all three off, 'auto' still prints: it is what every job did before
+    // the choice existed, and refusing the lot would take a working shop down.
+    await fetch(`${baseUrl}/api/shops/${shop.shopId}/portal-config`, {
+      method: 'POST', headers: shop.auth,
+      body: JSON.stringify({
+        enabledServices: portal.enabledServices.filter(
+          (k: string) => !['auto-orientation', 'portrait', 'landscape'].includes(k)
+        ),
+      }),
+    });
+    const stripped = await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/portal-options`)).json() as any;
+    assert.deepStrictEqual(stripped.orientations, ['auto']);
+    assert.strictEqual((await submit(undefined)).status, 201, 'a shop with no orientation set still sells');
+  });
+
+  await t.test('77. A multi-page PDF is billed for the pages it has', async () => {
+    // pdf-parse v2 exports a class; this code called it as a function, so the
+    // parse threw on every PDF, the catch returned a confident "1 page", and a
+    // fifty-page thesis was charged as one page and printed as fifty. The shop
+    // paid for the other forty-nine sheets.
+    const shop = await shopWithAuth('Pages Co', 'pages@example.com', 'PagesPass123');
+
+    const submit = (pdf: Buffer) => fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: shop.printerId, fileName: 'thesis.pdf',
+        fileBase64: pdf.toString('base64'),
+        // A client claiming one page must not be believed either.
+        pageCount: 1, copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+      }),
+    });
+
+    const one = (await (await submit(makePdf(1))).json()) as any;
+    // Twenty rather than fifty: fifty sheets clears the default bulk threshold,
+    // and this test is about the page count, not the discount.
+    const twenty = (await (await submit(makePdf(20))).json()) as any;
+    const fifty = (await (await submit(makePdf(50))).json()) as any;
+
+    assert.strictEqual(one.job.pageCount, 1);
+    assert.strictEqual(twenty.job.pageCount, 20, 'the server reads the real page count');
+    assert.strictEqual(fifty.job.pageCount, 50);
+    assert.strictEqual(twenty.job.totalPriceInCents, one.job.totalPriceInCents * 20,
+      'and prices all twenty of them');
+    assert.ok(fifty.job.totalPriceInCents > twenty.job.totalPriceInCents,
+      'fifty pages still costs more than twenty, discount or not');
+  });
+
   server.close();
 });
 

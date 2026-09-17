@@ -22,11 +22,12 @@ document.addEventListener('DOMContentLoaded', () => {
   let pageCount = 1;
   let pageRangeMode = 'all'; // 'all' or 'custom'
   let customPageRange = '';
+  let orientation = 'auto'; // 'auto' | 'portrait' | 'landscape'
   let currentPrinterId = null;
+  let currentShopId = null; // resolved from the printer, then used to price the order
   let pollingTimer = null;
   let healthCheckTimer = null;
   let previewObjectUrl = null;
-  let shopPricing = null; // fetched from the shop so the quote matches what the backend charges
   let rerenderPrice = null; // set by the customer screen so async pricing can refresh the quote
 
   // Detect current page route
@@ -1956,6 +1957,24 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
+    // Orientation. Not priced differently — the same sheet either way — so it
+    // does not re-quote; it only has to reach the print job.
+    const orientationPills = {
+      auto: document.getElementById('pillOrientAuto'),
+      portrait: document.getElementById('pillOrientPortrait'),
+      landscape: document.getElementById('pillOrientLandscape'),
+    };
+
+    Object.entries(orientationPills).forEach(([value, pill]) => {
+      if (!pill) return;
+      bindPill(pill, () => {
+        orientation = value;
+        Object.values(orientationPills).forEach((p) => p && p.classList.remove('active'));
+        pill.classList.add('active');
+        DocumentPreview.refresh();
+      });
+    });
+
     // Paper size was collected but never fed back into the quote.
     const selectPaperSize = document.getElementById('selectPaperSize');
     if (selectPaperSize) {
@@ -1980,13 +1999,124 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     /**
-     * Mirrors the server's calculateJobPrice so the quote on screen is the amount charged:
-     * shop-configured rates, A3 multiplier and bulk discount all included.
+     * The price, from the shop's own rate card.
+     *
+     * Two steps on purpose. The local estimate below paints immediately so the
+     * figure does not flicker or lag a tap, and then the server is asked what it
+     * will actually charge and that answer replaces it.
+     *
+     * The server has to be asked, because the estimate cannot be right. It
+     * mirrors the four flat rates, and shops price from a grid now — twelve
+     * cells, two discount models and per-configuration switches. The customer
+     * page also has no way to read the flat rates it mirrors: GET /pricing is
+     * merchant-only, so every customer silently fell back to the hardcoded
+     * numbers below. A shop could rebuild its entire rate card in Business
+     * Setup and the price on the customer's screen would not move by a paisa.
      */
     function updateCustomerPrice() {
+      renderLocalEstimate();
+      requestAuthoritativeQuote();
+    }
+
+    /**
+     * The last server quote, and the exact configuration it was for.
+     *
+     * Paired, because a quote for black-and-white must not still be on screen
+     * after someone taps Colour. A stale price is worse than an estimate.
+     */
+    let confirmedQuote = null;
+    let confirmedFor = null;
+
+    /** Discards a slow answer that a later choice has already superseded. */
+    let quoteRequest = 0;
+    let quoteTimer = null;
+
+    /** Everything the price depends on, as one comparable string. */
+    function quoteSignature() {
+      const range = pageRangeMode === 'custom' ? customPageRange.trim() : '';
+      return [detectedTotalPages, copies, !!isColor, !!isDuplex, paperSize || 'A4', range].join('|');
+    }
+
+    function requestAuthoritativeQuote() {
+      if (!currentShopId) return;
+
+      const mine = ++quoteRequest;
+      const signature = quoteSignature();
+      clearTimeout(quoteTimer);
+
+      // Debounced: holding the copies stepper should not be one request per tap.
+      quoteTimer = setTimeout(async () => {
+        const range = pageRangeMode === 'custom' ? customPageRange.trim() : '';
+        const params = new URLSearchParams({
+          pages: String(Math.max(1, detectedTotalPages)),
+          copies: String(Math.max(1, copies)),
+          isColor: String(!!isColor),
+          isDuplex: String(!!isDuplex),
+          paperSize: paperSize || 'A4',
+        });
+        if (range) params.set('pageRange', range);
+
+        try {
+          const res = await fetch(
+            `${API_BASE}/api/shops/${encodeURIComponent(currentShopId)}/quote?${params}`
+          );
+          if (!res.ok) return;
+          const data = await res.json();
+          // A later change has already been made; this answer is about a
+          // configuration the customer is no longer looking at.
+          if (mine !== quoteRequest || !data.quote) return;
+
+          confirmedQuote = data.quote;
+          confirmedFor = signature;
+          renderQuote(data.quote);
+        } catch {
+          // Leave the estimate showing. The amount charged is settled by the
+          // server at submit either way, and a blank price would stop the order.
+        }
+      }, 250);
+    }
+
+    /** Paints a figure the server has confirmed it will charge. */
+    function renderQuote(quote) {
+      const totalCostDisplay = document.getElementById('totalCostDisplay');
+      const costBreakdownText = document.getElementById('costBreakdownText');
+
+      if (totalCostDisplay) totalCostDisplay.textContent = formatRupees(quote.totalPriceInCents);
+      if (costBreakdownText) {
+        const parts = [
+          `${quote.pages} ${quote.pages === 1 ? 'page' : 'pages'}`,
+          quote.copies > 1 ? `× ${quote.copies} copies` : null,
+          `× ${formatRupees(quote.perPageRateCents)}`,
+          `(${isColor ? 'Color' : 'B&W'} ${isDuplex ? 'Duplex' : 'Single'}, ${paperSize})`,
+          quote.discountCents > 0 ? `− ${formatRupees(quote.discountCents)} discount` : null,
+        ].filter(Boolean);
+        costBreakdownText.textContent = parts.join(' ');
+      }
+    }
+
+    /**
+     * A first guess, shown for the moment before the server answers.
+     *
+     * Kept as a fallback rather than deleted: a customer on a bad connection
+     * should see a plausible number rather than a blank where the price goes.
+     */
+    function renderLocalEstimate() {
       // Keep the preview in step with colour, duplex, copies and page range.
       DocumentPreview.refresh();
-      const cfg = shopPricing || {
+
+      // A confirmed figure for this exact configuration is never overwritten by
+      // a guess: re-renders happen for reasons that do not change the price, and
+      // the number must not flicker back to an estimate. A quote for a different
+      // configuration is not reused at all.
+      if (confirmedQuote && confirmedFor === quoteSignature()) {
+        renderQuote(confirmedQuote);
+        return;
+      }
+
+      // Constants on purpose. This is the placeholder shown for the moment
+      // before /quote answers, and it is never what anyone is charged — the
+      // shop's real rates are twelve grid cells this calculator cannot express.
+      const cfg = {
         bwSinglePerPageCents: 200,
         bwDuplexPerPageCents: 150,
         colorSinglePerPageCents: 1000,
@@ -2216,8 +2346,29 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       show('groupPaperSize', o.paperSizes.length > 1);
 
+      // Orientation
+      const orientations = Array.isArray(o.orientations) && o.orientations.length
+        ? o.orientations
+        : ['auto'];
+      pill('pillOrientAuto', orientations.includes('auto'));
+      pill('pillOrientPortrait', orientations.includes('portrait'));
+      pill('pillOrientLandscape', orientations.includes('landscape'));
+      show('groupOrientation', orientations.length > 1);
+      if (!orientations.includes(orientation)) selectOrientation(orientations[0]);
+
       show('groupCopies', o.allowMultipleCopies);
       show('groupPageRange', o.allowPageSelection);
+    }
+
+    /**
+     * Moves the choice to one the shop actually offers.
+     *
+     * Needed because the markup starts on "auto" and a shop may have switched
+     * exactly that off — leaving the page holding a value the server will refuse.
+     */
+    function selectOrientation(value) {
+      const input = document.querySelector(`input[name="orientation"][value="${value}"]`);
+      if (input && !input.checked) { input.checked = true; input.dispatchEvent(new Event('change', { bubbles: true })); }
     }
 
     /** Forces a colour choice when the shop offers only one. */
@@ -2330,6 +2481,7 @@ document.addEventListener('DOMContentLoaded', () => {
             isColor,
             isDuplex,
             paperSize,
+            orientation,
             pageRange: pageRangeMode === 'custom' ? customPageRange : null,
             ...customer,
           }),
@@ -2664,9 +2816,12 @@ document.addEventListener('DOMContentLoaded', () => {
         // Quote the shop's own rates rather than the hardcoded defaults, and
         // ask the same shop what it wants from the customer.
         if (data.shop && data.shop.id) {
-          await fetchShopPricing(data.shop.id);
+          currentShopId = data.shop.id;
           await loadPortalConfig(data.shop.id);
           await loadPortalOptions(data.shop.id);
+          // Now that the shop is known, replace the opening estimate with the
+          // figure this shop will actually charge.
+          if (rerenderPrice) rerenderPrice();
         }
       } else {
         const shopNameDisplay = document.getElementById('shopNameDisplay');
@@ -2676,21 +2831,6 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch {
       const shopNameDisplay = document.getElementById('shopNameDisplay');
       if (shopNameDisplay) shopNameDisplay.textContent = 'Shop Unavailable';
-    }
-  }
-
-  async function fetchShopPricing(shopId) {
-    try {
-      const res = await shopFetch(`/api/shops/${encodeURIComponent(shopId)}/pricing`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.pricing) {
-          shopPricing = data.pricing;
-          if (rerenderPrice) rerenderPrice();
-        }
-      }
-    } catch {
-      // keep the default rate card
     }
   }
 

@@ -116,6 +116,25 @@ public class WindowsPrinterSpooler : IPrinterSpooler
     {
         int copyCount = Math.Max(1, options.Copies);
 
+        // The "printto" verb carries a printer name and nothing else. Word
+        // prints with its own saved settings, so colour, sides, paper,
+        // orientation and page range are all whatever that installation happens
+        // to default to — regardless of what the customer chose and paid for.
+        //
+        // Said out loud rather than failing the job: refusing to print a .docx
+        // is worse for the shop than printing one whose options were not
+        // honoured. A shop that sees this in its log knows to ask for PDFs,
+        // which the agent renders itself and controls completely.
+        if (!options.IsColor || options.IsDuplex || options.Orientation != PrintOrientation.Auto
+            || options.Pages is { Count: > 0 } || !string.IsNullOrWhiteSpace(options.PaperSize))
+        {
+            _logger.LogWarning(
+                "'{FileName}' is being printed by another application, which ignores the customer's "
+                + "choices: black and white, sides, paper size, orientation and page selection are "
+                + "left to that application's own defaults. Ask the customer for a PDF to have these honoured.",
+                options.FileName);
+        }
+
         // These applications spool one copy per invocation.
         for (int copy = 1; copy <= copyCount; copy++)
         {

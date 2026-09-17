@@ -478,10 +478,21 @@
     if (offers.has('single-sided')) sidedModes.push('single');
     if (offers.has('duplex-auto') || offers.has('duplex-manual')) sidedModes.push('duplex');
 
+    // Orientation is the same price on every rate, so unlike colour and paper it
+    // is gated on the service toggles alone. All three off still prints: 'auto'
+    // is what every job did before the choice existed, and the server falls back
+    // to it rather than taking the shop offline over a setting nobody knew was
+    // load-bearing.
+    const orientations = [];
+    if (offers.has('auto-orientation')) orientations.push('auto');
+    if (offers.has('portrait')) orientations.push('portrait');
+    if (offers.has('landscape')) orientations.push('landscape');
+
     return {
       colourModes,
       sidedModes,
       paperSizes,
+      orientations: orientations.length > 0 ? orientations : ['auto'],
       allowMultipleCopies: offers.has('multiple-copies'),
       allowPageSelection: offers.has('page-selection'),
       asksName: !!draft.portal.collectCustomerName,
@@ -524,6 +535,13 @@
     if (o.paperSizes.length > 1) {
       parts.push(`<div class="pp-section"><div class="pp-label">Paper</div><div class="pp-pills">
         ${o.paperSizes.map((p, i) => `<span class="pp-pill ${i === 0 ? 'on' : ''}">${escapeHtml(p)}</span>`).join('')}
+      </div></div>`);
+    }
+
+    if (o.orientations.length > 1) {
+      const label = { auto: 'Auto', portrait: 'Portrait', landscape: 'Landscape' };
+      parts.push(`<div class="pp-section"><div class="pp-label">Orientation</div><div class="pp-pills">
+        ${o.orientations.map((m, i) => `<span class="pp-pill ${i === 0 ? 'on' : ''}">${label[m]}</span>`).join('')}
       </div></div>`);
     }
 

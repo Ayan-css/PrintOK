@@ -3,6 +3,7 @@ import {
   Shop, Printer, PrintJob, PaymentState, PrintState, PrinterTelemetry,
   MerchantPricingConfig, MerchantStats, JobEvent, FailureCategory, PlanTier, getPlan,
   ShopContactDetails, ShopPortalConfig, DEFAULT_PORTAL_CONFIG, ShopRateCard, ShopRate,
+  PrintOrientation,
 } from '@printok/shared-types';
 import { S3StorageService } from './s3Storage';
 import { calculateJobPriceBreakdown, calculateGridPriceBreakdown, buildDefaultRateCard, DEFAULT_PRICING_CONFIG } from './pricing';
@@ -12,6 +13,8 @@ import { isStale, recoveryActionFor } from './jobRecovery';
 /** Optional inputs captured at job creation (PRD 9, 11). */
 export interface CreateJobOptions {
   pageRange?: string;
+  /** auto | portrait | landscape. Defaults to `auto`, which is what every job did before. */
+  orientation?: PrintOrientation;
   /** Client-supplied key that deduplicates repeated submissions. */
   idempotencyKey?: string;
   fileSizeBytes?: number;
@@ -576,6 +579,7 @@ export class MemoryStorage implements IStorageProvider {
 
     const id = `job_${crypto.randomBytes(6).toString('hex')}`;
     const orderId = `ord_${crypto.randomBytes(6).toString('hex')}`;
+    const orientation: PrintOrientation = options.orientation ?? 'auto';
     const fileBuffer = Buffer.from(fileBase64, 'base64');
     const fileChecksum = this.calculateChecksum(fileBuffer);
 
@@ -612,9 +616,12 @@ export class MemoryStorage implements IStorageProvider {
       isDuplex,
       paperSize,
       pageRange: options.pageRange,
+      orientation,
       customerName: options.customerName,
       customerPhone: options.customerPhone,
-      printConfig: { pageCount, copies, isColor, isDuplex, paperSize, pageRange: options.pageRange },
+      printConfig: {
+        pageCount, copies, isColor, isDuplex, paperSize, pageRange: options.pageRange, orientation,
+      },
       totalPriceInCents: priceSnapshot.totalPriceInCents,
       priceSnapshot,
       paymentState: autoApprovePayment ? PaymentState.Paid : PaymentState.Pending,

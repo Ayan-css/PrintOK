@@ -149,6 +149,96 @@ public class DocumentRasterizerTests
         finally { File.Delete(path); }
     }
 
+    /// <summary>
+    /// The colour has to be gone from the bitmap, not merely unrequested.
+    ///
+    /// This is the fix for a shop that printed the same mono job on two
+    /// printers and got black and white on one and full colour on the other.
+    /// Asking Windows for mono sets dmColor in the DEVMODE and a driver is free
+    /// to ignore it — many do. A grey bitmap has nothing left to ignore.
+    /// </summary>
+    [Fact]
+    public void Prints_black_and_white_as_black_and_white()
+    {
+        string path = Fixture("colourful.png");
+
+        using (var bitmap = new SKBitmap(120, 90))
+        {
+            using (var canvas = new SKCanvas(bitmap))
+            {
+                canvas.Clear(SKColors.White);
+                using var red = new SKPaint { Color = new SKColor(220, 20, 20) };
+                canvas.DrawRect(0, 0, 60, 90, red);
+                using var blue = new SKPaint { Color = new SKColor(20, 20, 220) };
+                canvas.DrawRect(60, 0, 60, 90, blue);
+            }
+            using var image = SKImage.FromBitmap(bitmap);
+            using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+            File.WriteAllBytes(path, data.ToArray());
+        }
+
+        try
+        {
+            using var doc = DocumentRasterizer.Open(path, NullLogger.Instance);
+            Assert.NotNull(doc);
+
+            using var colour = SKBitmap.Decode(doc!.RenderPagePng(0, grayscale: false));
+            using var grey = SKBitmap.Decode(doc.RenderPagePng(0, grayscale: true));
+
+            // The colour rendering keeps the red and the blue.
+            Assert.Contains(EveryTenthPixel(colour), c => c.Red > c.Blue + 40);
+            Assert.Contains(EveryTenthPixel(colour), c => c.Blue > c.Red + 40);
+
+            // The grey one has no channel difference left anywhere.
+            foreach (SKColor pixel in EveryTenthPixel(grey))
+            {
+                Assert.Equal(pixel.Red, pixel.Green);
+                Assert.Equal(pixel.Green, pixel.Blue);
+            }
+
+            // And it is still a rendering of the page rather than one flat
+            // tone. The fixture is two solid halves, so it should come out as
+            // exactly two greys — and they must differ, because weighting by
+            // luminance is what keeps a red heading distinguishable from a blue
+            // one. Averaging the channels would render both halves as the same
+            // grey and lose the page's structure entirely.
+            var shades = EveryTenthPixel(grey).Select(c => c.Red).Distinct().OrderBy(v => v).ToList();
+            Assert.Equal(2, shades.Count);
+            Assert.True(shades[1] - shades[0] > 20,
+                $"the two halves came out as near-identical greys ({shades[0]} and {shades[1]}), "
+                + "which is what averaging the channels would do");
+        }
+        finally { File.Delete(path); }
+    }
+
+    /// <summary>
+    /// A page with nothing drawn on it must come out white, not black.
+    ///
+    /// A PDF page is transparent where nothing was drawn, and a premultiplied
+    /// transparent pixel goes through a luminance matrix as black — which would
+    /// turn every margin on every mono job into solid toner.
+    /// </summary>
+    [Fact]
+    public void Leaves_the_empty_parts_of_a_grey_page_white()
+    {
+        string? path = SeparatorSheet.TryCreate("invoice", 3, NullLogger.Instance);
+        Assert.NotNull(path);
+
+        try
+        {
+            using var doc = DocumentRasterizer.Open(path!, NullLogger.Instance);
+            using var grey = SKBitmap.Decode(doc!.RenderPagePng(0, grayscale: true));
+
+            var pixels = EveryTenthPixel(grey).ToList();
+            Assert.Contains(pixels, c => c.Red > 240);
+            // A sheet of mostly-empty A4 must be mostly white.
+            Assert.True(
+                pixels.Count(c => c.Red > 240) > pixels.Count / 2,
+                "an almost-empty page came out dark, which would empty a toner cartridge");
+        }
+        finally { File.Delete(path!); }
+    }
+
     private static IEnumerable<SKColor> EveryTenthPixel(SKBitmap bitmap)
     {
         for (int y = 0; y < bitmap.Height; y += 10)
