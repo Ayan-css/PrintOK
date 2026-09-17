@@ -108,6 +108,11 @@
         letter-spacing: -0.02em;
       }
 
+      .hook-word {
+        display: inline-block;
+        opacity: 0;
+      }
+
       /* ---------- Scene 2: Reveal ---------- */
 
       .poster-card {
@@ -217,6 +222,11 @@
         white-space: nowrap;
       }
 
+      .rl-word {
+        display: inline-block;
+        opacity: 0;
+      }
+
       /* ---------- Scene 3: Flow speedrun ---------- */
 
       .flow-label {
@@ -232,6 +242,11 @@
         border-radius: 14px;
         padding: 14px 34px;
         white-space: nowrap;
+      }
+
+      .flow-word {
+        display: inline-block;
+        opacity: 0;
       }
 
       /* ---------- Scene 4: Payoff ---------- */
@@ -263,9 +278,14 @@
         font-family: "Space Grotesk", sans-serif;
         font-weight: 900;
         font-size: 96px;
-        color: var(--secondary);
         margin: 6px 0;
         letter-spacing: -0.01em;
+        background-image: linear-gradient(90deg, #f5c400 0%, #fff6cf 45%, #f5c400 90%, #f5c400 100%);
+        background-size: 260% 100%;
+        background-position: 100% 50%;
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
       }
 
       .token-sub {
@@ -327,6 +347,11 @@
         font-weight: 900;
       }
 
+      .stat-num {
+        font-variant-numeric: tabular-nums;
+        display: inline-block;
+      }
+
       .closing-card {
         position: absolute;
         text-align: center;
@@ -343,6 +368,15 @@
         margin: 0 0 22px;
       }
 
+      .mark-emoji {
+        display: inline-block;
+      }
+
+      .mark-letter {
+        display: inline-block;
+        opacity: 0;
+      }
+
       .closing-tagline {
         font-size: 32px;
         color: #e8e5db;
@@ -351,10 +385,21 @@
         line-height: 1.4;
       }
 
+      .tagline-word {
+        display: inline-block;
+        opacity: 0;
+      }
+
       .closing-disclaimer {
         margin-top: 34px;
         font-size: 22px;
         font-style: italic;
+        color: #8d8980;
+      }
+
+      .type-cursor {
+        display: inline-block;
+        margin-left: 2px;
         color: #8d8980;
       }
     </style>
@@ -372,7 +417,9 @@
         <div class="scene-bg paper"></div>
         <div class="hook-card" id="hookCard">
           <div class="hook-qr" id="hookQr">▦</div>
-          <h1 class="hook-text display">Your printer already works.</h1>
+          <h1 class="hook-text display">
+            <span class="hook-word" id="hw1">Your</span> <span class="hook-word" id="hw2">printer</span> <span class="hook-word" id="hw3">already</span> <span class="hook-word" id="hw4">works.</span>
+          </h1>
         </div>
       </section>
 
@@ -392,7 +439,7 @@
           <img src="assets/images/01-upload.webp" alt="PrintOk upload screen" />
         </div>
         <div class="clip scene-label" id="revealLabel" data-start="4.3" data-duration="1.2">
-          Scan. Upload.
+          <span class="rl-word" id="rlScan">Scan.</span> <span class="rl-word" id="rlUpload">Upload.</span>
         </div>
       </section>
 
@@ -426,13 +473,13 @@
           />
         </div>
         <div class="clip flow-label" id="flowLabel1" data-start="5.5" data-duration="1.3">
-          Sees the pages
+          <span class="flow-word">Sees</span> <span class="flow-word">the</span> <span class="flow-word">pages</span>
         </div>
         <div class="clip flow-label" id="flowLabel2" data-start="6.8" data-duration="1.3">
-          Picks copies &amp; colour
+          <span class="flow-word">Picks</span> <span class="flow-word">copies</span> <span class="flow-word">&amp;</span> <span class="flow-word">colour</span>
         </div>
         <div class="clip flow-label" id="flowLabel3" data-start="8.1" data-duration="1.9">
-          Pays on their own phone
+          <span class="flow-word">Pays</span> <span class="flow-word">on</span> <span class="flow-word">their</span> <span class="flow-word">own</span> <span class="flow-word">phone</span>
         </div>
       </section>
 
@@ -476,18 +523,20 @@
         <div class="scene-bg paper"></div>
 
         <div class="clip stat-row" id="statRow" data-start="14" data-duration="1.2">
-          <div class="stat-chip"><span>5 min</span>setup</div>
-          <div class="stat-chip"><span>₹0</span>new hardware</div>
-          <div class="stat-chip"><span>7</span>file types</div>
+          <div class="stat-chip"><span><span class="stat-num" id="statNum1">0</span> min</span>setup</div>
+          <div class="stat-chip"><span id="statZero">₹0</span>new hardware</div>
+          <div class="stat-chip"><span class="stat-num" id="statNum3">0</span>file types</div>
         </div>
 
         <div class="clip closing-card" id="closingCard" data-start="14.9" data-duration="4.1">
-          <p class="closing-mark">🖨️ PrintOk</p>
+          <p class="closing-mark">
+            <span class="mark-emoji">🖨️</span> <span class="mark-letter" id="ml1">P</span><span class="mark-letter" id="ml2">r</span><span class="mark-letter" id="ml3">i</span><span class="mark-letter" id="ml4">n</span><span class="mark-letter" id="ml5">t</span><span class="mark-letter" id="ml6">O</span><span class="mark-letter" id="ml7">k</span>
+          </p>
           <p class="closing-tagline">
-            Turn the printer you already own into a print station.
+            <span class="tagline-word">Turn</span> <span class="tagline-word">the</span> <span class="tagline-word">printer</span> <span class="tagline-word">you</span> <span class="tagline-word">already</span> <span class="tagline-word">own</span> <span class="tagline-word">into</span> <span class="tagline-word">a</span> <span class="tagline-word">print</span> <span class="tagline-word">station.</span>
           </p>
           <p class="clip closing-disclaimer" id="disclaimer" data-start="16.6" data-duration="2.4">
-            Untested on an actual printer. Confident anyway.
+            <span id="disclaimerText"></span><span class="type-cursor" id="disclaimerCursor">|</span>
           </p>
         </div>
       </section>
@@ -593,6 +642,33 @@
         0.35,
       );
 
+      // Kinetic per-word slam — each word gets a distinct entrance axis
+      // (kinetic-beat-slam), landing fast so a 2.5s scene still holds ~1.6s.
+      tl.fromTo(
+        "#hw1",
+        { scale: 1.6, opacity: 0, filter: "blur(18px)" },
+        { scale: 1, opacity: 1, filter: "blur(0px)", duration: 0.32, ease: "power4.out" },
+        0.35,
+      );
+      tl.fromTo(
+        "#hw2",
+        { x: -50, opacity: 0 },
+        { x: 0, opacity: 1, duration: 0.3, ease: "expo.out" },
+        0.47,
+      );
+      tl.fromTo(
+        "#hw3",
+        { y: 34, rotation: 6, opacity: 0 },
+        { y: 0, rotation: 0, opacity: 1, duration: 0.32, ease: "circ.out" },
+        0.59,
+      );
+      tl.fromTo(
+        "#hw4",
+        { scale: 0.3, rotation: -8, opacity: 0 },
+        { scale: 1, rotation: 0, opacity: 1, duration: 0.36, ease: "back.out(2.4)" },
+        0.71,
+      );
+
       // ---------- Scene 2: Reveal ----------
       tl.fromTo(
         "#posterCard",
@@ -607,11 +683,18 @@
         { scale: 1, opacity: 1, duration: 0.3, ease: "power2.out" },
         4.15,
       );
+      // Two discrete beats instead of one flat label fade.
       tl.fromTo(
-        "#revealLabel",
-        { y: 20, opacity: 0 },
-        { y: 0, opacity: 1, duration: 0.3, ease: "power2.out" },
+        "#rlScan",
+        { y: 14, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.18, ease: "power2.out" },
         4.35,
+      );
+      tl.fromTo(
+        "#rlUpload",
+        { scale: 0.5, opacity: 0 },
+        { scale: 1, opacity: 1, duration: 0.24, ease: "back.out(2.2)" },
+        4.55,
       );
 
       // ---------- Scene 3: Flow speedrun ----------
@@ -633,9 +716,9 @@
         ["#flowLabel3", 8.1],
       ].forEach(function (pair) {
         tl.fromTo(
-          pair[0],
+          pair[0] + " .flow-word",
           { y: 16, opacity: 0 },
-          { y: 0, opacity: 1, duration: 0.22, ease: "power2.out" },
+          { y: 0, opacity: 1, duration: 0.22, ease: "back.out(1.8)", stagger: 0.05 },
           pair[1],
         );
       });
@@ -653,6 +736,16 @@
         { scale: 0.85, opacity: 0 },
         { scale: 1, opacity: 1, duration: 0.35, ease: "back.out(1.5)" },
         11.35,
+      );
+
+      // Gradient text sweep across the Token number as the card settles — the
+      // signature payoff moment. ease "none": a sweep reads as light, not an
+      // accelerating object.
+      tl.fromTo(
+        ".token-number",
+        { backgroundPosition: "100% 50%" },
+        { backgroundPosition: "0% 50%", duration: 1.0, ease: "none" },
+        11.75,
       );
 
       var badgeSteps = [
@@ -685,6 +778,38 @@
         { y: 0, opacity: 1, duration: 0.28, ease: "back.out(1.6)", stagger: 0.08 },
         14.05,
       );
+
+      // Mini count-up on chips 1 & 3, synced to each chip's own stagger slot
+      // (counting-dynamic-scale: smooth ease on the counter itself, never
+      // back.out/elastic — the container already carries the springy pop).
+      [
+        { id: "statNum1", target: 5, at: 14.05 },
+        { id: "statNum3", target: 7, at: 14.21 },
+      ].forEach(function (stat) {
+        var el = document.getElementById(stat.id);
+        var state = { value: 0 };
+        tl.to(
+          state,
+          {
+            value: stat.target,
+            duration: 0.22,
+            ease: "power2.out",
+            onUpdate: function () {
+              el.textContent = Math.round(state.value).toLocaleString();
+            },
+          },
+          stat.at,
+        );
+      });
+      // The ₹0 chip has nothing to count up to — a quick double-pulse instead,
+      // the wink at "there's really nothing here."
+      tl.fromTo(
+        "#statZero",
+        { scale: 1 },
+        { scale: 1.18, duration: 0.14, yoyo: true, repeat: 1, ease: "power1.inOut" },
+        14.13,
+      );
+
       tl.to("#statRow", { opacity: 0, duration: 0.25, ease: "power1.in" }, 14.75);
       tl.fromTo(
         "#closingCard",
@@ -692,12 +817,49 @@
         { y: 0, opacity: 1, scale: 1, duration: 0.4, ease: "power3.out" },
         14.95,
       );
+
+      // Kinetic logo assemble — the icon lands with the card, then the
+      // wordmark's letters pop in one at a time (logo-assemble-lockup).
       tl.fromTo(
-        "#disclaimer",
-        { opacity: 0 },
-        { opacity: 1, duration: 0.4, ease: "power1.out" },
-        16.65,
+        "#ml1, #ml2, #ml3, #ml4, #ml5, #ml6, #ml7",
+        { y: 18, scale: 0.4, opacity: 0 },
+        { y: 0, scale: 1, opacity: 1, duration: 0.3, ease: "back.out(2.2)", stagger: 0.05 },
+        15.4,
       );
+
+      // Tagline builds word-by-word right after the wordmark settles.
+      tl.fromTo(
+        ".tagline-word",
+        { y: 10, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.22, ease: "power2.out", stagger: 0.035 },
+        16.0,
+      );
+
+      // Typewriter disclaimer — smooth character slice with a blinking caret;
+      // fits the dry deadpan punchline better than a flat fade (typewriter-reveal).
+      (function () {
+        var fullText = "Untested on an actual printer. Confident anyway.";
+        var textEl = document.getElementById("disclaimerText");
+        var len = { v: 0 };
+        tl.to(
+          len,
+          {
+            v: fullText.length,
+            duration: 1.2,
+            ease: "power1.inOut",
+            onUpdate: function () {
+              textEl.textContent = fullText.substring(0, Math.floor(len.v));
+            },
+          },
+          16.65,
+        );
+        // Deterministic finite blink — no repeat:-1.
+        tl.to(
+          "#disclaimerCursor",
+          { opacity: 0, duration: 0.25, ease: "none", yoyo: true, repeat: 8 },
+          16.65,
+        );
+      })();
 
       // ---------- Audio ----------
       tl.fromTo("#bgm", { volume: 0 }, { volume: 0.32, duration: 0.4, ease: "power1.out" }, 0.1);
