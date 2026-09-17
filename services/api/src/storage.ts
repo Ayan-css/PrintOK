@@ -9,6 +9,7 @@ import { S3StorageService } from './s3Storage';
 import { calculateJobPriceBreakdown, calculateGridPriceBreakdown, buildDefaultRateCard, DEFAULT_PRICING_CONFIG } from './pricing';
 import { canTransitionPrintState, canTransitionPaymentState, isDocumentPurgeable } from './jobStateMachine';
 import { isStale, recoveryActionFor } from './jobRecovery';
+import { isDocumentExpired } from './documentRetention';
 
 /** Optional inputs captured at job creation (PRD 9, 11). */
 export interface CreateJobOptions {
@@ -346,6 +347,20 @@ export interface IStorageProvider {
   }): Promise<void>;
   /** Stores what was split to the shop and retained by PrintOk for one job. */
   recordJobSettlement(jobId: string, transferAmountCents: number, serviceFeeCents: number): Promise<void>;
+
+  /**
+   * Deletes documents for jobs that have come to rest and will not be printed.
+   *
+   * Purging used to happen only on a state transition, so a job that never
+   * transitioned again kept its document for ever — and Created,
+   * AwaitingPayment, HeldForRelease, Queued and RequiresShopAction are exactly
+   * where an abandoning customer lands. Upload a file, close the tab before
+   * paying, and it was stored indefinitely. The published privacy policy
+   * promised otherwise.
+   *
+   * Safe to call repeatedly; it only acts on jobs past their window.
+   */
+  purgeAbandonedDocuments(now?: Date): Promise<{ purged: string[] }>;
 
   /**
    * A short-lived link to a job's document, for a caller already authorised to
@@ -1158,6 +1173,27 @@ export class MemoryStorage implements IStorageProvider {
     job.transferAmountCents = transferAmountCents;
     job.serviceFeeCents = serviceFeeCents;
     this.printJobs.set(jobId, job);
+  }
+
+  public async purgeAbandonedDocuments(now: Date = new Date()): Promise<{ purged: string[] }> {
+    const purged: string[] = [];
+
+    for (const job of this.printJobs.values()) {
+      if (job.documentDeletedAt || !job.s3Key) continue;
+      if (!isDocumentExpired(job.printState, job.createdAt, now)) continue;
+
+      await this.s3Service.deleteDocument(job.s3Key);
+      job.documentDeletedAt = now.toISOString();
+      job.fileUrl = '';
+      this.printJobs.set(job.id, job);
+      this.appendEvent(job.id, 'DOCUMENT_PURGED', job.printState, job.printState, {
+        actor: 'system',
+        detail: { reason: 'retention window elapsed' },
+      });
+      purged.push(job.id);
+    }
+
+    return { purged };
   }
 
   public async createJobDownloadUrl(jobId: string): Promise<string | null> {

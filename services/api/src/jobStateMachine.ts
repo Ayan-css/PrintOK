@@ -39,6 +39,37 @@ export const DOCUMENT_REQUIRED_STATES: ReadonlySet<PrintState> = new Set([
   PrintState.RequiresShopAction,
 ]);
 
+/**
+ * Where a job comes to rest with nobody having paid.
+ *
+ * A document here is abandoned: the customer opened the page, uploaded a file
+ * and left. Nobody is coming back to a checkout from hours ago, and holding
+ * someone's personal file because they changed their mind serves no one.
+ */
+export const UNPAID_RESTING_STATES: ReadonlySet<PrintState> = new Set([
+  PrintState.Created,
+  PrintState.AwaitingPayment,
+]);
+
+/**
+ * Where a job comes to rest having been paid for but not printed.
+ *
+ * These get a much longer window than the unpaid ones, deliberately. Money
+ * changed hands and the shop can still deliver: purging on a short timer would
+ * mean a counter PC switched off overnight, or a job the shop has not released
+ * yet, loses the document it was paid to print. That is worse for the customer
+ * than the retention itself.
+ *
+ * Assigned, Downloading and Printing are deliberately absent — those are
+ * in-flight, and reclaimStaleJobs already requeues or escalates them, so
+ * sweeping them by age as well would fight it.
+ */
+export const PAID_RESTING_STATES: ReadonlySet<PrintState> = new Set([
+  PrintState.Queued,
+  PrintState.HeldForRelease,
+  PrintState.RequiresShopAction,
+]);
+
 const PRINT_TRANSITIONS: Readonly<Record<PrintState, readonly PrintState[]>> = {
   [PrintState.Created]: [
     PrintState.AwaitingPayment,

@@ -30,6 +30,82 @@ export const ALLOWED_EXTENSIONS = [
 ];
 
 /**
+ * What each accepted extension must actually start with.
+ *
+ * The allowlist checked the extension and nothing else, and for Office formats
+ * the consequence is not theoretical: the agent cannot render those itself, so
+ * it hands them to the OS-registered handler on the shop's counter PC via the
+ * `printto` verb, unattended and with no operator review. Whatever the bytes
+ * turn out to be, Word or Excel is asked to open them.
+ *
+ * So the bytes have to agree with the name before the file is accepted. `null`
+ * means the format has no reliable signature to check — CSV is genuinely just
+ * text — and those are checked for absence of a *different* format's signature
+ * instead, so a PDF or an archive cannot arrive wearing a .csv suffix.
+ *
+ * Every Office format here is a ZIP container (PK\x03\x04); .doc and .xls are
+ * the older OLE compound file (D0 CF 11 E0). Both are checked, since .doc is
+ * accepted and may legitimately be either.
+ */
+const MAGIC_BYTES: Record<string, readonly Buffer[] | null> = {
+  '.pdf': [Buffer.from('%PDF')],
+  '.jpg': [Buffer.from([0xff, 0xd8, 0xff])],
+  '.jpeg': [Buffer.from([0xff, 0xd8, 0xff])],
+  '.png': [Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
+  '.webp': [Buffer.from('RIFF')], // 'WEBP' sits at offset 8; checked separately
+  '.docx': [Buffer.from([0x50, 0x4b, 0x03, 0x04])],
+  '.xlsx': [Buffer.from([0x50, 0x4b, 0x03, 0x04])],
+  '.pptx': [Buffer.from([0x50, 0x4b, 0x03, 0x04])],
+  // Either the modern ZIP container or the legacy OLE compound file.
+  '.doc': [Buffer.from([0xd0, 0xcf, 0x11, 0xe0]), Buffer.from([0x50, 0x4b, 0x03, 0x04])],
+  '.csv': null,
+};
+
+/** Signatures that must never appear in a file claiming a signature-less format. */
+const FOREIGN_SIGNATURES: readonly Buffer[] = [
+  Buffer.from('%PDF'),
+  Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+  Buffer.from([0xd0, 0xcf, 0x11, 0xe0]),
+  Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+  Buffer.from([0xff, 0xd8, 0xff]),
+  Buffer.from([0x7f, 0x45, 0x4c, 0x46]), // ELF
+  Buffer.from('MZ'),                      // Windows executable
+];
+
+/**
+ * Whether the file's first bytes match what its name claims.
+ *
+ * Deliberately a shape check, not a parse: it stops a .docx that is really an
+ * executable, which is what matters when the file is about to be opened by
+ * whatever program the shop's PC has registered for that extension. It does not
+ * and cannot establish that the content is safe.
+ */
+export function contentMatchesExtension(ext: string, fileBuffer: Buffer): boolean {
+  if (fileBuffer.length === 0) return false;
+
+  const expected = MAGIC_BYTES[ext];
+
+  if (expected === null) {
+    // No signature of its own, so the test is that it is not pretending to be
+    // something else.
+    return !FOREIGN_SIGNATURES.some((sig) => fileBuffer.subarray(0, sig.length).equals(sig));
+  }
+
+  if (!expected) return false;
+
+  const matches = expected.some((sig) => fileBuffer.subarray(0, sig.length).equals(sig));
+  if (!matches) return false;
+
+  // RIFF alone is also AVI and WAV; the form type at offset 8 is what makes it
+  // a WebP, and the agent's decoder is what would otherwise meet the surprise.
+  if (ext === '.webp') {
+    return fileBuffer.length >= 12 && fileBuffer.subarray(8, 12).toString('latin1') === 'WEBP';
+  }
+
+  return true;
+}
+
+/**
  * Validates document format and calculates server-verified page count.
  */
 export async function processDocument(
@@ -45,6 +121,20 @@ export async function processDocument(
       mimeType: 'unknown',
       isSupported: false,
       errorMessage: `Unsupported file format '${ext}'. Allowed formats: PDF, Images (JPG, PNG, WEBP), Word (.docx), Excel (.xlsx), CSV.`,
+    };
+  }
+
+  // The name says one thing; the bytes have to agree. Refused before the file
+  // is stored, priced or handed to the shop's PC.
+  if (!contentMatchesExtension(ext, fileBuffer)) {
+    return {
+      pageCount: 0,
+      format: 'unknown',
+      mimeType: 'unknown',
+      isSupported: false,
+      errorMessage:
+        `This file does not look like a ${ext.replace('.', '').toUpperCase()} inside, whatever it is named. ` +
+        'Re-export it and try again.',
     };
   }
 

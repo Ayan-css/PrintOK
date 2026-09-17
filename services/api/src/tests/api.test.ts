@@ -47,6 +47,22 @@ function signWebhook(rawBody: string): string {
  * Note what it does not cover: the job. That omission is the whole reason the
  * confirm endpoint needs a stored order id to bind a payment to a job.
  */
+/**
+ * A genuine 1x1 PNG: signature, IHDR, IDAT and IEND.
+ *
+ * Real bytes rather than a stub string, because uploads are now checked against
+ * the format their name claims. A fixture that only pretended to be a PNG would
+ * prove nothing about the PNG path — and stub fixtures are exactly why a broken
+ * PDF page count went unnoticed for so long.
+ *
+ * Module scope on purpose: declared inside the suite it sat below the tests
+ * that use it, and a const is not initialised until its own line runs.
+ */
+const PNG_1X1 = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC',
+  'base64'
+);
+
 function signCheckout(orderId: string, paymentId: string): string {
   return crypto.createHmac('sha256', TEST_KEY_SECRET).update(`${orderId}|${paymentId}`).digest('hex');
 }
@@ -275,7 +291,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
   });
 
   await t.test('6. Multi-Format Upload (Image & Word Document)', async () => {
-    const pngBase64 = Buffer.from('fake_png_data').toString('base64');
+    const pngBase64 = PNG_1X1.toString('base64');
     
     // Image upload (PNG) -> should verify as 1 page
     const imgRes = await fetch(`${baseUrl}/api/print-jobs`, {
@@ -3470,6 +3486,103 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     // what the authenticated agent path does.
     const link = await storage.createJobDownloadUrl(jobId);
     assert.ok(link, 'the agent can still obtain the document');
+  });
+
+  await t.test('84. A file must be what its name claims', async () => {
+    // The allowlist checked the extension and nothing else. That matters most
+    // for Office formats: the agent cannot render those, so it hands them to
+    // whatever program the shop's PC has registered for that extension, via the
+    // printto verb, unattended and with no operator review.
+    const shop = await shopWithAuth('Magic Co', 'magic@example.com', 'MagicPass123');
+
+    const submit = (fileName: string, bytes: Buffer) =>
+      fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          printerId: shop.printerId, fileName,
+          fileBase64: bytes.toString('base64'),
+          copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+        }),
+      });
+
+    // A Windows executable wearing a .docx suffix is the case that would have
+    // been opened by Word on the counter PC.
+    const executable = Buffer.concat([Buffer.from('MZ'), Buffer.alloc(64, 0x90)]);
+    const disguised = await submit('invoice.docx', executable);
+    assert.strictEqual(disguised.status, 400);
+    assert.match(((await disguised.json()) as any).error, /does not look like/i);
+
+    // Same for a PDF that is not one, and an image that is not one.
+    assert.strictEqual((await submit('notes.pdf', Buffer.from('just text'))).status, 400);
+    assert.strictEqual((await submit('photo.png', Buffer.from('just text'))).status, 400);
+
+    // A PDF pretending to be a CSV is refused too, even though CSV has no
+    // signature of its own to check against.
+    assert.strictEqual((await submit('sheet.csv', makePdf(1))).status, 400);
+
+    // And the real things still go through.
+    assert.strictEqual((await submit('real.pdf', makePdf(2))).status, 201);
+    assert.strictEqual((await submit('real.png', PNG_1X1)).status, 201);
+    // A genuine CSV is genuinely just text.
+    assert.strictEqual((await submit('real.csv', Buffer.from('name,qty\nink,2\n'))).status, 201);
+  });
+
+  await t.test('85. An abandoned document is eventually deleted', async () => {
+    // Purging happened only on a state transition, so a job that never
+    // transitioned again kept the customer's file for ever — and abandoning a
+    // checkout is precisely how a job stops transitioning. Upload, close the
+    // tab before paying, and it was stored indefinitely against a privacy
+    // policy that promised otherwise.
+    const shop = await shopWithAuth('Retention Co', 'retention@example.com', 'RetentionPass1');
+
+    const abandon = async (fileName: string) => {
+      const res = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          printerId: shop.printerId, fileName,
+          fileBase64: makePdf(1).toString('base64'),
+          copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+        }),
+      });
+      return ((await res.json()) as any).job.id as string;
+    };
+
+    const unpaid = await abandon('abandoned.pdf');
+
+    // Nothing is swept while it is still inside its window.
+    const untouched = await storage.purgeAbandonedDocuments(new Date());
+    assert.ok(!untouched.purged.includes(unpaid), 'a fresh job keeps its document');
+    assert.ok(await storage.createJobDownloadUrl(unpaid), 'and the document is still there');
+
+    // Three hours later the unpaid window (two hours) has elapsed.
+    const threeHoursOn = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    const swept = await storage.purgeAbandonedDocuments(threeHoursOn);
+    assert.ok(swept.purged.includes(unpaid), 'an abandoned unpaid document is deleted');
+
+    const after = await storage.getPrintJob(unpaid);
+    assert.ok(after?.documentDeletedAt, 'and the deletion is recorded');
+    assert.strictEqual(after?.fileUrl, '', 'the usable reference is cleared');
+    assert.strictEqual(await storage.createJobDownloadUrl(unpaid), null,
+      'and no new link can be minted for it');
+
+    // The sweep is idempotent: a second pass does not re-report it.
+    const again = await storage.purgeAbandonedDocuments(threeHoursOn);
+    assert.ok(!again.purged.includes(unpaid), 'already-purged jobs are not swept twice');
+
+    // A paid job the shop has not printed yet keeps its document far longer —
+    // purging that on the unpaid timer would destroy work already paid for.
+    const paidJob = await abandon('paid-waiting.pdf');
+    await fetch(`${baseUrl}/api/print-jobs/${paidJob}/manual-override`, {
+      method: 'POST', headers: shop.auth,
+    });
+    const paidAfterThreeHours = await storage.purgeAbandonedDocuments(threeHoursOn);
+    assert.ok(!paidAfterThreeHours.purged.includes(paidJob),
+      'a paid job still waiting for a printer keeps its document');
+
+    // But not indefinitely.
+    const eightDaysOn = new Date(Date.now() + 8 * 24 * 60 * 60 * 1000);
+    const eventually = await storage.purgeAbandonedDocuments(eightDaysOn);
+    assert.ok(eventually.purged.includes(paidJob), 'retention is bounded even for paid jobs');
   });
 
   server.close();

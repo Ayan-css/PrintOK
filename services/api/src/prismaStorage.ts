@@ -21,6 +21,8 @@ import { canTransitionPrintState, canTransitionPaymentState, isDocumentPurgeable
 import {
   recoveryActionFor, ASSIGNED_STALE_MS, DOWNLOADING_STALE_MS, PRINTING_STALE_MS,
 } from './jobRecovery';
+import { retentionCutoffs } from './documentRetention';
+import { UNPAID_RESTING_STATES, PAID_RESTING_STATES } from './jobStateMachine';
 
 const HEARTBEAT_ONLINE_WINDOW_MS = 45_000;
 
@@ -1211,6 +1213,61 @@ export class PrismaStorage implements IStorageProvider {
       where: { id: jobId },
       data: { transferAmountCents, serviceFeeCents },
     });
+  }
+
+  public async purgeAbandonedDocuments(now: Date = new Date()): Promise<{ purged: string[] }> {
+    const { unpaidBefore, paidBefore } = retentionCutoffs(now);
+
+    // Bounded, and selected by state and age rather than scanned, so a large
+    // backlog costs several passes instead of one long transaction.
+    const expired = await this.prisma.printJob.findMany({
+      where: {
+        documentDeletedAt: null,
+        s3Key: { not: null },
+        OR: [
+          {
+            printState: { in: [...UNPAID_RESTING_STATES] },
+            createdAt: { lt: unpaidBefore },
+          },
+          {
+            printState: { in: [...PAID_RESTING_STATES] },
+            createdAt: { lt: paidBefore },
+          },
+        ],
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 200,
+    });
+
+    const purged: string[] = [];
+
+    for (const job of expired) {
+      try {
+        if (job.s3Key) await this.s3Service.deleteDocument(job.s3Key);
+
+        // Stamped only after the object is actually gone, so a storage failure
+        // leaves the job eligible for the next pass rather than marking it
+        // purged while the document is still there.
+        await this.prisma.printJob.update({
+          where: { id: job.id },
+          data: { documentDeletedAt: now, fileUrl: '' },
+        });
+
+        await this.recordEvent(
+          job.id, 'DOCUMENT_PURGED', job.printState, job.printState,
+          'system', { reason: 'retention window elapsed' }
+        );
+
+        purged.push(job.id);
+      } catch (err: any) {
+        console.error(
+          `[PrintOk Retention] Could not purge the document for job ${job.id}:`,
+          err?.message || err
+        );
+      }
+    }
+
+    return { purged };
   }
 
   public async createJobDownloadUrl(jobId: string): Promise<string | null> {

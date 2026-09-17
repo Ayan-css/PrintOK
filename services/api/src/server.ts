@@ -4,6 +4,7 @@ import { assertRequiredEnv } from './env';
 import http from 'http';
 import { createApp } from './app';
 import { MemoryStorage, IStorageProvider } from './storage';
+import { UNPAID_RETENTION_MINUTES, PAID_RETENTION_HOURS } from './documentRetention';
 import { AgentWebSocketServer } from './ws';
 import { runMigrations } from './migrate';
 
@@ -56,6 +57,21 @@ async function startServer() {
       // A failed sweep must never take the API down; the next tick retries.
       console.error('[PrintOk Recovery] Sweep failed:', err?.message || err);
     }
+
+    // Documents whose job has stopped moving and will not be printed.
+    //
+    // Purging used to happen only on a state transition, so a job that never
+    // transitioned again kept the customer's file for ever — and abandoning a
+    // checkout is precisely how a job stops transitioning. Separate try/catch
+    // so a storage outage cannot take the recovery sweep down with it.
+    try {
+      const { purged } = await storage.purgeAbandonedDocuments();
+      if (purged.length) {
+        console.log(`[PrintOk Retention] Purged ${purged.length} abandoned document(s).`);
+      }
+    } catch (err: any) {
+      console.error('[PrintOk Retention] Sweep failed:', err?.message || err);
+    }
   }, RECLAIM_INTERVAL_MS);
 
   // Do not hold the process open purely for the sweeper.
@@ -64,6 +80,10 @@ async function startServer() {
   server.listen(PORT, () => {
     console.log(`[PrintOk Cloud API] Listening on http://localhost:${PORT} (WS: ws://localhost:${PORT}/ws/agent)`);
     console.log(`[PrintOk Recovery] Stale-job sweep every ${RECLAIM_INTERVAL_MS / 1000}s.`);
+    console.log(
+      `[PrintOk Retention] Unpaid documents kept ${UNPAID_RETENTION_MINUTES}m, ` +
+      `paid-but-unprinted ${PAID_RETENTION_HOURS}h.`
+    );
   });
 }
 
