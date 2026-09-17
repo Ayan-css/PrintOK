@@ -41,15 +41,24 @@ Wordmark card: "🖨️ PrintOk" with the tagline "Turn the printer you already 
 ## Share copy (draft)
 Turned any shop's printer into a QR code. Scan, upload, pay, print — no new hardware. (Still waiting to test it on an actual printer.)
 
-## Audio direction
-- Role: warm, upbeat bed carrying the whole edit; light UI accents on screen swaps, one clear success cue on the token payoff
-- Music: `happy-beats-business-moves-vol-1-by-ende-dot-app.mp3` (120.19 BPM, most energetic — matches `default`)
-- Music treatment: starts at 0, low-in under the hook slam, steady at 0.30-0.35 through the flow, brief pull-back under the outro disclaimer line, soft fade-out on the final logo hold
-- Music cue guidance: bundled preset read (`happy-beats-business-moves-vol-1-by-ende-dot-app.music-cues.json/.md`). Beat grid available at ~0.5s spacing (e.g. 3.02, 3.52, 4.02, 4.53, 5.03...16.02...). No strong cues land inside our 0-19s window (listed strong cues start at 16.02s+), so treat the local beat grid as a light bias for screen-swap timing (align swaps near 4.02s, 9.02s, 10.02s, 13.51s) rather than locking to a "strong cue." Restraint note: keep alignment loose — copy readability and the flow's own rhythm take priority over hitting a beat exactly.
-- Audio-reactive treatment: subtle; let the purple token card's glow / the black card borders' presence breathe slightly with music RMS. No waveform or equalizer visuals.
-- SFX posture: moderate — 4-5 cues total, matching `default` tone energy
-- Audio-coupled moments: hook card slam (impact), each phone-screen swap in the flow speedrun (card-slide/drop), the Token card reveal (success bell), the outro logo settle (soft drop)
-- Restraint rule: no SFX under the dry disclaimer line — let that beat land in near-silence against the pulled-back music, so the joke reads as dry rather than hyped
+## Audio direction (revised — voiceover pass)
+- Role: Kokoro voiceover (`am_adam`) carries the whole edit; music removed entirely per explicit request. SFX cues kept, retimed to the voice-driven schedule.
+- Music: none — removed on request. The original `default`-tone music bed (`happy-beats-business-moves-vol-1-by-ende-dot-app.mp3`, 120.19 BPM) and its volume-automation/beat-grid notes are superseded by this revision.
+- Voiceover: single narration track, 16.32s, drives scene pacing — durations below are word-count-proportional splits of that measured length, not fixed guesses. The closing disclaimer line stays deliberately unvoiced: it types out silently after the narration ends, so the dry joke lands after the confident voiceover has already finished rather than being spoken over.
+- Audio-reactive treatment: dropped along with the music (there is no bed left to react to).
+- SFX posture: unchanged — the same 5 cues (hook slam, poster-cut click, two flow card-slides, payoff bell, stat drop), retimed to the new scene boundaries.
+- Restraint rule: no SFX under the disclaimer line, same as before — it now plays against near-total silence rather than a pulled-back bed, which reads even drier.
+
+### Voiceover script
+> Every shop already owns a printer. Put a QR code on the counter, and it's a print station. Customers scan, upload, check the pages, and pay right on their own phone. A token number. Status, live, straight through to print complete. Five minute setup. Zero new hardware. That's PrintOk.
+
+Generated via `npx hyperframes tts --voice am_adam`, measured at 16.32s. Deliberately does not read the on-screen labels verbatim (narration guidance: complement the visuals, don't caption them). Scene timings retimed proportionally to word count against the 16.32s measured duration:
+- Hook (6 words): 0.00–2.00s
+- Reveal (12 words): 2.00–6.00s
+- Flow speedrun (13 words): 6.00–10.33s
+- Payoff (10 words): 10.33–13.66s
+- Outro, voiced part (8 words): 13.66–16.32s
+- Outro, silent tail (wordmark + tagline + disclaimer typewriter): 16.32–20.0s — total runtime extended from 19s to 20s to give this silent button room without rushing it.
 
 ## Storyboard
 
