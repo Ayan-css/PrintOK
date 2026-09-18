@@ -399,8 +399,49 @@ export function createApp(
     legacyHeaders: false,
   });
 
+  /**
+   * A tighter limit for the routes that guess-or-guess-not.
+   *
+   * Signup and the two logins were behind no limiter at all, and signup does
+   * *more* work than the registration route sitting next to it: it hashes a
+   * password with scrypt at N=16384, which blocks the single Node event loop
+   * for a measurable time. Sustained unauthenticated signups therefore stalled
+   * the whole API and flooded the shop table at the same time.
+   *
+   * Five a minute per IP is generous for a human signing in and useless for
+   * guessing. Counted per IP and per route, so somebody else's failed logins
+   * cannot lock a shop out of its own dashboard.
+   */
+  const authLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: Number.parseInt(process.env.AUTH_RATE_LIMIT_PER_MINUTE || '', 10) || 5,
+    message: {
+      error: 'Too many attempts from this address. Wait a minute and try again.',
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+    // Successful sign-ins do not count toward the limit: a shop legitimately
+    // signing in on several devices is not an attack, and only the failures
+    // are worth throttling.
+    skipSuccessfulRequests: true,
+  });
+
   app.use('/api/print-jobs', apiLimiter);
   app.use('/api/shops/register', apiLimiter);
+
+  // Unauthenticated, and each one does real work: two database reads for a
+  // quote, a scrypt hash for a signup.
+  app.use('/api/merchant/signup', apiLimiter);
+  app.use('/api/shops/:shopId/quote', apiLimiter);
+
+  // Credential guessing, and the expensive hash that comes with it.
+  app.use('/api/merchant/login', authLimiter);
+  app.use('/api/admin/login', authLimiter);
+  app.use('/api/merchant/claim', authLimiter);
+  app.use('/api/admin/bootstrap', authLimiter);
+  // Pairing consumes a short human-transcribable code; unthrottled it is the
+  // one credential in the system worth guessing at volume.
+  app.use('/api/agent/pair', authLimiter);
 
   // The contact form is unauthenticated and world-reachable, so it gets a much
   // tighter budget than the rest of the public API.

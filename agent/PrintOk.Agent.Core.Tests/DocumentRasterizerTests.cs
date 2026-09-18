@@ -239,6 +239,61 @@ public class DocumentRasterizerTests
         finally { File.Delete(path!); }
     }
 
+    /// <summary>
+    /// A document that declares more pages than the agent will print is
+    /// refused before any of them are rendered.
+    ///
+    /// A PDF can carry thousands of page objects all referencing one shared
+    /// content stream, so it stays tiny on disk while occupying the shop's only
+    /// print agent for as long as it takes — sequentially, with every other
+    /// customer's job waiting behind it, spending real paper the whole way.
+    /// </summary>
+    [Fact]
+    public void Refuses_a_document_with_more_pages_than_it_will_print()
+    {
+        string path = Fixture("enormous.pdf");
+
+        // A page tree far past the cap, built the cheap way: many page objects,
+        // one shared (absent) content stream.
+        int pages = DocumentRasterizer.MaxPages + 50;
+        var kids = string.Join(" ", Enumerable.Range(0, pages).Select(i => $"{3 + i} 0 R"));
+        var body = new System.Text.StringBuilder();
+        body.Append("%PDF-1.4\n");
+        body.Append("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+        body.Append($"2 0 obj\n<< /Type /Pages /Kids [{kids}] /Count {pages} >>\nendobj\n");
+        for (int i = 0; i < pages; i++)
+        {
+            body.Append($"{3 + i} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>\nendobj\n");
+        }
+        body.Append("trailer\n<< /Root 1 0 R >>\n%%EOF\n");
+        File.WriteAllText(path, body.ToString());
+
+        try
+        {
+            // Null, not an exception and not a rasterizer that would then be
+            // asked for two thousand pages.
+            Assert.Null(DocumentRasterizer.Open(path, NullLogger.Instance));
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Prints_a_document_inside_the_page_cap()
+    {
+        // The cap must not refuse an ordinary job. A separator sheet is one page
+        // and is the PDF this codebase writes itself.
+        string? path = SeparatorSheet.TryCreate("invoice", 3, NullLogger.Instance);
+        Assert.NotNull(path);
+
+        try
+        {
+            using var doc = DocumentRasterizer.Open(path!, NullLogger.Instance);
+            Assert.NotNull(doc);
+            Assert.InRange(doc!.PageCount, 1, DocumentRasterizer.MaxPages);
+        }
+        finally { File.Delete(path!); }
+    }
+
     private static IEnumerable<SKColor> EveryTenthPixel(SKBitmap bitmap)
     {
         for (int y = 0; y < bitmap.Height; y += 10)

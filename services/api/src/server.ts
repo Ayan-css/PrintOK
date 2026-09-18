@@ -28,8 +28,13 @@ async function startServer() {
     storage = new PrismaStorage();
     console.log('[PrintOk] Using PostgreSQL (Prisma) storage provider.');
   } else {
+    // Development only: assertRequiredEnv refuses to boot production without a
+    // DATABASE_URL precisely so this branch cannot be reached there.
     storage = new MemoryStorage();
-    console.log('[PrintOk] DATABASE_URL not set — using in-memory storage (data lost on restart).');
+    console.warn(
+      '[PrintOk] DATABASE_URL not set — using in-memory storage. Every shop, job and payment ' +
+      'is lost on restart. This is for local development only.'
+    );
   }
 
   // Create HTTP server first, then WebSocket server, then Express app.

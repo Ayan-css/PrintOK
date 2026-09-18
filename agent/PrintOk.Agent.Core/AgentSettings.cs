@@ -59,15 +59,82 @@ public sealed class AgentSettings
     /// </summary>
     public const string DefaultApiBaseUrl = "https://prinok-api.onrender.com";
 
+    /// <summary>
+    /// The only hosts this agent will talk to.
+    ///
+    /// The Server field in the tray window was free text, saved straight to the
+    /// settings file and used as the base address for everything the agent
+    /// does. So anyone who reached an unlocked counter PC could point it at
+    /// their own server and every future print job — customers' documents —
+    /// would be fetched from, and reported to, them instead. It needs no
+    /// credential and leaves no trace beyond one line in a JSON file.
+    ///
+    /// An allowlist rather than a format check: "is this a valid URL" was never
+    /// the question. Loopback stays permitted because the agent is developed
+    /// against a local API, and a loopback address is not somewhere a remote
+    /// attacker can receive anything.
+    /// </summary>
+    private static readonly string[] AllowedHosts =
+    {
+        "prinok-api.onrender.com",
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    };
+
+    /// <summary>
+    /// Whether the agent may be pointed at this address, and why not.
+    ///
+    /// Returns null when the address is acceptable, otherwise a sentence the
+    /// tray window can show to whoever typed it.
+    /// </summary>
+    public static string? DescribeApiBaseUrlProblem(string? candidate)
+    {
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            // Empty means "use the built-in address", which is the right
+            // recovery for a shop that has pasted something wrong in.
+            return null;
+        }
+
+        if (!Uri.TryCreate(candidate.Trim(), UriKind.Absolute, out Uri? uri))
+        {
+            return "That is not a complete web address. It should look like https://prinok-api.onrender.com.";
+        }
+
+        if (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp)
+        {
+            return "The address must start with https://.";
+        }
+
+        bool loopback = uri.IsLoopback;
+
+        if (uri.Scheme == Uri.UriSchemeHttp && !loopback)
+        {
+            return "Only https:// addresses are allowed, so print jobs cannot be read in transit.";
+        }
+
+        if (!AllowedHosts.Contains(uri.Host, StringComparer.OrdinalIgnoreCase))
+        {
+            return
+                $"This agent will not connect to '{uri.Host}'. Customers' documents pass through "
+                + "this address, so it is restricted to PrintOk's own servers. Leave it blank to use "
+                + "the built-in address.";
+        }
+
+        return null;
+    }
+
     public static AgentSettings FromConfiguration(IConfiguration config)
     {
         int heartbeatSeconds = ReadInt(config, 30, "HeartbeatIntervalSeconds", "PrintOk:HeartbeatIntervalSeconds");
 
         return new AgentSettings
         {
-            ApiBaseUrl = Normalize(
-                ReadString(config, "PrintOkApiUrl", "PrintOk:ApiBaseUrl", "ApiBaseUrl")
-                ?? DefaultApiBaseUrl),
+            // Checked on read as well as on write: editing the settings file by
+            // hand is the same redirection without going through the window.
+            ApiBaseUrl = Normalize(SafeApiBaseUrl(
+                ReadString(config, "PrintOkApiUrl", "PrintOk:ApiBaseUrl", "ApiBaseUrl"))),
             ApiKey = ReadString(config, "AgentApiKey", "PrintOk:ApiKey", "ApiKey") ?? PlaceholderApiKey,
             ShopId = ReadString(config, "ShopId", "PrintOk:ShopId"),
             PrinterId = ReadString(config, "PrinterId", "PrintOk:PrinterId"),
@@ -142,6 +209,27 @@ public sealed class AgentSettings
     {
         string? raw = ReadString(config, keys);
         return int.TryParse(raw, out int parsed) && parsed > 0 ? parsed : fallback;
+    }
+
+    /// <summary>
+    /// The configured address, or the built-in one if it is not allowed.
+    ///
+    /// Falls back rather than throwing: an agent that refuses to start because
+    /// somebody pasted a bad address into a file is an agent a shop cannot
+    /// recover without a support call. Falling back to the real server keeps
+    /// the shop printing and makes the redirection useless.
+    /// </summary>
+    private static string SafeApiBaseUrl(string? configured)
+    {
+        if (string.IsNullOrWhiteSpace(configured)) return DefaultApiBaseUrl;
+
+        string? problem = DescribeApiBaseUrlProblem(configured);
+        if (problem is null) return configured;
+
+        Console.Error.WriteLine(
+            $"[PrintOk] Ignoring the configured server address: {problem} "
+            + $"Using {DefaultApiBaseUrl} instead.");
+        return DefaultApiBaseUrl;
     }
 
     private static string Normalize(string url) => url.TrimEnd('/');

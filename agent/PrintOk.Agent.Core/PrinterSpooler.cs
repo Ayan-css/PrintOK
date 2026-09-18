@@ -63,7 +63,7 @@ public class WindowsPrinterSpooler : IPrinterSpooler
             // The guard is repeated inside the lambda because the analyser does
             // not carry the one above across the closure boundary.
             return await Task.Run(
-                () => OperatingSystem.IsWindows() && RenderAndPrint(tempFilePath, options),
+                () => OperatingSystem.IsWindows() && RenderAndPrint(tempFilePath, options, cancellationToken),
                 cancellationToken);
         }
 
@@ -91,7 +91,8 @@ public class WindowsPrinterSpooler : IPrinterSpooler
     /// block the polling loop.
     /// </remarks>
     [SupportedOSPlatform("windows")]
-    private bool RenderAndPrint(string tempFilePath, PrintOptions options)
+    private bool RenderAndPrint(
+        string tempFilePath, PrintOptions options, CancellationToken cancellationToken)
     {
         using DocumentRasterizer? document = DocumentRasterizer.Open(tempFilePath, _logger);
         if (document is null)
@@ -100,7 +101,8 @@ public class WindowsPrinterSpooler : IPrinterSpooler
             return false;
         }
 
-        return WindowsRasterPrinter.Print(document, options, _settings.PrinterName, _logger);
+        return WindowsRasterPrinter.Print(
+            document, options, _settings.PrinterName, _logger, cancellationToken);
     }
 
     /// <summary>

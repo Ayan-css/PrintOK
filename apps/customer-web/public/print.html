@@ -18,8 +18,22 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/styles.css">
   <!-- pdf.js renders the real page the customer is about to print. -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <!--
+    Pinned by content hash. This is the page where a customer uploads a document
+    and authorises a payment, so a compromised CDN response here is the worst
+    place in the product for one.
+  -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
+          integrity="sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e"
+          crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <!-- Razorpay Checkout. Without this the payment popup can never open. -->
+  <!--
+    Deliberately not pinned. Razorpay ships checkout.js unversioned and updates
+    it in place — that is how they push gateway and compliance changes — so an
+    integrity hash would break every payment on the day they next deploy. Their
+    documentation requires it be loaded this way. The CSP below is what
+    constrains it instead.
+  -->
   <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 </head>
 <body class="bg-paper">
@@ -125,16 +139,24 @@
         <div class="card card--elevated">
           <div class="card-header">
             <h2 class="card-title">1. Upload Document</h2>
-            <span class="badge badge-primary">PDF / Word / Image</span>
+            <span class="badge badge-primary">PDF / Image</span>
           </div>
 
           <div id="dropZone" class="file-drop-zone" role="button" tabindex="0"
-               aria-label="Choose a document to print. Supports PDF, Word, Excel, CSV and images up to 25 megabytes.">
+               aria-label="Choose a document to print. Supports PDF and images up to 25 megabytes. Export Word or Excel files as PDF first.">
+            <!--
+              Office formats are no longer offered here. Their page count
+              cannot be measured — page breaks in a .docx depend on fonts,
+              margins and the printer's paper size — so they were priced as a
+              single page while the whole document printed. The server refuses
+              them; offering them in the picker would only walk a customer into
+              that refusal after they had chosen a file.
+            -->
             <input type="file" id="fileInput" class="sr-only"
-                   accept=".pdf,.doc,.docx,.xlsx,.csv,.pptx,.png,.jpg,.jpeg,.webp">
+                   accept=".pdf,.png,.jpg,.jpeg,.webp">
             <div class="drop-zone-icon" aria-hidden="true">📄</div>
             <div class="drop-zone-text">Tap or Drop Document Here</div>
-            <div class="drop-zone-sub">PDF, Word, Excel, CSV &amp; Images (Max 25MB)</div>
+            <div class="drop-zone-sub">PDF &amp; Images (Max 25MB) — export Word or Excel as PDF first</div>
           </div>
 
           <!-- Uploaded File Details Pill -->

@@ -265,13 +265,31 @@ public sealed class MainForm : Form
         return page;
     }
 
+    /// <summary>
+    /// Deletes this PC's pairing credential.
+    ///
+    /// Behind a typed confirmation rather than a Yes/No. A Yes/No is one
+    /// mis-click from a passer-by at an unlocked counter PC, and the
+    /// consequence is that the shop stops printing until someone finds the
+    /// dashboard and pairs it again — during trading hours, with customers
+    /// waiting.
+    ///
+    /// Typing a word is not authentication and is not claimed to be. It stops
+    /// an accident and a casual poke; a determined person with the machine
+    /// unlocked can still do it, and an OS credential prompt is the real answer
+    /// there. This is the cheap part of that, available now.
+    /// </summary>
     private void ForgetCredential()
     {
-        var answer = MessageBox.Show(
-            "This PC will stop printing until it is paired again with a new code from your dashboard.\n\nForget the stored credential?",
-            "PrintOk", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+        const string Phrase = "UNPAIR";
 
-        if (answer != DialogResult.Yes) return;
+        using var confirm = new ConfirmPhraseDialog(
+            "Forget this PC's pairing?",
+            "This PC will stop printing until it is paired again with a new code from your "
+            + $"dashboard. Type {Phrase} to confirm.",
+            Phrase);
+
+        if (confirm.ShowDialog(this) != DialogResult.OK) return;
 
         _credentials.Delete();
         _status.SetState(ConnectionState.NotPaired, "This PC is no longer paired.");
@@ -444,6 +462,19 @@ public sealed class MainForm : Form
         var file = new SettingsFile();
         string chosen = _printerChoice.SelectedIndex <= 0 ? "" : _printerChoice.SelectedItem?.ToString() ?? "";
         string url = _apiUrlBox.Text.Trim();
+
+        // Refused here as well as on read, so whoever typed it is told why
+        // rather than having it silently ignored at the next restart.
+        //
+        // The Server field was free text: anyone at an unlocked counter PC could
+        // point the agent at their own server, and every future print job —
+        // customers' documents — would be fetched from and reported to them.
+        string? problem = AgentSettings.DescribeApiBaseUrlProblem(url);
+        if (problem is not null)
+        {
+            MessageBox.Show(problem, "PrintOk", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
 
         var changes = new Dictionary<string, object?>
         {

@@ -189,6 +189,56 @@ test('customer web routing', async (t) => {
     }
   });
 
+  await t.test('security headers are served, and the payment page pins its CDN scripts', async () => {
+    // A CDN response with no integrity attribute executes with full origin
+    // privileges on the page where customers upload documents and authorise
+    // payment, and the browser cannot tell it from the real thing.
+    const res = await fetch(`${base}/print`);
+    assert.strictEqual(res.status, 200);
+
+    assert.strictEqual(res.headers.get('x-content-type-options'), 'nosniff');
+    assert.strictEqual(res.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
+    assert.ok(res.headers.get('x-frame-options'), 'an anti-framing header must be present');
+
+    // Report-Only for now: five pages carry an inline <script> and static
+    // hosting cannot mint a nonce, so enforcing it needs one live checkout to
+    // confirm the payment path is clean first.
+    const csp = res.headers.get('content-security-policy-report-only');
+    assert.ok(csp, 'a policy must be reported even before it is enforced');
+    assert.match(csp, /checkout\.razorpay\.com/, 'Razorpay Checkout must be allowed to load');
+    assert.match(csp, /object-src 'none'/);
+
+    // Merchant screens are never framed.
+    const dash = await fetch(`${base}/dashboard`);
+    assert.strictEqual(dash.headers.get('x-frame-options'), 'DENY');
+
+    const fs = require('fs');
+    const path = require('path');
+    const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
+
+    // Every cdnjs script is pinned by hash.
+    for (const file of ['print.html', 'index.html']) {
+      const html = read(file);
+      const cdnScripts = html.match(/<script[^>]*cdnjs\.cloudflare\.com[^>]*>/g) || [];
+      assert.ok(cdnScripts.length > 0, `${file} should load at least one CDN script`);
+      for (const tag of cdnScripts) {
+        assert.match(tag, /integrity="sha384-/, `${file} must pin: ${tag.slice(0, 80)}`);
+        assert.match(tag, /crossorigin=/, `${file} needs crossorigin for SRI to apply`);
+      }
+    }
+
+    // Razorpay's checkout.js is deliberately NOT pinned: they ship it
+    // unversioned and update it in place, so a hash would break every payment
+    // on their next deploy.
+    const printHtml = read('print.html');
+    const razorpayTag = printHtml.match(/<script[^>]*checkout\.razorpay\.com[^>]*>/)?.[0];
+    assert.ok(razorpayTag, 'the payment page must load Razorpay Checkout');
+    assert.ok(
+      !razorpayTag.includes('integrity='),
+      'Razorpay Checkout must stay unpinned, per their documented requirement'
+    );
+  });
+
   await t.test('a merchant can sign out, and signing out clears the whole session', async () => {
     // There was no sign-out at all on either merchant page: the way to hand a
     // shared counter PC to the next person was to close the tab. This checks

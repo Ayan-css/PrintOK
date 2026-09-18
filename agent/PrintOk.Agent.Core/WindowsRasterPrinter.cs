@@ -28,7 +28,8 @@ internal static class WindowsRasterPrinter
         DocumentRasterizer document,
         PrintOptions options,
         string? printerName,
-        ILogger logger)
+        ILogger logger,
+        CancellationToken cancellationToken = default)
     {
         var settings = new PrinterSettings();
         if (!string.IsNullOrWhiteSpace(printerName))
@@ -103,6 +104,21 @@ internal static class WindowsRasterPrinter
         {
             try
             {
+                // Checked between pages, not only before the job starts. The
+                // token was passed to Task.Run and then never consulted again,
+                // so once rendering began nothing could stop it — a shutdown
+                // request, or an operator cancelling, waited for the whole
+                // document. On a long job that is the difference between
+                // stopping and not.
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    logger.LogWarning(
+                        "Printing of '{FileName}' was cancelled after {Pages} page(s).",
+                        options.FileName, cursor);
+                    e.Cancel = true;
+                    return;
+                }
+
                 // Rendered here, one page at a time: a fifty-page PDF at 300dpi
                 // is about 35MB a page, and holding them all would be worse
                 // than anything it saves.

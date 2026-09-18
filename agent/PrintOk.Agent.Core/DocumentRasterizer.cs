@@ -32,6 +32,21 @@ public sealed class DocumentRasterizer : IDisposable
         ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff",
     };
 
+    /// <summary>
+    /// The most pages the agent will render for one job.
+    ///
+    /// A PDF can declare an enormous page tree while staying small on disk —
+    /// thousands of page objects all referencing one shared content stream —
+    /// and nothing capped it. Rendering that occupies the shop's only print
+    /// agent for as long as it takes, sequentially, so every other customer's
+    /// job waits behind it, and it spends real paper and toner doing so.
+    ///
+    /// Two thousand is far above any real order — a shop printing a
+    /// dissertation is in the low hundreds — and far below the point where a
+    /// counter PC stops responding.
+    /// </summary>
+    public const int MaxPages = 2000;
+
     /// <summary>The DPI pages are rendered at.</summary>
     /// <remarks>
     /// 300 is what a shop's laser prints at and what a customer expects of a
@@ -73,6 +88,18 @@ public sealed class DocumentRasterizer : IDisposable
             {
                 byte[] bytes = File.ReadAllBytes(path);
                 int pages = PDFtoImage.Conversion.GetPageCount(bytes);
+
+                // Refused before a single page is rendered, so an oversized
+                // document costs the queue nothing rather than monopolising it.
+                if (pages > MaxPages)
+                {
+                    logger.LogError(
+                        "'{Path}' declares {Pages} pages, more than the {Max} this agent will print "
+                        + "in one job. Split it, or ask the customer for a smaller file.",
+                        Path.GetFileName(path), pages, MaxPages);
+                    return null;
+                }
+
                 return new DocumentRasterizer(bytes, null, pages);
             }
 

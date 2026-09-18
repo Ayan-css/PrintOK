@@ -46,6 +46,47 @@ const PAGES = {
   '/404': '404.html',
 };
 
+/**
+ * The same response headers Vercel sets in production.
+ *
+ * Mirrored here so local development behaves like the deployed site — a CSP
+ * that only exists in production is one nobody notices breaking until it is
+ * live. Kept deliberately in step with the `headers` block in vercel.json.
+ *
+ * The CSP is Report-Only for now: five pages carry an inline <script> block,
+ * and static hosting cannot mint a per-response nonce, so enforcing it needs
+ * one real Razorpay checkout to confirm nothing on the payment path is caught.
+ * The rest are enforced, because none of them can change how a page renders.
+ */
+const REPORT_ONLY_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://checkout.razorpay.com",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com",
+  "img-src 'self' data: blob:",
+  "connect-src 'self' http://localhost:4000 https://prinok-api.onrender.com https://api.razorpay.com https://lumberjack.razorpay.com",
+  "frame-src https://api.razorpay.com https://checkout.razorpay.com",
+  "worker-src 'self' blob:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'self'",
+].join('; ');
+
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+
+  // Merchant and operator screens carry authenticated, state-changing controls
+  // and nothing legitimately frames them.
+  const privileged = /^\/(dashboard|setup|admin)/.test(req.path);
+  res.setHeader('X-Frame-Options', privileged ? 'DENY' : 'SAMEORIGIN');
+
+  res.setHeader('Content-Security-Policy-Report-Only', REPORT_ONLY_CSP);
+  next();
+});
+
 app.use(express.static(PUBLIC_DIR));
 
 for (const [route, file] of Object.entries(PAGES)) {

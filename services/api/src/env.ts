@@ -34,6 +34,24 @@ export function assertRequiredEnv(): void {
     missing.push('JWT_SECRET (minimum 16 characters) — sessions cannot be issued without it');
   }
 
+  // Production must never fall back to in-memory storage.
+  //
+  // server.ts picks MemoryStorage when DATABASE_URL is absent, which is the
+  // right default for local development and a catastrophe in production: every
+  // shop, job and payment record lives until the next restart, /health still
+  // reports OK, and behind more than one instance each gets its own disjoint
+  // dataset. A missing environment variable looked exactly like a healthy
+  // deploy.
+  //
+  // Checked here rather than at the fallback itself so the process refuses to
+  // start and says why, instead of serving traffic it cannot keep.
+  if (process.env.NODE_ENV === 'production' && !process.env.DATABASE_URL) {
+    missing.push(
+      'DATABASE_URL — production refuses to run on in-memory storage, which loses every ' +
+      'shop, job and payment on restart'
+    );
+  }
+
   if (missing.length > 0) {
     throw new Error(
       `Refusing to start, configuration is incomplete:\n  - ${missing.join('\n  - ')}\n` +

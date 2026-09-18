@@ -35,6 +35,12 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'printok_test_jwt_secret_key'
 // happened to be running, not on the one that added the requests.
 process.env.API_RATE_LIMIT_PER_MINUTE = '100000';
 
+// Same reasoning for the tighter limiter on logins, claims and pairing: this
+// suite signs in as dozens of shops in a few seconds, which is exactly the
+// shape that limiter exists to stop. Test 98 sets its own low limit locally to
+// prove the limiter actually works.
+process.env.AUTH_RATE_LIMIT_PER_MINUTE = '100000';
+
 /** Signs the exact bytes that will be sent, as Razorpay does. */
 function signWebhook(rawBody: string): string {
   return crypto.createHmac('sha256', TEST_WEBHOOK_SECRET).update(rawBody).digest('hex');
@@ -4260,6 +4266,83 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(recovered.status, 201, 'a broken-xref PDF is still printable');
     assert.strictEqual(((await recovered.json()) as any).job.pageCount, 3,
       'and its pages are recovered rather than billed as one');
+  });
+
+  await t.test('98. Production refuses to boot without a database, and throttles guessing', async () => {
+    // server.ts selects MemoryStorage when DATABASE_URL is absent, which is
+    // right for local development and a catastrophe in production: every shop,
+    // job and payment lives until the next restart, /health still reports OK,
+    // and behind more than one instance each gets its own disjoint dataset. A
+    // missing environment variable looked exactly like a healthy deploy.
+    const { assertRequiredEnv } = await import('../env');
+
+    const saved = {
+      nodeEnv: process.env.NODE_ENV,
+      databaseUrl: process.env.DATABASE_URL,
+      jwt: process.env.JWT_SECRET,
+    };
+
+    try {
+      process.env.NODE_ENV = 'production';
+      delete process.env.DATABASE_URL;
+
+      assert.throws(
+        () => assertRequiredEnv(),
+        /DATABASE_URL/,
+        'production must refuse to start on in-memory storage'
+      );
+
+      // With one configured it boots.
+      process.env.DATABASE_URL = 'postgresql://user:pass@localhost:5432/printok';
+      assert.doesNotThrow(() => assertRequiredEnv());
+
+      // Development is deliberately still allowed to run without one.
+      process.env.NODE_ENV = 'development';
+      delete process.env.DATABASE_URL;
+      assert.doesNotThrow(
+        () => assertRequiredEnv(),
+        'local development must still work without Docker'
+      );
+
+      // And a missing signing secret is still fatal everywhere.
+      process.env.JWT_SECRET = 'tooshort';
+      assert.throws(() => assertRequiredEnv(), /JWT_SECRET/);
+    } finally {
+      process.env.NODE_ENV = saved.nodeEnv;
+      if (saved.databaseUrl === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = saved.databaseUrl;
+      process.env.JWT_SECRET = saved.jwt;
+    }
+  });
+
+  await t.test('99. Credential guessing is throttled', async () => {
+    // The limiter exists on the app built for this test with a raised ceiling,
+    // so a low one is built here to prove it actually engages — signup, both
+    // logins and pairing had no limiter at all, and signup hashes a password
+    // with scrypt at N=16384, which blocks the single Node event loop.
+    const saved = process.env.AUTH_RATE_LIMIT_PER_MINUTE;
+    process.env.AUTH_RATE_LIMIT_PER_MINUTE = '3';
+
+    const throttled = http.createServer(createApp(new MemoryStorage()));
+    await new Promise<void>((resolve) => throttled.listen(0, resolve));
+    const port = (throttled.address() as { port: number }).port;
+
+    try {
+      const attempt = () => fetch(`http://localhost:${port}/api/merchant/login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'nobody@example.com', password: 'WrongPass123456' }),
+      });
+
+      const codes: number[] = [];
+      for (let i = 0; i < 6; i++) codes.push((await attempt()).status);
+
+      assert.ok(codes.includes(429), `guessing must be throttled, got ${codes.join(',')}`);
+      assert.strictEqual(codes[0], 401, 'the first attempt is answered normally');
+    } finally {
+      throttled.close();
+      if (saved === undefined) delete process.env.AUTH_RATE_LIMIT_PER_MINUTE;
+      else process.env.AUTH_RATE_LIMIT_PER_MINUTE = saved;
+    }
   });
 
   server.close();
