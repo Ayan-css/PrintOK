@@ -47,6 +47,17 @@ services:
         sync: false
       - key: RAZORPAY_WEBHOOK_SECRET
         sync: false
+      # Email. Without these, contact enquiries reach nobody and a shop owner
+      # who forgets their password cannot get back in. Set EMAIL_PROVIDER to
+      # 'resend' once the other three are filled in.
+      - key: EMAIL_PROVIDER
+        sync: false
+      - key: EMAIL_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: OPERATOR_EMAIL
+        sync: false
       # The public URL of the customer front-end, e.g. https://printok.vercel.app.
       # Required in production: shop registration refuses to issue a QR poster
       # without it, rather than printing a code that could never be scanned.

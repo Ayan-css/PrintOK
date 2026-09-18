@@ -405,6 +405,28 @@ export interface IStorageProvider {
    * free tier could run any volume it liked on any number of printers — the
    * ladder had no rung anybody had to climb.
    */
+  /**
+   * Issues a one-time password-reset token for a merchant.
+   *
+   * Only the hash is stored. The caller emails the token and then forgets it,
+   * so a leaked database yields nothing usable — the same reason agent device
+   * tokens are stored this way.
+   */
+  createPasswordResetToken(input: {
+    tokenHash: string; merchantId: string; email: string; expiresAt: Date;
+  }): Promise<void>;
+
+  /**
+   * Redeems a reset token, returning whose it was.
+   *
+   * Marks it used in the same operation, so two requests carrying the same
+   * token cannot both succeed — a reset link is a password for as long as it
+   * works, and it should work exactly once.
+   */
+  consumePasswordResetToken(tokenHash: string, now?: Date): Promise<
+    { ok: true; merchantId: string } | { ok: false; reason: string }
+  >;
+
   countShopUsage(shopId: string, now?: Date): Promise<{
     ordersThisMonth: number;
     printers: number;
@@ -584,6 +606,10 @@ export class MemoryStorage implements IStorageProvider {
   /// Gateway payment id -> the one job it settled. Stands in for the unique
   /// index the Postgres path relies on.
   private gatewayPayments = new Map<string, string>();
+  /// Reset tokens, keyed by hash exactly as the database keys them.
+  private passwordResets = new Map<string, {
+    tokenHash: string; merchantId: string; email: string; expiresAt: Date; usedAt?: Date;
+  }>();
   /// Webhook event ids already acted on, so a retry is a no-op.
   private webhookEvents = new Set<string>();
   private agentDevices = new Map<string, AgentDeviceRecord & { tokenHash: string }>();
@@ -1406,6 +1432,27 @@ export class MemoryStorage implements IStorageProvider {
     const job = this.printJobs.get(jobId);
     if (!job || !job.s3Key || job.documentDeletedAt) return null;
     return this.s3Service.createDownloadUrl(job.s3Key);
+  }
+
+  public async createPasswordResetToken(input: {
+    tokenHash: string; merchantId: string; email: string; expiresAt: Date;
+  }): Promise<void> {
+    this.passwordResets.set(input.tokenHash, { ...input });
+  }
+
+  public async consumePasswordResetToken(tokenHash: string, now: Date = new Date()): Promise<
+    { ok: true; merchantId: string } | { ok: false; reason: string }
+  > {
+    const record = this.passwordResets.get(tokenHash);
+    if (!record) return { ok: false, reason: 'That reset link is not valid.' };
+    if (record.usedAt) return { ok: false, reason: 'That reset link has already been used.' };
+    if (record.expiresAt.getTime() <= now.getTime()) {
+      return { ok: false, reason: 'That reset link has expired. Request a new one.' };
+    }
+
+    record.usedAt = now;
+    this.passwordResets.set(tokenHash, record);
+    return { ok: true, merchantId: record.merchantId };
   }
 
   public async countShopUsage(shopId: string, now: Date = new Date()): Promise<{

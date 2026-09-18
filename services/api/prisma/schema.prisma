@@ -633,3 +633,29 @@ model PrinterDailyToken {
 
   @@id([printerId, day])
 }
+
+/// A one-time link that lets a shop owner prove who they are without a password.
+///
+/// There was no reset path at all: a shop owner who forgot their password was
+/// locked out permanently, with no way back into their own dashboard, their
+/// queue or their money.
+///
+/// Stored as a SHA-256 of the token, never the token itself, for the same
+/// reason agent device tokens are: a leaked database must not hand out working
+/// credentials. Single-use and short-lived, because a reset link is a password
+/// for as long as it works.
+model PasswordResetToken {
+  /// SHA-256 of the token that was emailed.
+  tokenHash  String    @id
+  merchantId String
+  /// Denormalised so a consumed token can be matched without a second read,
+  /// and so a token survives being pointed at by an email a user forwarded.
+  email      String
+  expiresAt  DateTime
+  /// Set the moment it is redeemed. A second attempt finds it spent.
+  usedAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([merchantId])
+  @@index([expiresAt])
+}

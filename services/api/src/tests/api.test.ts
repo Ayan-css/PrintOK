@@ -4705,6 +4705,139 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.match(((await oversized.json()) as any).error, /plan accepts up to 10MB/i);
   });
 
+  // ---------------------------------------------------------------------------
+  // Account recovery
+  // ---------------------------------------------------------------------------
+
+  await t.test('105. A locked-out shop owner can get back in, without leaking who exists', async () => {
+    // There was no reset path at all: a shop owner who forgot their password
+    // lost their dashboard, their queue and their money, and the only remedy
+    // was an operator editing the database by hand.
+    const email = 'lockedout@example.com';
+    const shop = await shopWithAuth('Locked Out Co', email, 'OriginalPass1234');
+
+    const request = (address: string) => fetch(`${baseUrl}/api/merchant/password-reset/request`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: address }),
+    });
+
+    // The answer must be the same whether or not the account exists, or this
+    // route becomes a way to ask which shops are registered here.
+    const real = await request(email);
+    const fake = await request('nobody-at-all@example.com');
+
+    assert.strictEqual(real.status, fake.status);
+    assert.deepStrictEqual(await real.json(), await fake.json(),
+      'the response must not reveal whether an account exists');
+
+    // The token is only ever emailed, so the test reaches for the stored hash
+    // the way the confirm route will — there is deliberately no API that hands
+    // a token back.
+    const token = crypto.randomBytes(32).toString('base64url');
+    const merchant = await storage.getMerchantByEmail(email);
+    assert.ok(merchant, 'the account exists');
+    await storage.createPasswordResetToken({
+      tokenHash: crypto.createHash('sha256').update(token).digest('hex'),
+      merchantId: merchant!.id,
+      email,
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+    });
+
+    const confirm = (body: Record<string, unknown>) =>
+      fetch(`${baseUrl}/api/merchant/password-reset/confirm`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+    // A weak new password is refused before the token is spent.
+    assert.strictEqual((await confirm({ token, password: 'short' })).status, 400);
+
+    // An invented token is refused.
+    assert.strictEqual((await confirm({ token: 'not-a-real-token', password: 'BrandNewPass1234' })).status, 400);
+
+    // The real one works.
+    const done = await confirm({ token, password: 'BrandNewPass1234' });
+    assert.strictEqual(done.status, 200, await done.clone().text());
+
+    // No session comes back: whoever reset it signs in with the password they
+    // chose, so an intercepted link does not also hand over a live session.
+    const body = (await done.json()) as any;
+    assert.ok(!body.token, 'a reset must not issue a session');
+
+    // The new password works and the old one does not.
+    const withNew = await fetch(`${baseUrl}/api/merchant/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: 'BrandNewPass1234' }),
+    });
+    assert.strictEqual(withNew.status, 200);
+
+    const withOld = await fetch(`${baseUrl}/api/merchant/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: 'OriginalPass1234' }),
+    });
+    assert.strictEqual(withOld.status, 401, 'the old password must stop working');
+
+    // And the link is spent — a reset link is a password for as long as it
+    // works, so it works exactly once.
+    const replayed = await confirm({ token, password: 'ThirdPassword1234' });
+    assert.strictEqual(replayed.status, 400);
+    assert.match(((await replayed.json()) as any).error, /already been used/i);
+
+    assert.ok(shop.shopId, 'the shop is untouched by any of this');
+  });
+
+  await t.test('106. An expired reset link does not work', async () => {
+    const email = 'expired@example.com';
+    await shopWithAuth('Expired Co', email, 'ExpiredPass12345');
+
+    const token = crypto.randomBytes(32).toString('base64url');
+    const merchant = await storage.getMerchantByEmail(email);
+    await storage.createPasswordResetToken({
+      tokenHash: crypto.createHash('sha256').update(token).digest('hex'),
+      merchantId: merchant!.id,
+      email,
+      // Already past.
+      expiresAt: new Date(Date.now() - 1000),
+    });
+
+    const res = await fetch(`${baseUrl}/api/merchant/password-reset/confirm`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, password: 'AnotherPass12345' }),
+    });
+    assert.strictEqual(res.status, 400);
+    assert.match(((await res.json()) as any).error, /expired/i);
+
+    // The old password still works, so nothing was half-changed.
+    const login = await fetch(`${baseUrl}/api/merchant/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: 'ExpiredPass12345' }),
+    });
+    assert.strictEqual(login.status, 200);
+  });
+
+  await t.test('107. The platform says plainly whether it can send email', async () => {
+    // The honest answer in this suite is "no provider is configured", and an
+    // operator should be able to see that on the console rather than finding
+    // out when a shop owner cannot get back into their account.
+    const admin = await (await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'ops@printok.test', password: 'CorrectHorse99x' }),
+    })).json() as any;
+
+    const res = await fetch(`${baseUrl}/api/admin/email-status`, {
+      headers: { Authorization: `Bearer ${admin.token}` },
+    });
+    assert.strictEqual(res.status, 200);
+
+    const status = (await res.json()) as any;
+    assert.strictEqual(status.canSend, false, 'nothing is configured in this suite');
+    assert.ok(status.required.includes('EMAIL_PROVIDER'));
+    assert.match(status.consequence, /password resets cannot be sent/i);
+
+    // And it is not readable without an operator session.
+    assert.strictEqual((await fetch(`${baseUrl}/api/admin/email-status`)).status, 401);
+  });
+
   server.close();
 });
 

@@ -1435,6 +1435,34 @@ export class PrismaStorage implements IStorageProvider {
     return { ok: true, job: this.mapPrintJob(job) };
   }
 
+  public async createPasswordResetToken(input: {
+    tokenHash: string; merchantId: string; email: string; expiresAt: Date;
+  }): Promise<void> {
+    await this.prisma.passwordResetToken.create({ data: input });
+  }
+
+  public async consumePasswordResetToken(tokenHash: string, now: Date = new Date()): Promise<
+    { ok: true; merchantId: string } | { ok: false; reason: string }
+  > {
+    // Conditional on still being unused and unexpired, so two requests racing
+    // with the same token cannot both redeem it: the second updates no rows.
+    const claimed = await this.prisma.passwordResetToken.updateMany({
+      where: { tokenHash, usedAt: null, expiresAt: { gt: now } },
+      data: { usedAt: now },
+    });
+
+    if (claimed.count === 0) {
+      const existing = await this.prisma.passwordResetToken.findUnique({ where: { tokenHash } });
+      if (!existing) return { ok: false, reason: 'That reset link is not valid.' };
+      if (existing.usedAt) return { ok: false, reason: 'That reset link has already been used.' };
+      return { ok: false, reason: 'That reset link has expired. Request a new one.' };
+    }
+
+    const record = await this.prisma.passwordResetToken.findUnique({ where: { tokenHash } });
+    if (!record) return { ok: false, reason: 'That reset link is not valid.' };
+    return { ok: true, merchantId: record.merchantId };
+  }
+
   public async countShopUsage(shopId: string, now: Date = new Date()): Promise<{
     ordersThisMonth: number; printers: number; staff: number;
   }> {

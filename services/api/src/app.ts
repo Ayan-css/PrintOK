@@ -7,6 +7,7 @@ import { generateQrCodeDataUrl } from './qr';
 import { AgentWebSocketServer } from './ws';
 import { processDocument } from './documentProcessor';
 import { RazorpayService, MIN_ORDER_AMOUNT_PAISE } from './razorpayService';
+import { EmailService } from './email';
 import { RazorpayRouteService } from './razorpayRoute';
 import { parsePrintState } from './jobStateMachine';
 import { classifyFailure } from './jobRecovery';
@@ -68,6 +69,16 @@ const BOOT_TIME = new Date().toISOString();
  * refusing with the export-as-PDF advice is the truthful answer.
  */
 const UNMEASURABLE_FORMATS = new Set(['word', 'excel', 'csv', 'unknown']);
+
+/**
+ * How long a password-reset link works.
+ *
+ * Short, because the link *is* the credential while it lives: anyone holding it
+ * can take the account. Half an hour is long enough to find the email and long
+ * enough to survive a slow inbox, and short enough that a forwarded or
+ * intercepted message is usually already useless.
+ */
+const PASSWORD_RESET_TTL_MS = 30 * 60 * 1000;
 
 /**
  * The largest upload each tier accepts, in bytes.
@@ -508,6 +519,7 @@ export function createApp(
 ) {
   const app = express();
   const razorpayService = new RazorpayService();
+  const emailService = new EmailService();
   const routeService = new RazorpayRouteService();
 
   // An allowlist, not a wildcard. Requests with no Origin (the print agent,
@@ -1328,6 +1340,111 @@ export function createApp(
    * counter PC with the dashboard open can lock the owner out of their own
    * shop — and a print shop's PC is not a private device.
    */
+  /**
+   * Starts a password reset.
+   *
+   * There was no way back in at all: a shop owner who forgot their password
+   * lost their dashboard, their queue and their money, and the only remedy was
+   * an operator editing the database by hand.
+   *
+   * Answers identically whether or not the address belongs to an account.
+   * Anything else turns this route into a way to ask "does this shop exist
+   * here", and the answer costs nothing to the person who already knows and
+   * everything to the one who is guessing.
+   */
+  app.post('/api/merchant/password-reset/request', async (req: Request, res: Response) => {
+    // Deliberately the same body on every path below.
+    const sameAnswer = {
+      success: true,
+      message:
+        'If that address belongs to a shop account, a reset link is on its way. ' +
+        'It is valid for 30 minutes and can be used once.',
+    };
+
+    try {
+      const email = String((req.body || {}).email || '').trim().toLowerCase();
+      if (!email) return res.status(400).json({ error: 'An email address is required.' });
+
+      const merchant = await storage.getMerchantByEmail(email);
+
+      // No account, or a disabled one. Same answer, same shape, and no work
+      // done that would make the response measurably slower.
+      if (!merchant || merchant.status !== 'active') {
+        return res.json(sameAnswer);
+      }
+
+      // 32 bytes, and only its hash is kept. The link is the credential for as
+      // long as it lives, which is why it lives for half an hour.
+      const token = crypto.randomBytes(32).toString('base64url');
+      const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+      await storage.createPasswordResetToken({
+        tokenHash,
+        merchantId: merchant.id,
+        email,
+        expiresAt: new Date(Date.now() + PASSWORD_RESET_TTL_MS),
+      });
+
+      const base = (process.env.PUBLIC_WEB_URL || '').replace(/\/+$/, '');
+      const link = `${base}/dashboard?reset=${encodeURIComponent(token)}`;
+
+      const sent = await emailService.send({
+        to: email,
+        subject: 'Reset your PrintOk shop password',
+        text:
+          'Someone asked to reset the password for your PrintOk shop account.\n\n' +
+          `Open this link to choose a new one:\n${link}\n\n` +
+          'The link works once and expires in 30 minutes. If you did not ask for this, ' +
+          'nothing has changed and you can ignore this message.',
+      });
+
+      if (!sent.ok) {
+        // Logged, not returned. Telling the caller that mail is unconfigured
+        // would say "this address does exist, we just could not write to it".
+        console.error(
+          `[Password reset] Could not send a reset link (provider: ${sent.provider}): ${sent.error}`
+        );
+      }
+
+      return res.json(sameAnswer);
+    } catch (err: any) {
+      console.error('[Password reset] Request failed:', err?.message || err);
+      // Still the same answer: an internal failure must not become a signal
+      // about whether the account exists.
+      return res.json(sameAnswer);
+    }
+  });
+
+  /** Completes a reset, given a token from the emailed link. */
+  app.post('/api/merchant/password-reset/confirm', async (req: Request, res: Response) => {
+    try {
+      const { token, password } = req.body || {};
+      if (!token || !password) {
+        return res.status(400).json({ error: 'A reset token and a new password are required.' });
+      }
+
+      const weak = validatePasswordStrength(String(password));
+      if (weak) return res.status(400).json({ error: weak });
+
+      const tokenHash = crypto.createHash('sha256').update(String(token)).digest('hex');
+      const claim = await storage.consumePasswordResetToken(tokenHash);
+      if (!claim.ok) return res.status(400).json({ error: claim.reason });
+
+      const changed = await storage.updateMerchantPassword(claim.merchantId, hashPassword(String(password)));
+      if (!changed) return res.status(404).json({ error: 'That account no longer exists.' });
+
+      // Deliberately no session issued. Whoever reset it now signs in with the
+      // password they chose, which proves they have it — and means a reset link
+      // intercepted in transit does not also hand over a live session.
+      return res.json({
+        success: true,
+        message: 'Your password has been changed. Sign in with your new password.',
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/api/merchant/password', async (req: Request, res: Response) => {
     const merchant = await authenticateMerchant(req, res, { shopId: undefined });
     if (!merchant) return;
@@ -2297,10 +2414,65 @@ export function createApp(
         userAgent: (req.headers['user-agent'] || '').toString().slice(0, 400),
       });
 
+      // Delivered as well as stored. Enquiries were written to a table nobody
+      // watches and reached no one — somebody filling in the contact form on a
+      // live site was talking into the air.
+      //
+      // Not awaited in a way that can fail the request: the enquiry is already
+      // saved, and refusing it because a mail provider is down would lose the
+      // message entirely. A failure is logged and the record is still there for
+      // the admin console.
+      if (emailService.operatorAddress) {
+        const notice = await emailService.send({
+          to: emailService.operatorAddress,
+          subject: `PrintOk enquiry from ${trimmedName}`,
+          text:
+            `${trimmedName} <${trimmedEmail}> got in touch through the site.\n\n` +
+            (enquiry.shopName ? `Shop: ${enquiry.shopName}\n` : '') +
+            (enquiry.phone ? `Phone: ${enquiry.phone}\n` : '') +
+            `\n${trimmedMessage}\n\n` +
+            `Reference: ${enquiry.id}`,
+        });
+
+        if (!notice.ok) {
+          console.error(
+            `[Enquiry] ${enquiry.id} was stored but could not be delivered ` +
+            `(provider: ${notice.provider}): ${notice.error}`
+          );
+        }
+      } else if (process.env.NODE_ENV === 'production') {
+        console.error(
+          `[Enquiry] ${enquiry.id} was stored and not delivered: OPERATOR_EMAIL is not set.`
+        );
+      }
+
       return res.status(201).json({ success: true, enquiryId: enquiry.id });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
+  });
+
+  /**
+   * Whether the platform can send email at all.
+   *
+   * Surfaced so an operator can see it on the console rather than discovering
+   * it when a shop owner cannot get back into their account.
+   */
+  app.get('/api/admin/email-status', async (req: Request, res: Response) => {
+    const admin = await authenticateAdmin(req, res);
+    if (!admin) return;
+
+    return res.json({
+      provider: emailService.providerName,
+      canSend: emailService.canSend,
+      operatorAddressSet: Boolean(emailService.operatorAddress),
+      required: emailService.canSend
+        ? []
+        : ['EMAIL_PROVIDER', 'EMAIL_API_KEY', 'EMAIL_FROM', 'OPERATOR_EMAIL'],
+      consequence: emailService.canSend
+        ? null
+        : 'Contact enquiries are stored but not delivered, and password resets cannot be sent.',
+    });
   });
 
   /** Enquiries from the contact form (PRD 24). */
