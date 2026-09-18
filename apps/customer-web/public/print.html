@@ -17,24 +17,21 @@
 
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/styles.css">
-  <!-- pdf.js renders the real page the customer is about to print. -->
   <!--
-    Pinned by content hash. This is the page where a customer uploads a document
-    and authorises a payment, so a compromised CDN response here is the worst
-    place in the product for one.
+    pdf.js and Razorpay Checkout are deliberately NOT loaded here.
+
+    Both used to sit in this head with no defer, so both were fetched and
+    executed before the page drew anything — about a third of a megabyte of
+    pdf.js, plus checkout, on the one page that is opened on a phone, on a
+    shop's wifi, by someone who has just scanned a QR code and wants to see an
+    upload button.
+
+    Neither is needed for that. pdf.js matters once a PDF has been chosen and
+    checkout only when somebody decides to pay, so app.js loads each at that
+    moment — pdf.js still pinned by the same content hash, checkout still
+    deliberately unpinned because Razorpay update it in place.
   -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
-          integrity="sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e"
-          crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <!-- Razorpay Checkout. Without this the payment popup can never open. -->
-  <!--
-    Deliberately not pinned. Razorpay ships checkout.js unversioned and updates
-    it in place — that is how they push gateway and compliance changes — so an
-    integrity hash would break every payment on the day they next deploy. Their
-    documentation requires it be loaded this way. The CSP below is what
-    constrains it instead.
-  -->
-  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <script src="/app.js" defer></script>
 </head>
 <body class="bg-paper">
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>
@@ -435,6 +432,6 @@
     </div>
   </div>
 
-  <script src="/app.js"></script>
+
 </body>
 </html>

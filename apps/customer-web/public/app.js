@@ -9,6 +9,42 @@ document.addEventListener('DOMContentLoaded', () => {
       ? 'http://localhost:4000'
       : 'https://prinok-api.onrender.com');
 
+  /**
+   * Loads a third-party script the first time it is actually needed.
+   *
+   * pdf.js is about 340KB and Razorpay's checkout another chunk on top, and
+   * both were fetched and executed *before the page rendered* — on the customer
+   * page, which is the one opened on a phone, on a shop's wifi, by someone who
+   * has just scanned a QR code. Neither is needed to draw the upload screen:
+   * pdf.js matters once a PDF has been chosen, and checkout only when somebody
+   * decides to pay.
+   *
+   * The same promise is returned for repeat calls, so two rapid file selections
+   * do not fetch the library twice.
+   */
+  const loadedScripts = new Map();
+  function loadScript(src, attributes = {}) {
+    if (loadedScripts.has(src)) return loadedScripts.get(src);
+
+    const pending = new Promise((resolve, reject) => {
+      const tag = document.createElement('script');
+      tag.src = src;
+      tag.async = true;
+      for (const [key, value] of Object.entries(attributes)) tag.setAttribute(key, value);
+      tag.onload = () => resolve();
+      tag.onerror = () => {
+        // Forgotten on failure, so a later attempt can retry rather than
+        // inheriting a rejected promise for the life of the page.
+        loadedScripts.delete(src);
+        reject(new Error(`Could not load ${src}`));
+      };
+      document.head.appendChild(tag);
+    });
+
+    loadedScripts.set(src, pending);
+    return pending;
+  }
+
   /** A fresh idempotency key. crypto.randomUUID where available, else random. */
   function newSubmissionKey() {
     try {
@@ -16,6 +52,11 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch { /* fall through */ }
     return `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
   }
+
+  // Pinned by version and content hash, exactly as the <script> tag was. A
+  // lazily loaded script is no less worth verifying than an eagerly loaded one.
+  const PDFJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+  const PDFJS_INTEGRITY = 'sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e';
 
   const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // must match the "Max 25MB" promise in the drop zone
 
@@ -849,8 +890,34 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
       loadDashboard();
-      dashTimer = setInterval(loadDashboard, 8000);
-      window.addEventListener('beforeunload', () => clearInterval(dashTimer));
+
+      // Polled every eight seconds regardless of whether the tab was visible,
+      // so a dashboard left open in a background tab overnight made about
+      // eleven thousand requests nobody read — on the shop's connection, and
+      // against an API on a plan that sleeps.
+      const startDashPolling = () => {
+        if (dashTimer) return;
+        dashTimer = setInterval(loadDashboard, 8000);
+      };
+      const stopDashPolling = () => {
+        clearInterval(dashTimer);
+        dashTimer = null;
+      };
+
+      startDashPolling();
+
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+          stopDashPolling();
+          return;
+        }
+        // Refreshed immediately on return, so coming back to the tab shows the
+        // queue as it is now rather than as it was when it was hidden.
+        loadDashboard();
+        startDashPolling();
+      });
+
+      window.addEventListener('beforeunload', stopDashPolling);
     })();
 
     const btnRefreshQueue = document.getElementById('btnRefreshQueue');
@@ -2457,6 +2524,19 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!orderRes.ok) throw new Error(order.error || 'Could not start the payment.');
 
       if (typeof window.Razorpay !== 'function') {
+        // Loaded at the moment somebody decides to pay, not on every page view.
+        // Deliberately no integrity attribute: Razorpay ship checkout.js
+        // unversioned and update it in place, so a hash would break every
+        // payment on their next deploy.
+        try {
+          await loadScript('https://checkout.razorpay.com/v1/checkout.js');
+        } catch {
+          // Falls through to the existing guard below, which tells the customer
+          // to pay at the counter rather than leaving a dead button.
+        }
+      }
+
+      if (typeof window.Razorpay !== 'function') {
         throw new Error('Payment library failed to load. Check your connection and try again.');
       }
 
@@ -2934,6 +3014,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async loadPdf(file) {
       if (typeof window.pdfjsLib === 'undefined') {
+        // Fetched now rather than in the page head: it is a third of a megabyte
+        // that nothing needs until a PDF has actually been chosen.
+        await loadScript(PDFJS_URL, {
+          integrity: PDFJS_INTEGRITY,
+          crossorigin: 'anonymous',
+          referrerpolicy: 'no-referrer',
+        });
+      }
+
+      if (typeof window.pdfjsLib === 'undefined') {
         throw new Error('pdf.js unavailable');
       }
 
@@ -3208,19 +3298,50 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  /**
+   * Watches one job until it reaches a terminal state.
+   *
+   * Backed off rather than fixed: a job is interesting every couple of seconds
+   * while it is being picked up and printed, and much less so once it has been
+   * sitting in a queue for ten minutes. A flat interval meant a customer who
+   * left the status page open kept one request every three seconds going
+   * indefinitely, from a phone, on a shop's wifi.
+   */
   function startPollingJobStatus(jobId) {
-    if (pollingTimer) clearInterval(pollingTimer);
-    pollingTimer = setInterval(async () => {
+    if (pollingTimer) {
+      clearTimeout(pollingTimer);
+      pollingTimer = null;
+    }
+
+    // Starts attentive and backs off. A job is interesting every couple of
+    // seconds while it is being picked up and printed, and much less so once it
+    // has sat in a queue for ten minutes. A flat interval meant a customer who
+    // left this page open kept one request every 2.5 seconds going
+    // indefinitely, from a phone, on a shop's wifi.
+    let interval = 2500;
+    const maxInterval = 30000;
+
+    const stop = () => {
+      if (pollingTimer) clearTimeout(pollingTimer);
+      pollingTimer = null;
+    };
+
+    const tick = async () => {
+      // Nothing to update while nobody is looking. The timer keeps running so
+      // the state is re-read as soon as the page is visible again.
+      if (document.hidden) {
+        pollingTimer = setTimeout(tick, interval);
+        return;
+      }
+
       try {
         const res = await fetch(`${API_BASE}/api/print-jobs/${encodeURIComponent(jobId)}`);
         if (res.ok) {
-          const data = await res.json();
-          const job = data.job;
+          const { job } = await res.json();
           renderJobProgress(job);
 
           if (TERMINAL_STATES.includes(job.printState)) {
-            clearInterval(pollingTimer);
-            pollingTimer = null;
+            stop();
 
             if (job.printState === 'Completed') {
               showToast('success', '🎉 Printing Completed!', 'Your document has been printed at the counter.');
@@ -3229,15 +3350,29 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
               showToast('warning', 'Order Cancelled', 'This print job was cancelled.', 9000);
             }
+            return;
           }
         }
       } catch {
-        // ignore
+        // A failed poll is not worth reporting: the next one will say the same
+        // thing if it is real, and the job is unaffected either way.
       }
-    }, 2500);
 
-    window.addEventListener('beforeunload', () => {
-      if (pollingTimer) clearInterval(pollingTimer);
+      interval = Math.min(Math.round(interval * 1.3), maxInterval);
+      pollingTimer = setTimeout(tick, interval);
+    };
+
+    pollingTimer = setTimeout(tick, interval);
+
+    // Back to attentive the moment somebody looks again — a customer returning
+    // to the tab should not wait half a minute to see that their job printed.
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden || !pollingTimer) return;
+      interval = 2500;
+      clearTimeout(pollingTimer);
+      pollingTimer = setTimeout(tick, 0);
     });
+
+    window.addEventListener('beforeunload', stop);
   }
 });

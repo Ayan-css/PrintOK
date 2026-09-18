@@ -218,8 +218,8 @@ test('customer web routing', async (t) => {
     const path = require('path');
     const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
 
-    // Every cdnjs script is pinned by hash.
-    for (const file of ['print.html', 'index.html']) {
+    // Every cdnjs script in markup is pinned by hash.
+    for (const file of ['index.html']) {
       const html = read(file);
       const cdnScripts = html.match(/<script[^>]*cdnjs\.cloudflare\.com[^>]*>/g) || [];
       assert.ok(cdnScripts.length > 0, `${file} should load at least one CDN script`);
@@ -229,14 +229,30 @@ test('customer web routing', async (t) => {
       }
     }
 
+    // The payment page loads neither pdf.js nor Razorpay in its head any more:
+    // both used to be render-blocking there, on the one page opened on a phone
+    // by someone who has just scanned a QR code. They are fetched when they are
+    // actually needed instead.
+    const printHtml = read('print.html');
+    assert.ok(
+      !/<script[^>]*src="https?:\/\//.test(printHtml),
+      'the payment page must not block first paint on a third-party script'
+    );
+    assert.match(printHtml, /<script src="\/app\.js" defer><\/script>/,
+      'and its own script must not block parsing either');
+
+    // Lazily loaded is not less worth verifying: pdf.js keeps its hash.
+    const app = read('app.js');
+    const pinned = app.match(/PDFJS_INTEGRITY\s*=\s*'(sha384-[^']+)'/)?.[1];
+    assert.ok(pinned, 'app.js must pin pdf.js by content hash when it loads it');
+
     // Razorpay's checkout.js is deliberately NOT pinned: they ship it
     // unversioned and update it in place, so a hash would break every payment
     // on their next deploy.
-    const printHtml = read('print.html');
-    const razorpayTag = printHtml.match(/<script[^>]*checkout\.razorpay\.com[^>]*>/)?.[0];
-    assert.ok(razorpayTag, 'the payment page must load Razorpay Checkout');
+    const razorpayLoad = app.match(/loadScript\('https:\/\/checkout\.razorpay\.com[^)]*\)/)?.[0];
+    assert.ok(razorpayLoad, 'app.js must load Razorpay Checkout when paying');
     assert.ok(
-      !razorpayTag.includes('integrity='),
+      !razorpayLoad.includes('integrity'),
       'Razorpay Checkout must stay unpinned, per their documented requirement'
     );
   });
