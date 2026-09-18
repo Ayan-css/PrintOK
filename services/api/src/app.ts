@@ -2346,6 +2346,34 @@ export function createApp(
         });
       }
 
+      // Money already split to the shop cannot be clawed back by refunding.
+      //
+      // When Route settles a payment, the shop's share goes straight to the
+      // shop's own linked account and never becomes PrintOk's. Refunding the
+      // customer from the platform account would then mean PrintOk paying the
+      // shop's share out of its own pocket, silently, on every declined job.
+      //
+      // Reversing a Route transfer is a separate Razorpay operation that this
+      // codebase does not implement, so this refuses rather than guessing. It
+      // cannot trigger while Route is disabled — transferId is only ever set by
+      // the Route path — so it is the guard that makes enabling Route safe
+      // rather than a change in behaviour today.
+      if (job.transferId) {
+        console.error(
+          `[Refund] Job ${job.id} was settled to the shop via Route (transfer ${job.transferId}). `
+          + 'Refunding it needs the transfer reversed first, which is not implemented.'
+        );
+        return res.status(409).json({
+          error:
+            'This order was already settled directly to your Razorpay account, so it cannot be '
+            + 'refunded from here — the transfer has to be reversed first. Contact support and it '
+            + 'will be handled with Razorpay.',
+          job: declined.job,
+          refund: { issued: false, reason: 'route-transfer-not-reversible-here' },
+          transferId: job.transferId,
+        });
+      }
+
       const refund = await razorpayService.refundPayment(
         String(job.paymentRef || ''),
         job.totalPriceInCents,
@@ -2365,16 +2393,41 @@ export function createApp(
         });
       }
 
-      const recorded = await storage.recordJobRefund(
-        jobId,
-        { refundId: refund.refundId, amountInCents: refund.amountInCents },
-        { actor: `shop:${merchant.sub}` }
-      );
+      // Razorpay refunds are asynchronous. The call returning does not mean the
+      // money has moved: a refund is created as 'pending' and becomes
+      // 'processed' when the bank has taken it — which can be days — and it can
+      // fail. This used to mark the job Refunded the moment the call returned,
+      // so the customer was told their money was back while it had not moved
+      // and might never.
+      const recorded = refund.settled
+        ? await storage.recordJobRefund(
+            jobId,
+            { refundId: refund.refundId, amountInCents: refund.amountInCents },
+            { actor: `shop:${merchant.sub}` }
+          )
+        : await storage.recordRefundRequested(
+            jobId,
+            { refundId: refund.refundId, amountInCents: refund.amountInCents, status: refund.status },
+            { actor: `shop:${merchant.sub}` }
+          );
 
       return res.json({
         success: true,
         job: recorded.ok ? recorded.job : declined.job,
-        refund: { issued: true, refundId: refund.refundId, amountInCents: refund.amountInCents },
+        refund: {
+          issued: true,
+          settled: refund.settled,
+          status: refund.status,
+          refundId: refund.refundId,
+          amountInCents: refund.amountInCents,
+        },
+        // What the shop tells the customer. Saying "refunded" before the bank
+        // has moved it is how a shop ends up arguing with someone holding a
+        // statement that disagrees.
+        message: refund.settled
+          ? 'The job was declined and the customer has been refunded.'
+          : 'The job was declined and a refund has been requested. It usually reaches the '
+            + 'customer within a few working days; this screen updates when the bank confirms it.',
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -3155,12 +3208,19 @@ export function createApp(
       const signature = req.headers['x-razorpay-signature'] as string | undefined;
       const body = req.body || {};
 
+      // A refund delivery carries a refund entity rather than a payment one, and
+      // its own notes — set when the refund was requested.
+      const refundEntity = body?.payload?.refund?.entity;
+
       const jobId =
         body?.payload?.payment?.entity?.notes?.jobId ||
+        refundEntity?.notes?.jobId ||
         (body as PaymentWebhookDto).jobId;
 
       const paymentRef =
-        body?.payload?.payment?.entity?.id || (body as PaymentWebhookDto).paymentId;
+        body?.payload?.payment?.entity?.id ||
+        refundEntity?.payment_id ||
+        (body as PaymentWebhookDto).paymentId;
 
       if (!jobId || !signature) {
         return res.status(400).json({ error: 'A job reference and signature are required.' });
@@ -3181,6 +3241,50 @@ export function createApp(
       // A webhook with no event is the legacy flat body, which only ever meant
       // a confirmation; live Razorpay traffic always carries one.
       const event: string | undefined = body?.event;
+
+      // Refund lifecycle. A refund is created 'pending' and becomes 'processed'
+      // when the bank has actually taken the money, days later — or it fails.
+      // Neither outcome was handled at all, so a job sat in RefundPending for
+      // ever whichever way it went, and nothing ever told the customer.
+      if (event === 'refund.processed' || event === 'refund.failed') {
+        const refundId = refundEntity?.id ? String(refundEntity.id) : '';
+        const amount = Number(refundEntity?.amount);
+
+        const refundJob = await storage.getPrintJob(jobId);
+        if (!refundJob) return res.status(404).json({ error: 'Print job not found.' });
+
+        if (event === 'refund.processed') {
+          const settled = await storage.recordJobRefund(
+            jobId,
+            {
+              refundId: refundId || refundJob.refundId || '',
+              amountInCents: Number.isFinite(amount) ? amount : (refundJob.refundAmountCents || refundJob.totalPriceInCents),
+            },
+            { actor: 'webhook' }
+          );
+
+          // 200 either way: a refund that was already recorded is not a
+          // failure Razorpay can fix by resending.
+          return res.json({
+            success: true,
+            message: settled.ok
+              ? 'Refund settled.'
+              : `Refund already recorded (${settled.reason}).`,
+          });
+        }
+
+        const failed = await storage.recordRefundFailed(jobId, refundId, { actor: 'webhook' });
+        console.error(
+          `[Webhook] Refund ${refundId || '(unknown)'} FAILED for job ${jobId}. `
+          + 'The customer has not been refunded and the job is cancelled — this needs a human.'
+        );
+        return res.json({
+          success: true,
+          message: failed.ok
+            ? 'Refund failure recorded; the payment stands and needs attention.'
+            : `Refund failure could not be applied (${failed.reason}).`,
+        });
+      }
 
       if (event && !PAYMENT_CONFIRMING_EVENTS.has(event)) {
         // Answered 200 deliberately: a non-2xx makes Razorpay retry the same

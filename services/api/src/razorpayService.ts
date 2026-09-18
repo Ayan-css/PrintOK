@@ -189,7 +189,10 @@ export class RazorpayService {
     paymentId: string,
     amountInCents: number,
     notes: Record<string, string> = {}
-  ): Promise<{ ok: true; refundId: string; amountInCents: number } | { ok: false; error: string }> {
+  ): Promise<
+    | { ok: true; refundId: string; amountInCents: number; status: string; settled: boolean }
+    | { ok: false; error: string }
+  > {
     if (!this.keyId || !this.keySecret) {
       return { ok: false, error: 'Razorpay is not configured, so no refund can be issued.' };
     }
@@ -208,7 +211,20 @@ export class RazorpayService {
         notes,
       });
 
-      return { ok: true, refundId: refund.id, amountInCents: refund.amount ?? amountInCents };
+      // Razorpay refunds are asynchronous. The call returning does not mean the
+      // money has moved: a refund is created as 'pending' and becomes
+      // 'processed' when the bank has taken it, which can be days — and it can
+      // fail. Only 'processed' means settled, and the caller must not tell the
+      // customer their money is back before then.
+      const status = String(refund.status || 'pending');
+
+      return {
+        ok: true,
+        refundId: refund.id,
+        amountInCents: refund.amount ?? amountInCents,
+        status,
+        settled: status === 'processed',
+      };
     } catch (err: any) {
       const reason = describeRazorpayError(err);
       console.error(`[Razorpay Service] Refund of ${paymentId} failed:`, reason);

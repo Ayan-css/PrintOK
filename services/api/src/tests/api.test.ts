@@ -4393,6 +4393,165 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual((await submit('has spaces and $ymbols')).status, 201);
   });
 
+  // ---------------------------------------------------------------------------
+  // Refunds
+  // ---------------------------------------------------------------------------
+
+  await t.test('101. A refund is not called done until the bank has done it', async () => {
+    // recordJobRefund marked a job Refunded the moment the Razorpay call
+    // returned. But a refund is created 'pending' and becomes 'processed' when
+    // the bank has actually taken the money — days later — and it can fail. So
+    // the customer was told their money was back while it had not moved.
+    const shop = await shopWithAuth('Refund Flow Co', 'refundflow@example.com', 'RefundFlowPass1');
+
+    const paidJob = async () => {
+      const created = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          printerId: shop.printerId, fileName: 'r.pdf',
+          fileBase64: makePdf(2).toString('base64'),
+          copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+        }),
+      });
+      const job = ((await created.json()) as any).job;
+
+      const orderRes = await fetch(`${baseUrl}/api/payments/create-order`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId: job.id }),
+      });
+      const orderId = ((await orderRes.json()) as any).orderId as string;
+      const pay = `pay_${job.id}`;
+      await fetch(`${baseUrl}/api/payments/verify`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jobId: job.id, razorpayOrderId: orderId, razorpayPaymentId: pay,
+          razorpaySignature: signCheckout(orderId, pay),
+        }),
+      });
+      return { job, pay };
+    };
+
+    const decline = (jobId: string) => fetch(
+      `${baseUrl}/api/shops/${shop.shopId}/jobs/${jobId}/decline`,
+      { method: 'POST', headers: shop.auth, body: JSON.stringify({ reason: 'Printer jammed' }) }
+    );
+
+    // --- a refund that later settles ---
+    const settling = await paidJob();
+    const declined = await decline(settling.job.id);
+    assert.ok([200, 202].includes(declined.status));
+
+    const midway = await storage.getPrintJob(settling.job.id);
+    assert.strictEqual(midway?.paymentState, PaymentState.RefundPending,
+      'the refund is in flight, not done');
+    assert.strictEqual(midway?.printState, PrintState.Cancelled, 'the print side is settled');
+
+    // Razorpay confirms it. The refund entity carries its own notes.
+    const processedRaw = JSON.stringify({
+      event: 'refund.processed',
+      payload: {
+        refund: {
+          entity: {
+            id: 'rfnd_settled_01',
+            payment_id: settling.pay,
+            amount: settling.job.totalPriceInCents,
+            notes: { jobId: settling.job.id },
+          },
+        },
+      },
+    });
+    const processed = await fetch(`${baseUrl}/api/payments/webhook`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-razorpay-signature': signWebhook(processedRaw),
+        'x-razorpay-event-id': 'evt_refund_processed_01',
+      },
+      body: processedRaw,
+    });
+    assert.strictEqual(processed.status, 200);
+
+    const refunded = await storage.getPrintJob(settling.job.id);
+    assert.strictEqual(refunded?.paymentState, PaymentState.Refunded, 'now it is done');
+    assert.strictEqual(refunded?.refundId, 'rfnd_settled_01');
+
+    // --- a refund the provider rejects ---
+    const failing = await paidJob();
+    assert.ok([200, 202].includes((await decline(failing.job.id)).status));
+
+    const failedRaw = JSON.stringify({
+      event: 'refund.failed',
+      payload: {
+        refund: {
+          entity: {
+            id: 'rfnd_failed_01',
+            payment_id: failing.pay,
+            amount: failing.job.totalPriceInCents,
+            notes: { jobId: failing.job.id },
+          },
+        },
+      },
+    });
+    const failed = await fetch(`${baseUrl}/api/payments/webhook`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-razorpay-signature': signWebhook(failedRaw),
+        'x-razorpay-event-id': 'evt_refund_failed_01',
+      },
+      body: failedRaw,
+    });
+    assert.strictEqual(failed.status, 200);
+
+    const stands = await storage.getPrintJob(failing.job.id);
+    // The provider refused to refund, so the money is still the shop's — and
+    // the job is still cancelled, which is exactly why a human has to look.
+    assert.strictEqual(stands?.paymentState, PaymentState.Paid, 'the payment stands');
+    assert.strictEqual(stands?.printState, PrintState.Cancelled, 'and nothing was printed');
+
+    const trail = await storage.getJobEvents(failing.job.id);
+    assert.ok(
+      trail.some((e) => e.type === 'REFUND_FAILED'),
+      'the failure is on the record, not only in a log line'
+    );
+  });
+
+  await t.test('102. A partial refund is not recorded as a full one', async () => {
+    const shop = await shopWithAuth('Partial Co', 'partial@example.com', 'PartialPass1234');
+
+    const created = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: shop.printerId, fileName: 'p.pdf',
+        fileBase64: makePdf(10).toString('base64'),
+        copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+      }),
+    });
+    const job = ((await created.json()) as any).job;
+    await fetch(`${baseUrl}/api/print-jobs/${job.id}/manual-override`, {
+      method: 'POST', headers: shop.auth,
+    });
+
+    // Half the order comes back — a shop that printed some of it, say.
+    const half = Math.floor(job.totalPriceInCents / 2);
+    const recorded = await storage.recordJobRefund(
+      job.id, { refundId: 'rfnd_partial_01', amountInCents: half }, { actor: 'test' }
+    );
+    assert.ok(recorded.ok, recorded.ok ? '' : recorded.reason);
+
+    const after = await storage.getPrintJob(job.id);
+    assert.strictEqual(after?.paymentState, PaymentState.PartiallyRefunded,
+      'a partial refund must not read as a full one');
+    assert.strictEqual(after?.refundAmountCents, half);
+
+    // And it cannot then be confirmed back to Paid by a replayed confirmation.
+    const orderRes = await fetch(`${baseUrl}/api/payments/create-order`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jobId: job.id }),
+    });
+    assert.strictEqual(orderRes.status, 409, 'a refunded order cannot be charged again');
+  });
+
   server.close();
 });
 

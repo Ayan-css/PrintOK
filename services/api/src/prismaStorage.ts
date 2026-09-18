@@ -504,10 +504,14 @@ export class PrismaStorage implements IStorageProvider {
       };
     }
 
+    // Less than the order total came back, so say so rather than calling a
+    // partial refund a refund.
+    const partial = refund.amountInCents < existing.totalPriceInCents;
+
     const job = await this.prisma.printJob.update({
       where: { id: jobId },
       data: {
-        paymentState: PaymentState.Refunded,
+        paymentState: partial ? PaymentState.PartiallyRefunded : PaymentState.Refunded,
         refundId: refund.refundId,
         refundAmountCents: refund.amountInCents,
         refundedAt: new Date(),
@@ -517,7 +521,9 @@ export class PrismaStorage implements IStorageProvider {
             fromState: existing.printState,
             toState: existing.printState,
             actor: meta.actor || 'shop',
-            detail: { refundId: refund.refundId, amountInCents: refund.amountInCents } as Prisma.InputJsonValue,
+            detail: {
+              refundId: refund.refundId, amountInCents: refund.amountInCents, partial,
+            } as Prisma.InputJsonValue,
           },
         },
       },
@@ -1356,6 +1362,77 @@ export class PrismaStorage implements IStorageProvider {
     const job = await this.prisma.printJob.findUnique({ where: { id: jobId } });
     if (!job || !job.s3Key || job.documentDeletedAt) return null;
     return this.s3Service.createDownloadUrl(job.s3Key);
+  }
+
+  public async recordRefundRequested(
+    jobId: string,
+    refund: { refundId: string; amountInCents: number; status: string },
+    meta: TransitionMeta = {}
+  ): Promise<StateChangeResult> {
+    const existing = await this.prisma.printJob.findUnique({ where: { id: jobId } });
+    if (!existing) return { ok: false, code: 'NOT_FOUND', reason: `Job '${jobId}' not found.` };
+
+    // No state change. The payment stays in RefundPending until the money has
+    // actually moved; only the reference is kept, so the refund's webhook can
+    // be matched to this job when it arrives.
+    const job = await this.prisma.printJob.update({
+      where: { id: jobId },
+      data: {
+        refundId: refund.refundId,
+        refundAmountCents: refund.amountInCents,
+        events: {
+          create: {
+            type: 'REFUND_REQUESTED',
+            fromState: existing.printState,
+            toState: existing.printState,
+            actor: meta.actor || 'shop',
+            detail: {
+              refundId: refund.refundId,
+              amountInCents: refund.amountInCents,
+              status: refund.status,
+            } as Prisma.InputJsonValue,
+          },
+        },
+      },
+    });
+
+    return { ok: true, job: this.mapPrintJob(job) };
+  }
+
+  public async recordRefundFailed(
+    jobId: string, refundId: string, meta: TransitionMeta = {}
+  ): Promise<StateChangeResult> {
+    const existing = await this.prisma.printJob.findUnique({ where: { id: jobId } });
+    if (!existing) return { ok: false, code: 'NOT_FOUND', reason: `Job '${jobId}' not found.` };
+
+    const check = canTransitionPaymentState(existing.paymentState as PaymentState, PaymentState.Paid);
+    if (!check.allowed) {
+      return {
+        ok: false, code: 'ILLEGAL_TRANSITION', reason: check.reason!,
+        job: this.mapPrintJob(existing),
+      };
+    }
+
+    // The provider rejected the refund, so the money is still the shop's. The
+    // print side stays cancelled — the customer is not getting their document —
+    // which is why this needs a human rather than silently standing.
+    const job = await this.prisma.printJob.update({
+      where: { id: jobId },
+      data: {
+        paymentState: PaymentState.Paid,
+        events: {
+          create: {
+            type: 'REFUND_FAILED',
+            fromState: existing.printState,
+            toState: existing.printState,
+            actor: meta.actor || 'webhook',
+            detail: { refundId, needsAttention: true } as Prisma.InputJsonValue,
+          },
+        },
+      },
+    });
+
+    return { ok: true, job: this.mapPrintJob(job) };
   }
 
   public async attachGatewayOrder(

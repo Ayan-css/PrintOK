@@ -445,12 +445,46 @@ export interface IStorageProvider {
    */
   declineJob(jobId: string, reason: string, meta?: TransitionMeta): Promise<StateChangeResult>;
 
-  /** Records a refund Razorpay has accepted. */
+  /**
+   * Records a refund Razorpay has *settled*.
+   *
+   * Moves the payment to Refunded, or PartiallyRefunded when less than the
+   * order total came back. Only for a refund whose status is 'processed' — see
+   * recordRefundRequested for one that has merely been accepted.
+   */
   recordJobRefund(
     jobId: string,
     refund: { refundId: string; amountInCents: number },
     meta?: TransitionMeta
   ): Promise<StateChangeResult>;
+
+  /**
+   * Records a refund Razorpay has accepted but not yet settled.
+   *
+   * Razorpay refunds are asynchronous: the API call returns a refund created as
+   * 'pending', which becomes 'processed' when the bank has actually taken the
+   * money — days later, sometimes — and which can fail. The job was being
+   * marked Refunded the moment the call returned, so the customer was told
+   * their money was back while it had not moved and might never.
+   *
+   * The payment stays in RefundPending; only the reference is stored, so the
+   * refund can be recognised when its webhook arrives.
+   */
+  recordRefundRequested(
+    jobId: string,
+    refund: { refundId: string; amountInCents: number; status: string },
+    meta?: TransitionMeta
+  ): Promise<StateChangeResult>;
+
+  /**
+   * Marks a refund Razorpay has told us failed.
+   *
+   * The payment stands, which is the one legitimate use of the
+   * RefundPending -> Paid transition: the provider rejected our refund, so the
+   * money is still the shop's and the job is still cancelled. Distinct from a
+   * customer's browser asserting payment, which is refused.
+   */
+  recordRefundFailed(jobId: string, refundId: string, meta?: TransitionMeta): Promise<StateChangeResult>;
 
   // --- Merchant accounts (PRD 20) ---
   createMerchantUser(input: {
@@ -832,7 +866,11 @@ export class MemoryStorage implements IStorageProvider {
       return { ok: false, code: 'ILLEGAL_TRANSITION', reason: check.reason!, job };
     }
 
-    job.paymentState = PaymentState.Refunded;
+    // Less than the order total came back, so say so rather than calling a
+    // partial refund a refund.
+    const partial = refund.amountInCents < (job.totalPriceInCents || 0);
+
+    job.paymentState = partial ? PaymentState.PartiallyRefunded : PaymentState.Refunded;
     job.refundId = refund.refundId;
     job.refundAmountCents = refund.amountInCents;
     job.refundedAt = new Date().toISOString();
@@ -841,7 +879,57 @@ export class MemoryStorage implements IStorageProvider {
 
     this.appendEvent(jobId, 'PAYMENT_REFUNDED', job.printState, job.printState, {
       actor: meta.actor || 'shop',
-      detail: { refundId: refund.refundId, amountInCents: refund.amountInCents },
+      detail: { refundId: refund.refundId, amountInCents: refund.amountInCents, partial },
+    });
+
+    return { ok: true, job };
+  }
+
+  public async recordRefundRequested(
+    jobId: string,
+    refund: { refundId: string; amountInCents: number; status: string },
+    meta: TransitionMeta = {}
+  ): Promise<StateChangeResult> {
+    const job = this.printJobs.get(jobId);
+    if (!job) return { ok: false, code: 'NOT_FOUND', reason: `Job '${jobId}' not found.` };
+
+    // No state change: the payment stays in RefundPending until the money has
+    // actually moved. Only the reference is kept, so the refund's webhook can
+    // be matched to this job when it arrives.
+    job.refundId = refund.refundId;
+    job.refundAmountCents = refund.amountInCents;
+    job.updatedAt = new Date().toISOString();
+    this.printJobs.set(jobId, job);
+
+    this.appendEvent(jobId, 'REFUND_REQUESTED', job.printState, job.printState, {
+      actor: meta.actor || 'shop',
+      detail: { refundId: refund.refundId, amountInCents: refund.amountInCents, status: refund.status },
+    });
+
+    return { ok: true, job };
+  }
+
+  public async recordRefundFailed(
+    jobId: string, refundId: string, meta: TransitionMeta = {}
+  ): Promise<StateChangeResult> {
+    const job = this.printJobs.get(jobId);
+    if (!job) return { ok: false, code: 'NOT_FOUND', reason: `Job '${jobId}' not found.` };
+
+    const check = canTransitionPaymentState(job.paymentState, PaymentState.Paid);
+    if (!check.allowed) {
+      return { ok: false, code: 'ILLEGAL_TRANSITION', reason: check.reason!, job };
+    }
+
+    // The provider rejected the refund, so the money is still the shop's. The
+    // print side stays cancelled — the customer is not getting their document —
+    // which is why this needs a human to resolve rather than silently standing.
+    job.paymentState = PaymentState.Paid;
+    job.updatedAt = new Date().toISOString();
+    this.printJobs.set(jobId, job);
+
+    this.appendEvent(jobId, 'REFUND_FAILED', job.printState, job.printState, {
+      actor: meta.actor || 'webhook',
+      detail: { refundId, needsAttention: true },
     });
 
     return { ok: true, job };
