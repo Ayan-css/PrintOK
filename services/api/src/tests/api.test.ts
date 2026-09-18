@@ -4838,6 +4838,107 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual((await fetch(`${baseUrl}/api/admin/email-status`)).status, 401);
   });
 
+  await t.test('107b. With a provider configured, the emailed link actually resets the password', async () => {
+    // Tests 105 and 106 put the token into storage by hand, because that is how
+    // the confirm route sees it. That leaves the half that runs in production
+    // untested: the request route generating a token, building a link out of
+    // PUBLIC_WEB_URL and handing it to the provider. A link built against an
+    // unset PUBLIC_WEB_URL points at nowhere, and the failure is invisible —
+    // the route answers "a reset link is on its way" either way, by design.
+    //
+    // So this boots a second app with mail switched on, and reads the link back
+    // out of the one provider that has somewhere to read it from.
+    const saved = {
+      provider: process.env.EMAIL_PROVIDER,
+      webUrl: process.env.PUBLIC_WEB_URL,
+      nodeEnv: process.env.NODE_ENV,
+    };
+    process.env.EMAIL_PROVIDER = 'log';
+    process.env.PUBLIC_WEB_URL = 'https://printok.example';
+    delete process.env.NODE_ENV; // 'log' is ignored in production, on purpose.
+
+    const mailStorage = new MemoryStorage();
+    const mailApp = http.createServer(createApp(mailStorage));
+    await new Promise<void>((resolve) => mailApp.listen(0, resolve));
+    const mailUrl = `http://localhost:${(mailApp.address() as any).port}`;
+
+    // Capture what the provider was handed, without losing the console.
+    const realLog = console.log;
+    const lines: string[] = [];
+    console.log = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+
+    try {
+      const email = 'relinked@example.com';
+      // Registering and claiming are two steps: the second is what sets a
+      // password, and so what makes resetting one mean anything.
+      const reg = await (await fetch(`${mailUrl}/api/shops/register`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shopName: 'Relinked Co', ownerEmail: email, printerName: 'Relinked printer',
+        }),
+      })).json() as any;
+
+      const claimed = await fetch(`${mailUrl}/api/merchant/claim`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shopId: reg.shop.id, ownerEmail: email, password: 'OriginalPass1234', name: 'Relinked Co',
+        }),
+      });
+      assert.ok(claimed.ok, await claimed.clone().text());
+
+      const asked = await fetch(`${mailUrl}/api/merchant/password-reset/request`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      assert.strictEqual(asked.status, 200);
+
+      const body = lines.join('\n');
+      assert.match(body, /\[Email:log]/, 'the provider was actually asked to send something');
+
+      // The link must be absolute and point at the configured site. Built from
+      // an unset PUBLIC_WEB_URL it would read "/dashboard?reset=..." and be
+      // useless in an inbox.
+      const link = body.match(/https:\/\/printok\.example\/dashboard\?reset=([A-Za-z0-9_-]+)/);
+      assert.ok(link, `the emailed link is missing or not absolute:\n${body}`);
+
+      const token = decodeURIComponent(link![1]);
+
+      // And the token in that link resets the password for real.
+      const done = await fetch(`${mailUrl}/api/merchant/password-reset/confirm`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, password: 'MailedPass12345' }),
+      });
+      assert.strictEqual(done.status, 200, await done.clone().text());
+
+      const withNew = await fetch(`${mailUrl}/api/merchant/login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password: 'MailedPass12345' }),
+      });
+      assert.strictEqual(withNew.status, 200, 'the password from the emailed link works');
+
+      const withOld = await fetch(`${mailUrl}/api/merchant/login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password: 'OriginalPass1234' }),
+      });
+      assert.strictEqual(withOld.status, 401, 'and the old one no longer does');
+
+      // The token is a credential for as long as it lives, so it must not be
+      // sitting in the log next to the link.
+      assert.ok(
+        !lines.some((l) => l.includes(token) && !l.includes('[Email:log]')),
+        'the reset token must not be logged outside the message itself'
+      );
+    } finally {
+      console.log = realLog;
+      await new Promise<void>((resolve) => mailApp.close(() => resolve()));
+      if (saved.provider === undefined) delete process.env.EMAIL_PROVIDER;
+      else process.env.EMAIL_PROVIDER = saved.provider;
+      if (saved.webUrl === undefined) delete process.env.PUBLIC_WEB_URL;
+      else process.env.PUBLIC_WEB_URL = saved.webUrl;
+      if (saved.nodeEnv !== undefined) process.env.NODE_ENV = saved.nodeEnv;
+    }
+  });
+
   await t.test('108. An operator can see what needs a person, and logs carry no secrets', async () => {
     // The project's own assessment was that nothing alerts anyone: a shop
     // offline overnight went unnoticed, and every defect found that week was
