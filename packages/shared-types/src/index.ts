@@ -766,6 +766,22 @@ export interface PrintJob {
   /** The gateway payment that settled this job. Unique across the platform. */
   razorpayPaymentId?: string;
 
+  /**
+   * What this order's money actually did, frozen at confirmation.
+   *
+   * Recorded once rather than recomputed, because recomputing means a shop that
+   * upgrades mid-month sees last week's orders restated at its new rate, and it
+   * means the gateway fee is always the published estimate rather than what was
+   * charged. `feesAreActual` says which of those two the figures are.
+   */
+  grossCents?: number;
+  gatewayFeeCents?: number;
+  gatewayTaxCents?: number;
+  commissionBpsUsed?: number;
+  /** Razorpay's fee for the Route transfer itself, absorbed by PrintOk. */
+  routeFeeCents?: number;
+  feesAreActual?: boolean;
+
   // Print lifecycle
   printState: PrintState;
 

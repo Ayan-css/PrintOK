@@ -1435,6 +1435,40 @@ export class PrismaStorage implements IStorageProvider {
     return { ok: true, job: this.mapPrintJob(job) };
   }
 
+  public async countShopUsage(shopId: string, now: Date = new Date()): Promise<{
+    ordersThisMonth: number; printers: number; staff: number;
+  }> {
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const [ordersThisMonth, printers, staff] = await Promise.all([
+      this.prisma.printJob.count({ where: { shopId, createdAt: { gte: monthStart } } }),
+      this.prisma.printer.count({ where: { shopId } }),
+      this.prisma.merchantUser.count({ where: { shopId, status: 'active' } }),
+    ]);
+
+    return { ordersThisMonth, printers, staff };
+  }
+
+  public async recordFeeLedger(
+    jobId: string,
+    ledger: {
+      grossCents: number; gatewayFeeCents: number; gatewayTaxCents: number;
+      commissionBpsUsed: number; feesAreActual: boolean; routeFeeCents?: number;
+    }
+  ): Promise<void> {
+    await this.prisma.printJob.updateMany({
+      where: { id: jobId },
+      data: {
+        grossCents: ledger.grossCents,
+        gatewayFeeCents: ledger.gatewayFeeCents,
+        gatewayTaxCents: ledger.gatewayTaxCents,
+        commissionBpsUsed: ledger.commissionBpsUsed,
+        feesAreActual: ledger.feesAreActual,
+        ...(ledger.routeFeeCents !== undefined ? { routeFeeCents: ledger.routeFeeCents } : {}),
+      },
+    });
+  }
+
   public async attachGatewayOrder(
     jobId: string, gatewayOrderId: string, amountCents: number
   ): Promise<void> {
@@ -1956,6 +1990,13 @@ export class PrismaStorage implements IStorageProvider {
       razorpayOrderId: j.razorpayOrderId ?? undefined,
       razorpayOrderAmountCents: j.razorpayOrderAmountCents ?? undefined,
       razorpayPaymentId: j.razorpayPaymentId ?? undefined,
+
+      grossCents: j.grossCents ?? undefined,
+      gatewayFeeCents: j.gatewayFeeCents ?? undefined,
+      gatewayTaxCents: j.gatewayTaxCents ?? undefined,
+      commissionBpsUsed: j.commissionBpsUsed ?? undefined,
+      routeFeeCents: j.routeFeeCents ?? undefined,
+      feesAreActual: j.feesAreActual ?? undefined,
 
       declineReason: j.declineReason ?? undefined,
       refundId: j.refundId ?? undefined,

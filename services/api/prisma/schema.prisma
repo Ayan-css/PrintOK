@@ -337,6 +337,29 @@ model PrintJob {
 
   // --- Route settlement ---
   /// Razorpay transfer id (trf_...) for the shop's share of this payment.
+  // ---- Per-order fee ledger ----
+  //
+  // What the money actually did, recorded once and never recomputed. The
+  // earnings and payout screens used to derive every figure on the fly from the
+  // shop's *current* commission rate — so a shop that upgraded mid-month saw
+  // last week's orders restated at the new rate, and the gateway fee was always
+  // the published estimate rather than what Razorpay charged.
+  /// What the customer paid. Equal to totalPriceInCents at capture, kept
+  /// separately so the ledger reads as a ledger rather than by reference.
+  grossCents        Int?
+  /// Razorpay's fee, as reported on payment.captured — not the estimate.
+  gatewayFeeCents   Int?
+  /// GST on that fee, reported separately by Razorpay.
+  gatewayTaxCents   Int?
+  /// The commission rate this order was actually charged at, in basis points.
+  /// A shop that upgrades mid-month must not have last week's orders recomputed.
+  commissionBpsUsed Int?
+  /// Razorpay's fee for the Route transfer itself, which PrintOk absorbs.
+  /// Recorded so it can be seen whether absorbing it is sustainable.
+  routeFeeCents     Int?
+  /// Whether the fee figures came from the gateway or from the published rate.
+  feesAreActual     Boolean @default(false)
+
   transferId          String?
   /// What the shop is owed from this order, after the PrintOk service fee.
   transferAmountCents Int?

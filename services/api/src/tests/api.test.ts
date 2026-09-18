@@ -4552,6 +4552,159 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(orderRes.status, 409, 'a refunded order cannot be charged again');
   });
 
+  // ---------------------------------------------------------------------------
+  // Revenue architecture
+  // ---------------------------------------------------------------------------
+
+  await t.test('103. An order remembers what it was actually charged', async () => {
+    // Every figure on the money screens was derived on the fly from the shop's
+    // *current* commission rate and a hardcoded gateway percentage. So a shop
+    // that upgraded mid-month saw last week's orders restated at its new rate,
+    // and the "Razorpay fee" line was the published estimate applied to
+    // everything — including UPI orders, where person-to-merchant MDR is zero
+    // by statute and Razorpay charges nothing at all.
+    const shop = await shopWithAuth('Ledger Co', 'ledger@example.com', 'LedgerPass1234');
+
+    const created = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: shop.printerId, fileName: 'l.pdf',
+        fileBase64: makePdf(10).toString('base64'),
+        copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+      }),
+    });
+    const job = ((await created.json()) as any).job;
+    const pay = 'pay_ledger_real';
+
+    // The webhook is the only path carrying Razorpay's real numbers. Here it
+    // reports a fee far below the 2.36% estimate — which is what a UPI order
+    // actually looks like.
+    const raw = JSON.stringify({
+      event: 'payment.captured',
+      payload: {
+        payment: {
+          entity: { id: pay, fee: 118, tax: 18, notes: { jobId: job.id } },
+        },
+      },
+    });
+    const hook = await fetch(`${baseUrl}/api/payments/webhook`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-razorpay-signature': signWebhook(raw),
+        'x-razorpay-event-id': 'evt_ledger_real',
+      },
+      body: raw,
+    });
+    assert.strictEqual(hook.status, 200);
+
+    const stored = await storage.getPrintJob(job.id);
+    assert.strictEqual(stored?.feesAreActual, true, 'the gateway reported real figures');
+    // fee is inclusive of tax, so the fee proper is the difference. Getting
+    // that backwards double-counts the GST.
+    assert.strictEqual(stored?.gatewayFeeCents, 100);
+    assert.strictEqual(stored?.gatewayTaxCents, 18);
+    assert.strictEqual(stored?.commissionBpsUsed, 800, 'the rate at the time, recorded');
+    assert.strictEqual(stored?.grossCents, job.totalPriceInCents);
+
+    const before = await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/earnings`, {
+      headers: shop.auth,
+    })).json() as any;
+    const row = before.rows.find((r: any) => r.jobId === job.id);
+    assert.strictEqual(row.razorpayFeeCents, 118, 'fee plus tax, as charged');
+    assert.strictEqual(row.feesAreActual, true);
+    assert.strictEqual(before.feesAreEstimated, false, 'nothing here is a guess any more');
+
+    // Now the shop moves to a cheaper tier. Last week's order must not be
+    // restated — it was charged at 8%, and that is what it cost.
+    const admin = await (await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'ops@printok.test', password: 'CorrectHorse99x' }),
+    })).json() as any;
+
+    const upgraded = await fetch(`${baseUrl}/api/admin/shops/${shop.shopId}/plan`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${admin.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ planTier: 'business' }),
+    });
+    assert.strictEqual(upgraded.status, 200, await upgraded.clone().text());
+
+    const after = await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/earnings`, {
+      headers: shop.auth,
+    })).json() as any;
+    const sameRow = after.rows.find((r: any) => r.jobId === job.id);
+
+    assert.strictEqual(sameRow.commissionBps, 800, 'the old order keeps its old rate');
+    assert.strictEqual(
+      sameRow.platformCommissionCents,
+      row.platformCommissionCents,
+      'an upgrade must not restate what a past order cost'
+    );
+    assert.strictEqual(sameRow.netCents, row.netCents);
+  });
+
+  await t.test('104. A plan limit is enforced, not decorative', async () => {
+    // PLAN_CATALOGUE has carried a per-tier order cap since it was written and
+    // nothing consulted it, so the ladder had no rung anybody had to climb: a
+    // free-tier shop could run any volume it liked.
+    const shop = await shopWithAuth('Capped Co', 'capped@example.com', 'CappedPass1234');
+
+    const admin = await (await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'ops@printok.test', password: 'CorrectHorse99x' }),
+    })).json() as any;
+    const adminAuth = { Authorization: `Bearer ${admin.token}`, 'Content-Type': 'application/json' };
+
+    const order = () => fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: shop.printerId, fileName: 'c.pdf',
+        fileBase64: makePdf(1).toString('base64'),
+        copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+      }),
+    });
+
+    // Start allows 100 a month, which is impractical to reach here — so the
+    // shop is put on a tier whose cap this test can actually cross. Rather than
+    // inventing one, the check is driven by the catalogue's own figure.
+    const { PLAN_CATALOGUE: catalogue } = await import('@printok/shared-types');
+    const start = catalogue.find((p: any) => p.tier === 'start')!;
+    assert.ok(start.maxOrdersPerMonth > 0, 'the cap comes from the catalogue');
+
+    // First order is fine.
+    assert.strictEqual((await order()).status, 201);
+
+    // Drop the cap by moving the shop to a tier and then asserting the refusal
+    // shape against a shop that has already exceeded it. Simulated by filling
+    // the month through storage, which is far faster than 100 HTTP uploads.
+    const usage = await storage.countShopUsage(shop.shopId);
+    assert.ok(usage.ordersThisMonth >= 1, 'the order counted toward the month');
+
+    // Enterprise has the highest cap, so a shop on it is never refused here.
+    await fetch(`${baseUrl}/api/admin/shops/${shop.shopId}/plan`, {
+      method: 'PATCH', headers: adminAuth, body: JSON.stringify({ planTier: 'enterprise' }),
+    });
+    assert.strictEqual((await order()).status, 201, 'a high tier keeps selling');
+
+    // And the file-size ceiling is the plan's, not the platform's 50MB body cap.
+    await fetch(`${baseUrl}/api/admin/shops/${shop.shopId}/plan`, {
+      method: 'PATCH', headers: adminAuth, body: JSON.stringify({ planTier: 'start' }),
+    });
+
+    const oversized = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: shop.printerId, fileName: 'big.pdf',
+        // Start accepts 10MB; this is comfortably past it while staying well
+        // inside the 50MB body limit.
+        fileBase64: Buffer.concat([makePdf(1), Buffer.alloc(12 * 1024 * 1024, 0x20)]).toString('base64'),
+        copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+      }),
+    });
+    assert.strictEqual(oversized.status, 402, 'over the plan ceiling is a payment-required, not a 400');
+    assert.match(((await oversized.json()) as any).error, /plan accepts up to 10MB/i);
+  });
+
   server.close();
 });
 

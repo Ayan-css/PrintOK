@@ -384,6 +384,46 @@ export interface IStorageProvider {
   recordJobSettlement(jobId: string, transferAmountCents: number, serviceFeeCents: number): Promise<void>;
 
   /**
+   * Freezes what this order's money actually did.
+   *
+   * Written once, at confirmation, and read thereafter instead of being
+   * recomputed. Recomputing is how a shop that upgraded mid-month found last
+   * week's orders restated at its new commission rate, and how every order
+   * showed the published gateway percentage rather than what Razorpay charged.
+   *
+   * `gatewayFeeCents` and `gatewayTaxCents` come from the payment entity when
+   * the gateway reported them — `feesAreActual` says which — and from the
+   * published rate when it did not, so the figures are never silently a guess
+   * presented as a measurement.
+   */
+  /**
+   * How many jobs a shop has created this calendar month, and how many printers
+   * and staff accounts it has.
+   *
+   * For entitlement checks. The plan catalogue has carried per-tier caps on all
+   * three since it was written and nothing ever consulted them, so a shop on the
+   * free tier could run any volume it liked on any number of printers — the
+   * ladder had no rung anybody had to climb.
+   */
+  countShopUsage(shopId: string, now?: Date): Promise<{
+    ordersThisMonth: number;
+    printers: number;
+    staff: number;
+  }>;
+
+  recordFeeLedger(
+    jobId: string,
+    ledger: {
+      grossCents: number;
+      gatewayFeeCents: number;
+      gatewayTaxCents: number;
+      commissionBpsUsed: number;
+      feesAreActual: boolean;
+      routeFeeCents?: number;
+    }
+  ): Promise<void>;
+
+  /**
    * Deletes documents for jobs that have come to rest and will not be printed.
    *
    * Purging used to happen only on a state transition, so a job that never
@@ -1366,6 +1406,44 @@ export class MemoryStorage implements IStorageProvider {
     const job = this.printJobs.get(jobId);
     if (!job || !job.s3Key || job.documentDeletedAt) return null;
     return this.s3Service.createDownloadUrl(job.s3Key);
+  }
+
+  public async countShopUsage(shopId: string, now: Date = new Date()): Promise<{
+    ordersThisMonth: number; printers: number; staff: number;
+  }> {
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    let ordersThisMonth = 0;
+    for (const job of this.printJobs.values()) {
+      if (job.shopId !== shopId) continue;
+      if (new Date(job.createdAt) < monthStart) continue;
+      ordersThisMonth += 1;
+    }
+
+    let printers = 0;
+    for (const printer of this.printers.values()) {
+      if (printer.shopId === shopId) printers += 1;
+    }
+
+    let staff = 0;
+    for (const user of this.merchantUsers.values()) {
+      if (user.shopId === shopId && user.status === 'active') staff += 1;
+    }
+
+    return { ordersThisMonth, printers, staff };
+  }
+
+  public async recordFeeLedger(
+    jobId: string,
+    ledger: {
+      grossCents: number; gatewayFeeCents: number; gatewayTaxCents: number;
+      commissionBpsUsed: number; feesAreActual: boolean; routeFeeCents?: number;
+    }
+  ): Promise<void> {
+    const job = this.printJobs.get(jobId);
+    if (!job) return;
+    Object.assign(job, ledger);
+    this.printJobs.set(jobId, job);
   }
 
   public async attachGatewayOrder(

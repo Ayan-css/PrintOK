@@ -1042,30 +1042,51 @@ document.addEventListener('DOMContentLoaded', () => {
      * payments screen is not "how much" but "when do I get it" — and the honest
      * answer today is "not through this screen yet".
      */
-    function renderSettlement(settlement) {
+    /**
+     * The one place settlement is explained.
+     *
+     * This used to hold its own hardcoded pair of messages while the payout card
+     * below rendered a second explanation from the API — two descriptions of the
+     * same thing, in different words, on one screen. Both now come from the
+     * server's describeSettlement, which is also what decides the mode, so they
+     * cannot drift apart or disagree.
+     */
+    function renderSettlement(settlement, detail) {
       const box = document.getElementById('settlementNotice');
       if (!box) return;
 
-      if (settlement === 'automatic') {
-        box.className = 'settlement-notice is-good';
-        box.innerHTML = `
-          <strong>You are paid on every order.</strong>
-          Each payment is split at the moment the customer pays and your share goes
-          straight to your own Razorpay account. There is nothing to withdraw and
-          no request to make.`;
-      } else {
-        box.className = 'settlement-notice is-pending';
-        box.innerHTML = `
-          <strong>Automatic settlement is not switched on yet.</strong>
-          Once your shop is connected to Razorpay, each order is split at payment
-          and your share arrives in your own account without a withdrawal request.
-          Until then the figures below are what you have earned, not what has been
-          paid out.`;
+      const automatic = (detail?.mode || settlement) === 'automatic';
+      box.className = `settlement-notice ${automatic ? 'is-good' : 'is-pending'}`;
+
+      if (!detail) {
+        // An older response with no explanation attached. Say the one true
+        // thing rather than inventing the rest.
+        box.textContent = automatic
+          ? 'You are paid on every order.'
+          : 'Automatic settlement is not switched on yet.';
+        return;
+      }
+
+      // Built as nodes rather than innerHTML: these strings come from the API,
+      // and the only reason they are safe to interpolate is that nobody has
+      // checked — which is not a reason.
+      box.replaceChildren();
+
+      const headline = document.createElement('strong');
+      headline.textContent = detail.headline || '';
+      box.append(headline, ' ', document.createTextNode(detail.detail || ''));
+
+      if (detail.action) {
+        const action = document.createElement('div');
+        action.style.marginTop = '6px';
+        action.style.fontWeight = '600';
+        action.textContent = detail.action;
+        box.append(action);
       }
     }
 
     function renderMoney(data) {
-      renderSettlement(data.settlement);
+      renderSettlement(data.settlement, data.settlementDetail);
 
       const totals = document.getElementById('moneyTotals');
       if (totals) {
@@ -1527,16 +1548,14 @@ document.addEventListener('DOMContentLoaded', () => {
           // The mode used to be the whole message: a badge reading "manual"
           // and nothing a shop owner could act on, least of all why it
           // depended on a Razorpay account nobody had explained.
+          // Badge only. The explanation itself lives in the notice at the top
+          // of this screen, rendered from the same server answer — saying it
+          // twice on one screen, in two different wordings, helped nobody.
           const s = p.settlementDetail;
-          if (s) {
-            const badge = document.getElementById('settlementBadge');
-            if (badge) {
-              badge.textContent = s.mode === 'automatic' ? 'Automatic' : 'Paid out by hand';
-              badge.className = `badge ${s.mode === 'automatic' ? 'badge-success' : 'badge-queued'}`;
-            }
-            set('settlementHeadline', s.headline || '');
-            set('settlementDetail', s.detail || '');
-            set('settlementAction', s.action || '');
+          const badge = document.getElementById('settlementBadge');
+          if (s && badge) {
+            badge.textContent = s.mode === 'automatic' ? 'Automatic' : 'Paid out by hand';
+            badge.className = `badge ${s.mode === 'automatic' ? 'badge-success' : 'badge-queued'}`;
           }
         }
       } catch {

@@ -184,7 +184,9 @@ test('customer web routing', async (t) => {
     }
 
     // And the containers the real figures are rendered into must exist.
-    for (const id of ['planOptions', 'planCurrentBadge', 'settlementHeadline', 'payoutDetailsForm']) {
+    // settlementNotice, not a second explanation inside the payout card: the
+    // screen briefly carried both, saying the same thing in two wordings.
+    for (const id of ['planOptions', 'planCurrentBadge', 'settlementNotice', 'settlementBadge', 'payoutDetailsForm']) {
       assert.ok(markup.includes(`id="${id}"`), `dashboard.html must contain #${id}`);
     }
   });

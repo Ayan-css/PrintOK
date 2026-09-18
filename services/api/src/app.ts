@@ -70,6 +70,107 @@ const BOOT_TIME = new Date().toISOString();
 const UNMEASURABLE_FORMATS = new Set(['word', 'excel', 'csv', 'unknown']);
 
 /**
+ * The largest upload each tier accepts, in bytes.
+ *
+ * Not in PLAN_CATALOGUE, which carries orders, printers and seats but no file
+ * size. Kept beside the enforcement rather than invented into the catalogue,
+ * because the catalogue's published figures are a commercial decision and these
+ * are an operational one.
+ */
+const PLAN_MAX_UPLOAD_BYTES: Record<string, number> = {
+  start: 10 * 1024 * 1024,
+  smart: 25 * 1024 * 1024,
+  business: 50 * 1024 * 1024,
+  enterprise: 100 * 1024 * 1024,
+};
+
+/**
+ * Whether a shop may take another order this month, and why not.
+ *
+ * The plan catalogue has carried a per-tier order cap since it was written and
+ * nothing ever consulted it, so the ladder had no rung anybody had to climb: a
+ * free-tier shop could run any volume on any number of printers. Enforcing it
+ * is what makes a plan mean something.
+ *
+ * Answered as 402 rather than 403 — this is "your plan does not cover this",
+ * which the dashboard can render as an upgrade prompt, not "you may not".
+ */
+async function checkOrderAllowance(
+  storage: IStorageProvider,
+  shopId: string
+): Promise<{ allowed: true } | { allowed: false; error: string; usage: unknown }> {
+  const plan = await storage.getShopPlan(shopId);
+  const tier = plan?.planTier ?? 'start';
+  const definition = getPlan(tier);
+  if (!definition) return { allowed: true };
+
+  const usage = await storage.countShopUsage(shopId);
+  if (usage.ordersThisMonth < definition.maxOrdersPerMonth) return { allowed: true };
+
+  return {
+    allowed: false,
+    error:
+      `This shop has reached its ${definition.name} plan limit of ` +
+      `${definition.maxOrdersPerMonth} orders this month. The shop owner can upgrade from ` +
+      'the dashboard to keep taking orders.',
+    usage: {
+      tier,
+      ordersThisMonth: usage.ordersThisMonth,
+      maxOrdersPerMonth: definition.maxOrdersPerMonth,
+    },
+  };
+}
+
+/**
+ * Freezes what an order's money did, at the moment it is confirmed.
+ *
+ * Two things this fixes. The commission rate is recorded per order, so a shop
+ * that upgrades mid-month does not have last week's orders restated at its new
+ * rate. And the gateway fee is whatever Razorpay actually reported, when it
+ * reported one — `payment.captured` carries `fee` and `tax` on the payment
+ * entity — rather than the published 2% + GST estimate applied to everything.
+ *
+ * That distinction matters more than it looks: UPI person-to-merchant MDR is
+ * zero by statute, and UPI is how most of these customers pay, so the estimate
+ * is very likely charging shops for a fee Razorpay never took.
+ *
+ * Deliberately best-effort. A ledger write that failed must not undo a
+ * confirmed payment, so it is logged and the payment stands.
+ */
+async function freezeFeeLedger(
+  storage: IStorageProvider,
+  job: PrintJob,
+  commissionBps: number,
+  gateway?: { feeCents?: number; taxCents?: number }
+): Promise<void> {
+  try {
+    const gross = job.totalPriceInCents || 0;
+
+    const reportedFee = Number(gateway?.feeCents);
+    const reportedTax = Number(gateway?.taxCents);
+    const actual = Number.isFinite(reportedFee) && reportedFee >= 0;
+
+    // Razorpay reports `fee` inclusive of `tax`, so the fee proper is the
+    // difference. Getting that backwards would double-count the GST.
+    const tax = actual && Number.isFinite(reportedTax) && reportedTax >= 0 ? reportedTax : 0;
+    const fee = actual ? Math.max(0, reportedFee - tax) : 0;
+
+    await storage.recordFeeLedger(job.id, {
+      grossCents: gross,
+      gatewayFeeCents: actual
+        ? fee
+        : Math.round((gross * PAYMENT_GATEWAY_FEE_BPS) / 10_000),
+      gatewayTaxCents: actual ? tax : 0,
+      commissionBpsUsed: commissionBps,
+      feesAreActual: actual,
+    });
+  } catch (err: any) {
+    // A confirmed payment must not be undone by a bookkeeping failure.
+    console.error(`[Ledger] Could not record fees for job ${job.id}:`, err?.message || err);
+  }
+}
+
+/**
  * The client-supplied key that makes a retry safe.
  *
  * `createPrintJob` has always looked one up and returned the original job
@@ -180,11 +281,26 @@ function customerJobView(job: PrintJob) {
  */
 function summariseShopEarnings(jobs: PrintJob[], commissionBps: number) {
   const rows = jobs.map((job) => {
-    const gross = job.totalPriceInCents || 0;
+    const gross = job.grossCents ?? job.totalPriceInCents ?? 0;
     const paidOnline = wasPaidThroughGateway(job);
-    const { gatewayFeeCents, serviceFeeCents, netCents } = calculateShopNetCents(
-      gross, commissionBps, { gatewayFeeApplies: paidOnline }
-    );
+
+    // The rate this order was actually charged at, not the shop's rate today.
+    // Recomputing from the current rate is how a shop that upgraded mid-month
+    // found last week's orders restated.
+    const rateUsed = job.commissionBpsUsed ?? commissionBps;
+
+    // A recorded ledger is used as recorded. Only an order taken before the
+    // ledger existed — or one still awaiting its webhook — is derived, and the
+    // response says which by way of feesAreEstimated.
+    const hasLedger = job.gatewayFeeCents !== undefined && job.commissionBpsUsed !== undefined;
+
+    const derived = calculateShopNetCents(gross, rateUsed, { gatewayFeeApplies: paidOnline });
+
+    const gatewayFeeCents = hasLedger
+      ? (job.gatewayFeeCents ?? 0) + (job.gatewayTaxCents ?? 0)
+      : derived.gatewayFeeCents;
+    const serviceFeeCents = derived.serviceFeeCents;
+    const netCents = Math.max(0, gross - gatewayFeeCents - serviceFeeCents);
 
     return {
       jobId: job.id,
@@ -196,6 +312,10 @@ function summariseShopEarnings(jobs: PrintJob[], commissionBps: number) {
       paymentRef: job.paymentRef ?? null,
       /** How the money arrived, so the row can explain its own deductions. */
       paymentMethod: paidOnline ? ('online' as const) : ('cash' as const),
+      /** The rate this order was charged at, which may not be the shop's rate now. */
+      commissionBps: rateUsed,
+      /** Whether the gateway figures came from Razorpay or from the published rate. */
+      feesAreActual: hasLedger ? (job.feesAreActual ?? false) : false,
       printState: job.printState,
       grossCents: gross,
       // What the shop actually banked on this order, and what each deduction
@@ -218,6 +338,8 @@ function summariseShopEarnings(jobs: PrintJob[], commissionBps: number) {
       netCents: sum((r) => r.netCents),
       cashOrders: rows.filter((r) => r.paymentMethod === 'cash').length,
       onlineOrders: rows.filter((r) => r.paymentMethod === 'online').length,
+      /** How many rows carry figures Razorpay reported rather than estimates. */
+      ordersWithActualFees: rows.filter((r) => r.feesAreActual).length,
     },
   };
 }
@@ -1262,6 +1384,12 @@ export function createApp(
   app.post('/api/shops/:shopId/staff', async (req: Request, res: Response) => {
     const merchant = await authenticateMerchant(req, res, { requireOwner: true });
     if (!merchant) return;
+
+    // Seats are deliberately NOT capped here. PLAN_CATALOGUE carries orders per
+    // month and printers, and no seat figure at all — so enforcing one would
+    // mean inventing a commercial number and applying it to live shops. Orders
+    // and file size are enforced because the catalogue actually states them.
+    // Add maxStaffSeats to the catalogue and this becomes a three-line check.
 
     try {
       const { email, name, password } = req.body || {};
@@ -2779,8 +2907,28 @@ export function createApp(
         return res.status(400).json({ error: unavailable });
       }
 
+      // The shop's plan has to cover this order. Checked before the document is
+      // decoded, so a shop over its limit costs nothing to refuse.
+      const allowance = await checkOrderAllowance(storage, printer.shopId);
+      if (!allowance.allowed) {
+        return res.status(402).json({ error: allowance.error, usage: allowance.usage });
+      }
+
       // Multi-format document inspection & server-side page count verification
       const fileBuffer = Buffer.from(fileBase64, 'base64');
+
+      // And the plan's file-size ceiling. The 50MB body limit is a platform
+      // bound that applies to everyone; this is the one the shop is paying for.
+      const shopPlan = await storage.getShopPlan(printer.shopId);
+      const maxUpload = PLAN_MAX_UPLOAD_BYTES[shopPlan?.planTier ?? 'start'] ?? PLAN_MAX_UPLOAD_BYTES.start;
+      if (fileBuffer.length > maxUpload) {
+        return res.status(402).json({
+          error:
+            `This file is ${(fileBuffer.length / (1024 * 1024)).toFixed(1)}MB, and this shop's plan ` +
+            `accepts up to ${Math.round(maxUpload / (1024 * 1024))}MB. Ask the shop to upgrade, or ` +
+            'send a smaller file.',
+        });
+      }
       const docResult = await processDocument(fileName, fileBuffer);
 
       if (!docResult.isSupported) {
@@ -3173,6 +3321,14 @@ export function createApp(
         actor: 'customer',
         detail: { paymentRef: String(razorpayPaymentId), provider: 'razorpay' },
       });
+
+      if (result.ok) {
+        // The browser confirmation carries no fee figures — only the webhook
+        // does — so this records the estimate and marks it as one. The webhook
+        // overwrites it with the real numbers when it arrives.
+        const plan = await storage.getShopPlan(result.job.shopId);
+        await freezeFeeLedger(storage, result.job, plan?.commissionBps ?? 800);
+      }
       if (!result.ok) {
         const status = result.code === 'NOT_FOUND' ? 404 : 409;
         return res.status(status).json({ error: result.reason });
@@ -3351,6 +3507,18 @@ export function createApp(
         actor: 'webhook',
         detail: { paymentRef },
       });
+
+      if (paymentResult.ok) {
+        // This is the only place the real numbers arrive. Razorpay puts `fee`
+        // and `tax` on the captured payment entity, and `fee` is inclusive of
+        // `tax`.
+        const entity = body?.payload?.payment?.entity;
+        const plan = await storage.getShopPlan(paymentResult.job.shopId);
+        await freezeFeeLedger(storage, paymentResult.job, plan?.commissionBps ?? 800, {
+          feeCents: entity?.fee,
+          taxCents: entity?.tax,
+        });
+      }
       if (!paymentResult.ok) {
         const status = paymentResult.code === 'NOT_FOUND' ? 404 : 409;
         return res.status(status).json({ error: paymentResult.reason });
@@ -3825,10 +3993,14 @@ export function createApp(
 
       return res.json({
         settlement: shop.razorpayAccountStatus === 'activated' ? 'automatic' : 'pending-route',
+        // The same explanation the payout summary returns, from the same
+        // function, so the two screens cannot describe settlement differently.
+        settlementDetail: describeSettlement(shop),
         commissionBps,
         gatewayFeeBps: PAYMENT_GATEWAY_FEE_BPS,
-        // Named so nobody reads these as a settlement statement.
-        feesAreEstimated: true,
+        // True only while some row is still an estimate. It used to be
+        // unconditional, because every figure was one.
+        feesAreEstimated: totals.ordersWithActualFees < totals.orders,
         totals,
         rows: rows.slice(0, 200),
       });
