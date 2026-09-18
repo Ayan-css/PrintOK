@@ -4838,6 +4838,78 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual((await fetch(`${baseUrl}/api/admin/email-status`)).status, 401);
   });
 
+  await t.test('108. An operator can see what needs a person, and logs carry no secrets', async () => {
+    // The project's own assessment was that nothing alerts anyone: a shop
+    // offline overnight went unnoticed, and every defect found that week was
+    // found by reading code. This does not send an alert — that needs somewhere
+    // to send it — but it gathers what an alert would carry.
+    const admin = await (await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'ops@printok.test', password: 'CorrectHorse99x' }),
+    })).json() as any;
+    const adminAuth = { Authorization: `Bearer ${admin.token}` };
+
+    const res = await fetch(`${baseUrl}/api/admin/operations`, { headers: adminAuth });
+    assert.strictEqual(res.status, 200, await res.clone().text());
+    const ops = (await res.json()) as any;
+
+    // Each figure is a count of something a person would have to do.
+    for (const key of ['printersOffline', 'jobsNeedingAttention', 'stuckRefunds']) {
+      assert.ok(ops[key], `operations must report ${key}`);
+    }
+    assert.ok(typeof ops.printersOffline.shopsFullyDown === 'number',
+      'a shop whose only printer is down is a different severity');
+    assert.strictEqual(ops.email.canSend, false, 'and it is honest about email');
+    assert.match(ops.email.consequence, /password resets cannot be sent/i);
+
+    // Not readable without an operator session.
+    assert.strictEqual((await fetch(`${baseUrl}/api/admin/operations`)).status, 401);
+
+    // Readiness, not just liveness: /health said 'ok' while running on
+    // in-memory storage with everything lost on restart.
+    const health = await (await fetch(`${baseUrl}/health`)).json() as any;
+    assert.ok(['ok', 'degraded'].includes(health.status));
+    assert.ok(['postgres', 'memory'].includes(health.storage), 'it names the backend');
+
+    // The structured logger must never print a credential, at any depth.
+    const { logOps } = await import('../observability');
+    const captured: string[] = [];
+    const realWarn = console.warn;
+    console.warn = (line: string) => { captured.push(String(line)); };
+
+    try {
+      logOps('warn', 'payment.replay_blocked', {
+        jobId: 'job_abc',
+        password: 'hunter2',
+        razorpaySignature: 'deadbeef',
+        customerPhone: '+91 98200 12345',
+        nested: { apiKey: 'prn_key_secret', deviceToken: 'tok_secret' },
+        fileBase64: 'A'.repeat(5000),
+        safe: 'this should survive',
+      });
+    } finally {
+      console.warn = realWarn;
+    }
+
+    assert.strictEqual(captured.length, 1, 'one line, so a log matcher can match it');
+    const line = captured[0];
+
+    // Parseable, because a log line nobody can parse is a log line nobody uses.
+    const parsed = JSON.parse(line);
+    assert.strictEqual(parsed.event, 'payment.replay_blocked');
+    assert.strictEqual(parsed.jobId, 'job_abc');
+    assert.strictEqual(parsed.safe, 'this should survive');
+
+    for (const secret of ['hunter2', 'deadbeef', '98200', 'prn_key_secret', 'tok_secret']) {
+      assert.ok(!line.includes(secret), `a log line must not carry '${secret}'`);
+    }
+    // Present but redacted, so an incident can see the field was set.
+    assert.strictEqual(parsed.password, '[redacted]');
+    assert.strictEqual(parsed.nested.apiKey, '[redacted]');
+    // And a payload is summarised rather than printed.
+    assert.match(String(parsed.fileBase64), /redacted|chars/);
+  });
+
   server.close();
 });
 

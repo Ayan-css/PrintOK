@@ -8,6 +8,7 @@ import { AgentWebSocketServer } from './ws';
 import { processDocument } from './documentProcessor';
 import { RazorpayService, MIN_ORDER_AMOUNT_PAISE } from './razorpayService';
 import { EmailService } from './email';
+import { logOps } from './observability';
 import { RazorpayRouteService } from './razorpayRoute';
 import { parsePrintState } from './jobStateMachine';
 import { classifyFailure } from './jobRecovery';
@@ -79,6 +80,15 @@ const UNMEASURABLE_FORMATS = new Set(['word', 'excel', 'csv', 'unknown']);
  * intercepted message is usually already useless.
  */
 const PASSWORD_RESET_TTL_MS = 30 * 60 * 1000;
+
+/**
+ * How long a refund may sit pending before somebody should look at it.
+ *
+ * Razorpay refunds usually settle within a few working days, so this is not an
+ * error — it is the point past which nobody should be assuming it will resolve
+ * itself.
+ */
+const STUCK_REFUND_AFTER_MS = 5 * 24 * 60 * 60 * 1000;
 
 /**
  * The largest upload each tier accepts, in bytes.
@@ -620,8 +630,19 @@ export function createApp(
   // Reports the running build so a deploy can actually be verified from outside;
   // a static 200 cannot distinguish a new release from the previous one.
   app.get('/health', (req: Request, res: Response) => {
+    // Readiness, not just liveness. /health answered 'ok' while the API was
+    // running on in-memory storage with every shop, job and payment living
+    // until the next restart — a missing environment variable looked exactly
+    // like a healthy deploy. Boot now refuses that in production, and this
+    // says which backend is actually in use so the two cannot disagree.
+    const durable = Boolean(process.env.DATABASE_URL);
+
     res.json({
-      status: 'ok',
+      status: durable ? 'ok' : 'degraded',
+      storage: durable ? 'postgres' : 'memory',
+      // Not a failure: mail is optional to run, and not optional to recover an
+      // account. Named so an operator sees it before a shop owner does.
+      email: { canSend: emailService.canSend, provider: emailService.providerName },
       service: 'PrintOk API',
       version: process.env.npm_package_version || 'unknown',
       // Render exposes the deployed commit; other hosts may not.
@@ -2475,6 +2496,98 @@ export function createApp(
     });
   });
 
+  /**
+   * What needs a person right now.
+   *
+   * The project's own assessment was that nothing alerts anyone — a shop
+   * offline overnight went unnoticed, and every defect that week was found by
+   * reading code rather than by anything saying so. This does not send an
+   * alert, which needs somewhere to send it; it gathers the answers an alert
+   * would carry, in one place an operator can actually look at.
+   */
+  app.get('/api/admin/operations', async (req: Request, res: Response) => {
+    const admin = await authenticateAdmin(req, res);
+    if (!admin) return;
+
+    try {
+      const now = Date.now();
+
+      // Built from the summaries the console already computes, rather than
+      // walking every printer and job: those aggregates exist, and asking the
+      // database per printer would make an operations page the slowest thing
+      // on the platform.
+      const summaries = await storage.listAdminShopSummaries(200, false);
+
+      const shopsWithOfflinePrinters = summaries
+        .filter((s) => s.printerCount > 0 && s.onlinePrinterCount < s.printerCount)
+        .map((s) => ({
+          shopId: s.shop.id,
+          shopName: s.shop.name,
+          printers: s.printerCount,
+          online: s.onlinePrinterCount,
+          lastJobAt: s.lastJobAt ?? null,
+        }));
+
+      const shopsNeedingAttention = summaries
+        .filter((s) => s.jobsRequiringAction > 0)
+        .map((s) => ({
+          shopId: s.shop.id,
+          shopName: s.shop.name,
+          jobs: s.jobsRequiringAction,
+        }));
+
+      // Refunds that never landed. Only the shops that have taken money are
+      // worth walking, and only their recent jobs.
+      const stuckRefunds: Array<Record<string, unknown>> = [];
+      for (const summary of summaries.filter((s) => s.grossRevenueCents > 0).slice(0, 50)) {
+        for (const job of await storage.getRecentJobsForShop(summary.shop.id, 100)) {
+          if (job.paymentState !== PaymentState.RefundPending) continue;
+          if (now - new Date(job.updatedAt).getTime() < STUCK_REFUND_AFTER_MS) continue;
+
+          stuckRefunds.push({
+            jobId: job.id,
+            shopId: summary.shop.id,
+            amountCents: job.totalPriceInCents,
+            since: job.updatedAt,
+          });
+        }
+      }
+
+      return res.json({
+        checkedAt: new Date().toISOString(),
+        // Every figure below is a count of something a person would have to do.
+        storage: process.env.DATABASE_URL ? 'postgres' : 'memory',
+        email: {
+          canSend: emailService.canSend,
+          provider: emailService.providerName,
+          // Stated as a consequence rather than a status, because that is what
+          // decides whether anyone acts on it.
+          consequence: emailService.canSend
+            ? null
+            : 'Enquiries are not delivered and password resets cannot be sent.',
+        },
+        printersOffline: {
+          shops: shopsWithOfflinePrinters.length,
+          // A shop whose only printer is offline cannot print at all, which is
+          // a different severity from one of five being down.
+          shopsFullyDown: shopsWithOfflinePrinters.filter((s) => s.online === 0).length,
+          examples: shopsWithOfflinePrinters.slice(0, 20),
+        },
+        jobsNeedingAttention: {
+          shops: shopsNeedingAttention.length,
+          jobs: shopsNeedingAttention.reduce((t, s) => t + s.jobs, 0),
+          examples: shopsNeedingAttention.slice(0, 20),
+        },
+        stuckRefunds: {
+          count: stuckRefunds.length,
+          examples: stuckRefunds.slice(0, 20),
+        },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   /** Enquiries from the contact form (PRD 24). */
   app.get('/api/admin/contact-enquiries', async (req: Request, res: Response) => {
     const admin = await authenticateAdmin(req, res);
@@ -2659,10 +2772,10 @@ export function createApp(
       // the Route path — so it is the guard that makes enabling Route safe
       // rather than a change in behaviour today.
       if (job.transferId) {
-        console.error(
-          `[Refund] Job ${job.id} was settled to the shop via Route (transfer ${job.transferId}). `
-          + 'Refunding it needs the transfer reversed first, which is not implemented.'
-        );
+        logOps('error', 'refund.blocked', {
+          jobId: job.id, shopId: job.shopId, transferId: job.transferId,
+          reason: 'route-transfer-not-reversible-here', needsHuman: true,
+        });
         return res.status(409).json({
           error:
             'This order was already settled directly to your Razorpay account, so it cannot be '
@@ -3083,6 +3196,7 @@ export function createApp(
       // decoded, so a shop over its limit costs nothing to refuse.
       const allowance = await checkOrderAllowance(storage, printer.shopId);
       if (!allowance.allowed) {
+        logOps('warn', 'plan.limit_reached', { shopId: printer.shopId, usage: allowance.usage });
         return res.status(402).json({ error: allowance.error, usage: allowance.usage });
       }
 
@@ -3473,6 +3587,9 @@ export function createApp(
       // cannot settle a second job even if two confirmations race.
       const claim = await storage.claimGatewayPayment(job.id, String(razorpayPaymentId));
       if (!claim.ok) {
+        logOps('warn', 'payment.replay_blocked', {
+          jobId: job.id, shopId: job.shopId, reason: claim.reason,
+        });
         return res.status(409).json({ error: claim.reason || 'That payment cannot be used for this order.' });
       }
 
@@ -3500,6 +3617,11 @@ export function createApp(
         // overwrites it with the real numbers when it arrives.
         const plan = await storage.getShopPlan(result.job.shopId);
         await freezeFeeLedger(storage, result.job, plan?.commissionBps ?? 800);
+
+        logOps('info', 'payment.confirmed', {
+          jobId: result.job.id, shopId: result.job.shopId,
+          grossCents: result.job.totalPriceInCents, via: 'checkout',
+        });
       }
       if (!result.ok) {
         const status = result.code === 'NOT_FOUND' ? 404 : 409;
@@ -3602,10 +3724,11 @@ export function createApp(
         }
 
         const failed = await storage.recordRefundFailed(jobId, refundId, { actor: 'webhook' });
-        console.error(
-          `[Webhook] Refund ${refundId || '(unknown)'} FAILED for job ${jobId}. `
-          + 'The customer has not been refunded and the job is cancelled — this needs a human.'
-        );
+        // The customer has no document and no money back. Nothing else in this
+        // system needs a person more urgently than this does.
+        logOps('error', 'refund.failed', {
+          jobId, refundId: refundId || null, shopId: refundJob.shopId, needsHuman: true,
+        });
         return res.json({
           success: true,
           message: failed.ok
