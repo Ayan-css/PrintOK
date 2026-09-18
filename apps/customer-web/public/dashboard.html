@@ -456,64 +456,80 @@
               </div>
             </div>
 
-            <!-- Instant Payout Withdrawal Box -->
+            <!--
+              How this shop gets paid. Everything here is rendered from
+              /payout-details and /plan: the previous version hardcoded a UPI id
+              of "metroprint@upi", a "2.36% Razorpay Gateway" line on every
+              order including cash ones, and four subscription tiers at prices
+              that do not exist in PLAN_CATALOGUE. Real shops were being shown
+              invented numbers.
+            -->
             <div class="card card--accent" style="margin-bottom: 20px;">
               <div class="card-header">
-                <h4 class="card-title">⚡ Instant Bank / UPI Payout Withdrawal</h4>
-                <span class="badge badge-success">Direct Payout</span>
+                <h4 class="card-title">Where your money goes</h4>
+                <span class="badge" id="settlementBadge">—</span>
               </div>
 
-              <div class="key-value-list">
+              <p class="meta-text" id="settlementHeadline" style="margin-top: 0;"></p>
+              <p class="meta-text" id="settlementDetail"></p>
+              <p class="meta-text" id="settlementAction" style="font-weight: 600;"></p>
+
+              <div class="key-value-list" style="margin-top: 12px;">
                 <div class="key-value-row">
-                  <span>Payout Target UPI ID:</span>
-                  <strong id="dashPayoutUpi">metroprint@upi</strong>
-                </div>
-                <div class="key-value-row">
-                  <span>Fee Deductions:</span>
-                  <span>2.36% Razorpay Gateway + Tier Platform Fee</span>
-                </div>
-                <div class="key-value-row">
-                  <span>Net Transferable Balance:</span>
+                  <span>Net transferable balance:</span>
                   <strong id="dashWithdrawBalance" style="color: var(--color-success); font-size: 16px;">₹0.00</strong>
                 </div>
               </div>
 
-              <div style="margin-top: 14px; display: flex; gap: 10px;">
-                <button type="button" id="btnRequestWithdrawal" class="btn btn-primary btn-full">
-                  ⚡ Request Immediate Withdrawal to UPI / Bank
-                </button>
-              </div>
+              <form id="payoutDetailsForm" style="margin-top: 14px;">
+                <div class="grid-2">
+                  <div class="form-group">
+                    <label class="form-label" for="inputPayoutUpi">UPI ID</label>
+                    <input type="text" id="inputPayoutUpi" class="form-input"
+                           placeholder="ramesh@oksbi" autocomplete="off" spellcheck="false">
+                    <div class="form-help">How most shops prefer to be paid.</div>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="inputPayoutIfsc">Bank IFSC</label>
+                    <input type="text" id="inputPayoutIfsc" class="form-input"
+                           placeholder="HDFC0001234" autocomplete="off" spellcheck="false">
+                  </div>
+                  <div class="form-group form-group--wide">
+                    <label class="form-label" for="inputPayoutAccount">Bank account number</label>
+                    <input type="text" id="inputPayoutAccount" class="form-input"
+                           inputmode="numeric" autocomplete="off" spellcheck="false">
+                    <div class="form-help" id="payoutAccountHelp">
+                      Only the last four digits are shown once saved.
+                    </div>
+                  </div>
+                </div>
+
+                <div id="payoutDetailsError" class="form-error" hidden></div>
+                <div id="payoutDetailsSaved" class="form-help" hidden style="color: var(--color-success); font-weight: 600;"></div>
+
+                <div style="margin-top: 10px; display: flex; gap: 10px;">
+                  <button type="submit" id="btnSavePayoutDetails" class="btn btn-primary">
+                    Save payout details
+                  </button>
+                  <button type="button" id="btnRequestWithdrawal" class="btn btn-secondary">
+                    Request withdrawal
+                  </button>
+                </div>
+              </form>
             </div>
 
-            <!-- Sustainable Plan Upgrade Selector -->
+            <!-- Subscription tier, costed against this shop's own volume -->
             <div class="card">
               <div class="card-header">
-                <h4 class="card-title">📦 PrintOk Shop Subscription Tier</h4>
-                <span class="badge badge-primary">Current: Commission-Only (₹0/mo)</span>
+                <h4 class="card-title">Your plan</h4>
+                <span class="badge badge-primary" id="planCurrentBadge">—</span>
               </div>
 
-              <div class="grid-2" style="margin-top: 10px;">
-                <div class="pricing-mini-card" style="border: 2px solid var(--color-primary);">
-                  <div class="pricing-type">🆓 Commission-Only</div>
-                  <div class="pricing-rate">₹0 <span>/ month</span></div>
-                  <div class="pricing-meta">5.0% Platform Fee • 1 Printer</div>
-                </div>
-                <div class="pricing-mini-card">
-                  <div class="pricing-type">🚀 Starter Plan</div>
-                  <div class="pricing-rate">₹149 <span>/ month</span></div>
-                  <div class="pricing-meta">2.0% Platform Fee • 2 Printers</div>
-                </div>
-                <div class="pricing-mini-card">
-                  <div class="pricing-type">⚡ Growth Plan</div>
-                  <div class="pricing-rate">₹299 <span>/ month</span></div>
-                  <div class="pricing-meta">1.0% Platform Fee • 5 Printers</div>
-                </div>
-                <div class="pricing-mini-card">
-                  <div class="pricing-type">👑 Scale / Pro Plan</div>
-                  <div class="pricing-rate">₹599 <span>/ month</span></div>
-                  <div class="pricing-meta">0.0% Platform Fee • 10 Printers</div>
-                </div>
-              </div>
+              <p class="meta-text" id="planThisMonth" style="margin-top: 0;"></p>
+
+              <div class="grid-2" style="margin-top: 10px;" id="planOptions"></div>
+
+              <p class="meta-text" id="planHowToChange" style="margin-top: 12px;"></p>
             </div>
           </div>
 

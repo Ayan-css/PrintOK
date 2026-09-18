@@ -156,6 +156,39 @@ test('customer web routing', async (t) => {
     );
   });
 
+  await t.test('the money screen invents no prices or payout destinations', async () => {
+    // The subscription tiles were hardcoded at "₹149 Starter" and "₹299
+    // Growth" with commission rates to match — none of which exist in
+    // PLAN_CATALOGUE, which is 8% / ₹79 / ₹249 / ₹599. Real shops were shown
+    // invented terms. The payout box likewise hardcoded someone's UPI id.
+    const fs = require('fs');
+    const path = require('path');
+    const dashboard = fs.readFileSync(
+      path.join(__dirname, '..', 'public', 'dashboard.html'), 'utf8'
+    );
+
+    // Strip HTML comments: this file explains the bug it fixed, and that
+    // explanation necessarily names the values it removed.
+    const markup = dashboard.replace(/<!--[\s\S]*?-->/g, '');
+
+    assert.ok(
+      !/metroprint@upi/.test(markup),
+      'the payout box must not hardcode a UPI id'
+    );
+
+    for (const invented of ['₹149', '₹299', 'Starter Plan', 'Growth Plan']) {
+      assert.ok(
+        !markup.includes(invented),
+        `the money screen must not hardcode '${invented}' — plan figures come from /plan`
+      );
+    }
+
+    // And the containers the real figures are rendered into must exist.
+    for (const id of ['planOptions', 'planCurrentBadge', 'settlementHeadline', 'payoutDetailsForm']) {
+      assert.ok(markup.includes(`id="${id}"`), `dashboard.html must contain #${id}`);
+    }
+  });
+
   await t.test('a merchant can sign out, and signing out clears the whole session', async () => {
     // There was no sign-out at all on either merchant page: the way to hand a
     // shared counter PC to the next person was to close the tab. This checks

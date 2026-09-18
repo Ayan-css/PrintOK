@@ -178,6 +178,83 @@ function summariseShopEarnings(jobs: PrintJob[], commissionBps: number) {
   };
 }
 
+/**
+ * How this shop gets paid, why, and what it can do about it.
+ *
+ * The dashboard previously reported `settlement: 'manual'` and stopped there,
+ * which tells a shop owner nothing they can act on — least of all why the
+ * answer depends on a Razorpay account they may not have heard of.
+ *
+ * The reason is structural rather than a policy we chose. Razorpay Route splits
+ * a payment at capture and settles the shop's share into the shop's *own*
+ * linked account, so the money is never PrintOk's to hold. That is what makes
+ * it same-day and automatic — and it is also why the account has to exist and
+ * clear KYC first: an account nobody has verified cannot legally receive a
+ * split. Without one, every payment lands in the platform account and the shop
+ * has to be paid out by hand.
+ */
+function describeSettlement(shop: {
+  razorpayAccountId?: string;
+  razorpayAccountStatus?: string;
+  razorpayAccountError?: string;
+  upiId?: string;
+  bankAccountNumber?: string;
+}) {
+  const status = shop.razorpayAccountStatus || 'not_linked';
+  const hasDestination = Boolean(shop.upiId || shop.bankAccountNumber);
+
+  if (status === 'activated') {
+    return {
+      mode: 'automatic' as const,
+      status,
+      headline: 'Each paid order is settled straight to your own Razorpay account.',
+      detail:
+        'The split happens when the customer pays, so the money never sits with PrintOk. ' +
+        'There is nothing to request and no minimum to reach.',
+      action: null,
+    };
+  }
+
+  if (status === 'created' || status === 'needs_kyc') {
+    return {
+      mode: 'manual' as const,
+      status,
+      headline: 'Your Razorpay account is created but not yet active.',
+      detail:
+        'Razorpay verifies every account that receives money before it can be paid into. ' +
+        'Once that completes, each order settles to you automatically at the moment it is paid.',
+      action: 'Finish the verification Razorpay has asked you for.',
+      ...(shop.razorpayAccountError ? { lastError: shop.razorpayAccountError } : {}),
+    };
+  }
+
+  if (status === 'suspended') {
+    return {
+      mode: 'manual' as const,
+      status,
+      headline: 'Automatic settlement is paused on your Razorpay account.',
+      detail: 'Payments still reach PrintOk and are owed to you; they are paid out by hand meanwhile.',
+      action: 'Contact Razorpay support about your linked account, then tell us once it is active.',
+      ...(shop.razorpayAccountError ? { lastError: shop.razorpayAccountError } : {}),
+    };
+  }
+
+  return {
+    mode: 'manual' as const,
+    status,
+    headline: 'Your orders are collected by PrintOk and paid out to you.',
+    detail:
+      'Automatic settlement needs a Razorpay account in your own name, because the money is ' +
+      'split to you at the moment the customer pays rather than passing through us. Until then ' +
+      'nothing is lost — every paid order is recorded and owed to you — but the payout is a ' +
+      'manual step rather than an instant one.',
+    action: hasDestination
+      ? 'Connect a Razorpay account from this screen to switch to automatic, same-day settlement.'
+      : 'Add a UPI ID or bank account below so we know where to send your money, then connect ' +
+        'Razorpay to make it automatic.',
+  };
+}
+
 function refusePaymentConfirmation(state: PaymentState): string | undefined {
   switch (state) {
     case PaymentState.RefundPending:
@@ -3196,6 +3273,200 @@ export function createApp(
   /**
    * Shop Payout & Instant Withdrawal Summary
    */
+  /**
+   * Where the shop's money goes, and how it gets there.
+   *
+   * These fields were settable only in the signup body. There was no route to
+   * change them afterwards, and the shop profile screen deliberately excludes
+   * them with a comment saying they belong to the money screen — a screen that
+   * had no such route either. So a shop that signed up without payout details,
+   * or mistyped an IFSC, could never correct it, and the payout summary read a
+   * upiId that stayed null for ever.
+   *
+   * Owner only: this decides where money lands, which is not a staff decision.
+   */
+  app.get('/api/shops/:shopId/payout-details', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res, { requireOwner: true });
+    if (!merchant) return;
+
+    try {
+      const shop = await storage.getShop(req.params.shopId);
+      if (!shop) return res.status(404).json({ error: 'Shop not found.' });
+
+      const account = shop.bankAccountNumber || '';
+
+      return res.json({
+        // A UPI id is how customers already pay this shop, so it is shown
+        // whole. An account number is not, so only its tail comes back —
+        // enough to recognise, not enough to read over a shoulder.
+        upiId: shop.upiId || '',
+        bankAccountLast4: account ? account.slice(-4) : '',
+        bankAccountSet: Boolean(account),
+        bankIfsc: shop.bankIfsc || '',
+        settlement: describeSettlement(shop),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/shops/:shopId/payout-details', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res, { requireOwner: true });
+    if (!merchant) return;
+
+    try {
+      const body = req.body || {};
+      const clean = (v: unknown) =>
+        v === undefined ? undefined : String(v).replace(/\s+/g, '').trim();
+
+      const upiId = clean(body.upiId);
+      const bankAccountNumber = clean(body.bankAccountNumber);
+      const bankIfsc = clean(body.bankIfsc)?.toUpperCase();
+
+      // Shape-checked, not verified. Nothing here proves the account exists —
+      // only that it could. A wrong-but-plausible account is caught when a
+      // payout fails, and that is Razorpay's answer to give, not ours.
+      if (upiId && !/^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/.test(upiId)) {
+        return res.status(400).json({
+          error: 'That does not look like a UPI ID. They look like name@bank, for example ramesh@oksbi.',
+        });
+      }
+
+      if (bankAccountNumber && !/^[0-9]{9,18}$/.test(bankAccountNumber)) {
+        return res.status(400).json({
+          error: 'A bank account number is 9 to 18 digits, with no spaces or letters.',
+        });
+      }
+
+      if (bankIfsc && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(bankIfsc)) {
+        return res.status(400).json({
+          error: 'That does not look like an IFSC code. They are 11 characters, like HDFC0001234.',
+        });
+      }
+
+      // A bank transfer needs both halves, so half of one is refused rather
+      // than saved as something that cannot be paid to.
+      const accountAfter = bankAccountNumber !== undefined
+        ? bankAccountNumber
+        : (await storage.getShop(req.params.shopId))?.bankAccountNumber || '';
+      const ifscAfter = bankIfsc !== undefined
+        ? bankIfsc
+        : (await storage.getShop(req.params.shopId))?.bankIfsc || '';
+
+      if (Boolean(accountAfter) !== Boolean(ifscAfter)) {
+        return res.status(400).json({
+          error: 'A bank account needs both the account number and its IFSC code. Add the other one, or clear both.',
+        });
+      }
+
+      const updated = await storage.updateShopProfile(req.params.shopId, {
+        ...(upiId !== undefined ? { upiId } : {}),
+        ...(bankAccountNumber !== undefined ? { bankAccountNumber } : {}),
+        ...(bankIfsc !== undefined ? { bankIfsc } : {}),
+      });
+      if (!updated) return res.status(404).json({ error: 'Shop not found.' });
+
+      // Recorded because it changes where money goes, which is exactly the
+      // kind of change that should be explainable afterwards. No values.
+      await storage.recordSecurityEvent({
+        type: 'AUTH_REJECTED',
+        severity: 'info',
+        detail: {
+          reason: 'Payout destination changed by the shop owner.',
+          shopId: req.params.shopId,
+          changedBy: merchant.sub,
+          fields: [
+            upiId !== undefined && 'upiId',
+            bankAccountNumber !== undefined && 'bankAccountNumber',
+            bankIfsc !== undefined && 'bankIfsc',
+          ].filter(Boolean),
+        },
+      });
+
+      const account = updated.bankAccountNumber || '';
+      return res.json({
+        upiId: updated.upiId || '',
+        bankAccountLast4: account ? account.slice(-4) : '',
+        bankAccountSet: Boolean(account),
+        bankIfsc: updated.bankIfsc || '',
+        settlement: describeSettlement(updated),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * The shop's plan, and what the others would cost it.
+   *
+   * Read-only, deliberately. There is no subscription billing yet — nothing in
+   * the system charges for a plan — so a self-service tier change would let a
+   * shop move itself from 8% to 0.5% for free. Until billing exists the change
+   * stays with an operator, and this endpoint says so rather than offering a
+   * button that would quietly give away the commission.
+   */
+  app.get('/api/shops/:shopId/plan', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res, { requireOwner: true });
+    if (!merchant) return;
+
+    try {
+      const { shopId } = req.params;
+      const [plan, recent] = await Promise.all([
+        storage.getShopPlan(shopId),
+        storage.getRecentJobsForShop(shopId, 500),
+      ]);
+
+      const commissionBps = plan?.commissionBps ?? 800;
+      const currentTier = plan?.planTier ?? 'start';
+
+      // This calendar month's paid orders, so the comparison below is about
+      // this shop rather than an illustration.
+      const monthStart = new Date();
+      monthStart.setDate(1);
+      monthStart.setHours(0, 0, 0, 0);
+      const paidThisMonth = recent.filter(
+        (j) => j.paymentState === PaymentState.Paid && new Date(j.createdAt) >= monthStart
+      );
+      const grossCents = paidThisMonth.reduce((t, j) => t + (j.totalPriceInCents || 0), 0);
+
+      return res.json({
+        current: {
+          tier: currentTier,
+          commissionBps,
+          status: plan?.planStatus ?? 'active',
+          ...(getPlan(currentTier) ? { name: getPlan(currentTier)!.name } : {}),
+        },
+        thisMonth: {
+          orders: paidThisMonth.length,
+          grossCents,
+          // What the shop has paid us in commission so far this month, at its
+          // own rate — the number the comparison below is worth reading against.
+          commissionCents: Math.round((grossCents * commissionBps) / 10_000),
+        },
+        // Every tier costed against this shop's own volume, so an upgrade is a
+        // arithmetic rather than a pitch.
+        options: PLAN_CATALOGUE.map((p) => ({
+          tier: p.tier,
+          name: p.name,
+          monthlyPriceCents: p.monthlyPriceCents,
+          commissionBps: p.commissionBps,
+          maxOrdersPerMonth: p.maxOrdersPerMonth,
+          maxPrinters: p.maxPrinters,
+          isCurrent: p.tier === currentTier,
+          wouldCostCents:
+            p.monthlyPriceCents + Math.round((grossCents * p.commissionBps) / 10_000),
+        })),
+        changeable: false,
+        howToChange:
+          'Plan changes are made by PrintOk support at the moment. Subscription billing is ' +
+          'not live yet, so a plan cannot be charged for automatically. Contact support and ' +
+          'the change is applied to your shop the same day.',
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/shops/:shopId/payout-summary', async (req: Request, res: Response) => {
     const merchant = await authenticateMerchant(req, res, { requireOwner: true });
     if (!merchant) return;
@@ -3223,7 +3494,7 @@ export function createApp(
       );
 
       const { totals } = summariseShopEarnings(todaysPaid, commissionBps);
-      const routeLinked = shop?.razorpayAccountStatus === 'activated';
+      const settlement = shop ? describeSettlement(shop) : null;
 
       return res.json({
         shopId,
@@ -3238,7 +3509,11 @@ export function createApp(
         // The shop's own payout destination. This was hardcoded, so every shop
         // was shown the same address regardless of what it had registered.
         payoutUpiId: shop?.upiId || null,
-        settlement: routeLinked ? 'automatic' : 'manual',
+        payoutBankSet: Boolean(shop?.bankAccountNumber),
+        // The mode alone said 'manual' and left the shop owner to guess what
+        // that meant or what to do; the explanation travels with it now.
+        settlement: settlement?.mode ?? 'manual',
+        settlementDetail: settlement,
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });

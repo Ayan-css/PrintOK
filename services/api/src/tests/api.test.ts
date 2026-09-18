@@ -2922,10 +2922,16 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
       body: JSON.stringify({ shopName: name, ownerEmail: email, printerName: `${name} printer` }),
     })).json() as any;
 
-    const claim = await (await fetch(`${baseUrl}/api/merchant/claim`, {
+    const claimRes = await fetch(`${baseUrl}/api/merchant/claim`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ shopId: reg.shop.id, ownerEmail: email, password, name }),
-    })).json() as any;
+    });
+    const claim = (await claimRes.json()) as any;
+
+    // Asserted here, or a rejected password surfaces much later as an
+    // unexplained 401 from whichever route the test happened to call first.
+    assert.strictEqual(claimRes.status, 201, `claim for ${name} failed: ${JSON.stringify(claim)}`);
+    assert.ok(claim.token, `claim for ${name} returned no token`);
 
     return {
       shopId: reg.shop.id,
@@ -3943,6 +3949,137 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(payout.grossCents, earnings.totals.grossCents, 'the two screens agree on gross');
     assert.strictEqual(payout.razorpayFeeCents, earnings.totals.razorpayFeeCents, '…and on fees');
     assert.strictEqual(payout.netAvailableCents, earnings.totals.netCents, '…and on net');
+  });
+
+  await t.test('93. A shop can set where its money goes, and is told how it gets there', async () => {
+    // upiId, bankAccountNumber and bankIfsc were settable only in the signup
+    // body. No route changed them afterwards — the profile screen excludes them
+    // saying they belong to the money screen, which had no such route either.
+    // So a shop that signed up without them could never say where to be paid,
+    // and the payout summary read a upiId that stayed null for ever.
+    const shop = await shopWithAuth('Payout Co', 'payout@example.com', 'PayoutPass123');
+
+    const before = await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/payout-details`, {
+      headers: shop.auth,
+    })).json() as any;
+    assert.strictEqual(before.upiId, '');
+    assert.strictEqual(before.bankAccountSet, false);
+
+    // It explains the settlement mode rather than just naming it.
+    assert.strictEqual(before.settlement.mode, 'manual');
+    assert.match(before.settlement.headline, /paid out to you/i);
+    assert.match(before.settlement.detail, /Razorpay account in your own name/i);
+    assert.match(before.settlement.action, /Add a UPI ID or bank account/i);
+
+    const save = (body: Record<string, unknown>) =>
+      fetch(`${baseUrl}/api/shops/${shop.shopId}/payout-details`, {
+        method: 'POST', headers: shop.auth, body: JSON.stringify(body),
+      });
+
+    // Nonsense is refused with something a shop owner can act on.
+    assert.strictEqual((await save({ upiId: 'not-a-upi-id' })).status, 400);
+    assert.strictEqual((await save({ bankAccountNumber: '12ab34' })).status, 400);
+    assert.strictEqual((await save({ bankAccountNumber: '123456789', bankIfsc: 'NOPE' })).status, 400);
+
+    // Half a bank account cannot be paid to, so half is refused.
+    const halfway = await save({ bankAccountNumber: '123456789012' });
+    assert.strictEqual(halfway.status, 400);
+    assert.match(((await halfway.json()) as any).error, /both the account number and its IFSC/i);
+
+    // A UPI ID on its own is fine.
+    const upiOnly = await save({ upiId: 'ramesh@oksbi' });
+    assert.strictEqual(upiOnly.status, 200);
+    assert.strictEqual(((await upiOnly.json()) as any).upiId, 'ramesh@oksbi');
+
+    // And a whole bank account.
+    const full = await save({ bankAccountNumber: '123456789012', bankIfsc: 'hdfc0001234' });
+    assert.strictEqual(full.status, 200);
+    const saved = (await full.json()) as any;
+    assert.strictEqual(saved.bankIfsc, 'HDFC0001234', 'an IFSC is stored upper-case');
+    assert.strictEqual(saved.bankAccountSet, true);
+    assert.strictEqual(saved.bankAccountLast4, '9012', 'only the tail comes back');
+    assert.ok(!JSON.stringify(saved).includes('123456789012'), 'the whole number is not echoed');
+
+    // The advice changes now that there is somewhere to send money.
+    assert.match(saved.settlement.action, /Connect a Razorpay account/i);
+
+    // The payout summary sees it too, which it could not before.
+    const summary = await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/payout-summary`, {
+      headers: shop.auth,
+    })).json() as any;
+    assert.strictEqual(summary.payoutUpiId, 'ramesh@oksbi');
+    assert.strictEqual(summary.payoutBankSet, true);
+    assert.strictEqual(summary.settlementDetail.mode, 'manual');
+
+    // Staff must not be able to redirect the shop's money.
+    const added = await fetch(`${baseUrl}/api/shops/${shop.shopId}/staff`, {
+      method: 'POST', headers: shop.auth,
+      body: JSON.stringify({ email: 'payout-staff@example.com', password: 'PayoutStaffPass1' }),
+    });
+    assert.strictEqual(added.status, 201);
+    const staffLogin = await (await fetch(`${baseUrl}/api/merchant/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'payout-staff@example.com', password: 'PayoutStaffPass1' }),
+    })).json() as any;
+    const staffAuth = { Authorization: `Bearer ${staffLogin.token}`, 'Content-Type': 'application/json' };
+
+    assert.strictEqual((await fetch(`${baseUrl}/api/shops/${shop.shopId}/payout-details`, {
+      headers: staffAuth,
+    })).status, 403);
+    assert.strictEqual((await fetch(`${baseUrl}/api/shops/${shop.shopId}/payout-details`, {
+      method: 'POST', headers: staffAuth, body: JSON.stringify({ upiId: 'thief@okaxis' }),
+    })).status, 403);
+
+    const unchanged = await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/payout-details`, {
+      headers: shop.auth,
+    })).json() as any;
+    assert.strictEqual(unchanged.upiId, 'ramesh@oksbi', 'the destination is untouched');
+  });
+
+  await t.test('94. A shop can see its plan costed against its own volume', async () => {
+    // There is no merchant-facing plan route at all: planTier is settable only
+    // by an operator, so a shop owner cannot see what they are on, what it is
+    // costing them, or what the alternatives would be.
+    const shop = await shopWithAuth('Plan Co', 'plan@example.com', 'PlanOwnerPass123');
+
+    const res = await fetch(`${baseUrl}/api/shops/${shop.shopId}/plan`, { headers: shop.auth });
+    assert.strictEqual(res.status, 200);
+    const plan = (await res.json()) as any;
+
+    assert.strictEqual(plan.current.tier, 'start');
+    assert.strictEqual(plan.current.commissionBps, 800);
+    assert.ok(Array.isArray(plan.options) && plan.options.length > 1);
+    assert.ok(plan.options.some((o: any) => o.isCurrent), 'the current tier is marked');
+
+    // Every tier is costed against this shop's own month, so the comparison is
+    // arithmetic rather than a pitch.
+    for (const option of plan.options) {
+      assert.strictEqual(
+        option.wouldCostCents,
+        option.monthlyPriceCents + Math.round((plan.thisMonth.grossCents * option.commissionBps) / 10_000),
+        `${option.tier} must be costed against this shop's volume`
+      );
+    }
+
+    // And it is honest that the change is not self-service yet, because
+    // subscription billing does not exist — a free tier change would hand away
+    // the commission.
+    assert.strictEqual(plan.changeable, false);
+    assert.match(plan.howToChange, /billing is not live/i);
+
+    // Staff cannot read the shop's commercial terms.
+    const added = await fetch(`${baseUrl}/api/shops/${shop.shopId}/staff`, {
+      method: 'POST', headers: shop.auth,
+      body: JSON.stringify({ email: 'plan-staff@example.com', password: 'PlanStaffPass123' }),
+    });
+    assert.strictEqual(added.status, 201);
+    const staffLogin = await (await fetch(`${baseUrl}/api/merchant/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'plan-staff@example.com', password: 'PlanStaffPass123' }),
+    })).json() as any;
+    assert.strictEqual((await fetch(`${baseUrl}/api/shops/${shop.shopId}/plan`, {
+      headers: { Authorization: `Bearer ${staffLogin.token}` },
+    })).status, 403);
   });
 
   server.close();

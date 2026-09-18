@@ -1506,11 +1506,157 @@ document.addEventListener('DOMContentLoaded', () => {
           set('statTotalDeductions', `-${formatRupees(p.razorpayFeeCents + p.platformCommissionCents)}`);
           set('statNetAvailable', formatRupees(p.netAvailableCents));
           set('dashWithdrawBalance', formatRupees(p.netAvailableCents));
-          // payout-summary returns a placeholder UPI; only use it if the shop has none.
-          if (!shopUpiId && p.payoutUpiId) set('dashPayoutUpi', p.payoutUpiId);
+
+          // The mode used to be the whole message: a badge reading "manual"
+          // and nothing a shop owner could act on, least of all why it
+          // depended on a Razorpay account nobody had explained.
+          const s = p.settlementDetail;
+          if (s) {
+            const badge = document.getElementById('settlementBadge');
+            if (badge) {
+              badge.textContent = s.mode === 'automatic' ? 'Automatic' : 'Paid out by hand';
+              badge.className = `badge ${s.mode === 'automatic' ? 'badge-success' : 'badge-queued'}`;
+            }
+            set('settlementHeadline', s.headline || '');
+            set('settlementDetail', s.detail || '');
+            set('settlementAction', s.action || '');
+          }
         }
       } catch {
         // ignore
+      }
+
+      await loadPayoutDetails();
+      await loadPlan();
+    }
+
+    /**
+     * The shop's payout destination.
+     *
+     * There was no way to change these at all after signup — the field was in
+     * the registration body and nowhere else — so a shop that mistyped an IFSC,
+     * or signed up without one, could never tell us where to send its money.
+     */
+    async function loadPayoutDetails() {
+      try {
+        const res = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/payout-details`);
+        if (!res.ok) return; // staff accounts get 403 here, which is correct
+        const d = await res.json();
+
+        const upi = document.getElementById('inputPayoutUpi');
+        const ifsc = document.getElementById('inputPayoutIfsc');
+        const help = document.getElementById('payoutAccountHelp');
+
+        if (upi) upi.value = d.upiId || '';
+        if (ifsc) ifsc.value = d.bankIfsc || '';
+        if (help) {
+          help.textContent = d.bankAccountSet
+            ? `Saved, ending ${d.bankAccountLast4}. Type a new number to replace it.`
+            : 'Only the last four digits are shown once saved.';
+        }
+      } catch {
+        // leave the form empty; saving still works
+      }
+    }
+
+    const payoutForm = document.getElementById('payoutDetailsForm');
+    if (payoutForm) {
+      payoutForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const btn = document.getElementById('btnSavePayoutDetails');
+        const err = document.getElementById('payoutDetailsError');
+        const ok = document.getElementById('payoutDetailsSaved');
+        const show = (el, text) => { if (el) { el.textContent = text; el.hidden = !text; } };
+
+        show(err, '');
+        show(ok, '');
+        if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+        try {
+          const body = {
+            upiId: (document.getElementById('inputPayoutUpi')?.value || '').trim(),
+            bankIfsc: (document.getElementById('inputPayoutIfsc')?.value || '').trim(),
+          };
+
+          // Only sent when actually typed: the field shows a masked tail, so
+          // submitting it unchanged would try to save four digits as the whole
+          // account number.
+          const typedAccount = (document.getElementById('inputPayoutAccount')?.value || '').trim();
+          if (typedAccount) body.bankAccountNumber = typedAccount;
+
+          const res = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/payout-details`, {
+            method: 'POST',
+            body: JSON.stringify(body),
+          });
+          const data = await res.json();
+
+          if (!res.ok) {
+            show(err, data.error || 'Those payout details could not be saved.');
+            return;
+          }
+
+          const accountField = document.getElementById('inputPayoutAccount');
+          if (accountField) accountField.value = '';
+          show(ok, 'Saved. This is where your payouts will go.');
+          await loadPayoutDetails();
+        } catch {
+          show(err, 'Those payout details could not be saved. Check your connection and try again.');
+        } finally {
+          if (btn) { btn.disabled = false; btn.textContent = 'Save payout details'; }
+        }
+      });
+    }
+
+    /**
+     * The shop's plan, costed against its own volume.
+     *
+     * The tiles here were hardcoded at prices and commission rates that do not
+     * exist in PLAN_CATALOGUE — a "₹149 Starter" and a "₹299 Growth" that no
+     * shop was ever on. Now every figure comes from the catalogue the API
+     * actually charges from.
+     */
+    async function loadPlan() {
+      try {
+        const res = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/plan`);
+        if (!res.ok) return; // staff accounts get 403, which is correct
+        const plan = await res.json();
+
+        const badge = document.getElementById('planCurrentBadge');
+        if (badge) {
+          badge.textContent =
+            `${plan.current.name || plan.current.tier} · ${(plan.current.commissionBps / 100).toFixed(2)}%`;
+        }
+
+        const month = document.getElementById('planThisMonth');
+        if (month) {
+          month.textContent = plan.thisMonth.orders
+            ? `This month: ${plan.thisMonth.orders} paid order${plan.thisMonth.orders === 1 ? '' : 's'}, `
+              + `${formatRupees(plan.thisMonth.grossCents)} collected, `
+              + `${formatRupees(plan.thisMonth.commissionCents)} in PrintOk commission.`
+            : 'No paid orders yet this month.';
+        }
+
+        const options = document.getElementById('planOptions');
+        if (options) {
+          options.innerHTML = plan.options.map((o) => `
+            <div class="pricing-mini-card"${o.isCurrent ? ' style="border: 2px solid var(--color-primary);"' : ''}>
+              <div class="pricing-type">${escapeHtml(o.name)}${o.isCurrent ? ' · current' : ''}</div>
+              <div class="pricing-rate">${formatRupees(o.monthlyPriceCents)} <span>/ month</span></div>
+              <div class="pricing-meta">
+                ${(o.commissionBps / 100).toFixed(2)}% commission •
+                ${o.maxOrdersPerMonth} orders • ${o.maxPrinters} printer${o.maxPrinters === 1 ? '' : 's'}
+              </div>
+              <div class="pricing-meta" style="font-weight: 600;">
+                At your volume: ${formatRupees(o.wouldCostCents)}/month
+              </div>
+            </div>`).join('');
+        }
+
+        const how = document.getElementById('planHowToChange');
+        if (how) how.textContent = plan.howToChange || '';
+      } catch {
+        // leave the plan card empty rather than showing invented numbers
       }
     }
 

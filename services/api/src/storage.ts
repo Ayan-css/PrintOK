@@ -98,7 +98,14 @@ export interface ShopProfileUpdate {
   addressPostalCode?: string;
   addressCountry?: string;
   gstin?: string;
+
+  // --- Payout destination ---
+  // Where the shop's money goes. Settable only at registration until now, so a
+  // shop that signed up without them, or typed them wrong, could never fix it —
+  // and the payout screen read an upiId that was permanently null.
   upiId?: string;
+  bankAccountNumber?: string;
+  bankIfsc?: string;
 }
 
 export interface MerchantUserRecord {
