@@ -146,7 +146,14 @@ export function calculateGridPriceBreakdown(
   const safeCopies = Math.max(1, copies);
 
   const cell = findRate(card, paperSize, isColor, isDuplex);
-  if (!cell) {
+
+  // A cell the shop has switched off is treated as one it never priced.
+  //
+  // This used to read `enabled` nowhere, so a disabled combination was charged
+  // at whatever stale rate was left on it — including a near-zero one left
+  // behind by an earlier edit. The API refuses such an order before reaching
+  // here; this is the second line, for a caller that does not.
+  if (!cell || cell.enabled === false) {
     return calculateJobPriceBreakdown(safePages, safeCopies, isColor, isDuplex, paperSize, legacy);
   }
 
@@ -169,8 +176,40 @@ export function calculateGridPriceBreakdown(
       ? cell.additionalCopyPerPageCents
       : firstCopyRateCents;
 
-  const totalPriceInCents =
+  const rawTotalCents =
     safePages * firstCopyRateCents + safePages * (safeCopies - 1) * additionalCopyRateCents;
+
+  // A larger order must never cost less than a smaller one.
+  //
+  // Crossing the bulk threshold steps the first-copy rate down while the
+  // additional-copy rate stays put, so the total is not monotonic in copies
+  // whenever the step is bigger than the additional-copy rate. Worked example
+  // from a perfectly valid rate card: 10 pages at 10 paise, bulk 5,
+  // additional-copy 3, threshold 900 — eight copies cost 310 and nine cost
+  // 290. Any customer triggers it by choosing a quantity.
+  //
+  // Rate cards are validated on write to reject that relationship, but a card
+  // stored before that validation existed is still out there, so the
+  // calculation defends itself: the price is the highest that any smaller
+  // quantity would have cost. Bounded by the copy limit and pure arithmetic.
+  const totalFor = (copies: number): number => {
+    const value = safePages * copies * normalRate;
+    const bulkHere = bulkAvailable && value >= card.bulkThresholdCents;
+    const first = bulkHere ? cell.bulkPerPageCents! : normalRate;
+    const additional =
+      card.additionalCopyEnabled &&
+      cell.additionalCopyPerPageCents !== null &&
+      cell.additionalCopyPerPageCents !== undefined
+        ? cell.additionalCopyPerPageCents
+        : first;
+    return safePages * first + safePages * (copies - 1) * additional;
+  };
+
+  let totalPriceInCents = rawTotalCents;
+  for (let fewer = safeCopies - 1; fewer >= 1; fewer--) {
+    const atFewer = totalFor(fewer);
+    if (atFewer > totalPriceInCents) totalPriceInCents = atFewer;
+  }
 
   const discountCents = Math.max(0, normalValueCents - totalPriceInCents);
 

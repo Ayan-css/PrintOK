@@ -3530,8 +3530,14 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     // And the real things still go through.
     assert.strictEqual((await submit('real.pdf', makePdf(2))).status, 201);
     assert.strictEqual((await submit('real.png', PNG_1X1)).status, 201);
-    // A genuine CSV is genuinely just text.
-    assert.strictEqual((await submit('real.csv', Buffer.from('name,qty\nink,2\n'))).status, 201);
+
+    // A genuine CSV passes the content check — it really is just text — and is
+    // then refused for a different reason: its page count cannot be measured,
+    // so it cannot be priced honestly. Asserted on the message, so the two
+    // refusals stay distinguishable.
+    const genuineCsv = await submit('real.csv', Buffer.from('name,qty\nink,2\n'));
+    assert.strictEqual(genuineCsv.status, 400);
+    assert.match(((await genuineCsv.json()) as any).error, /cannot be measured accurately/i);
   });
 
   await t.test('85. An abandoned document is eventually deleted', async () => {
@@ -4080,6 +4086,180 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual((await fetch(`${baseUrl}/api/shops/${shop.shopId}/plan`, {
       headers: { Authorization: `Bearer ${staffLogin.token}` },
     })).status, 403);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Pricing correctness
+  // ---------------------------------------------------------------------------
+
+  await t.test('95. A disabled configuration cannot be bought', async () => {
+    // derivePortalOptions checks each dimension separately and sidedModes never
+    // consulted the rate grid at all. So a shop could switch off one specific
+    // cell — A4 colour double-sided — while keeping A4 colour single-sided and
+    // A3 colour double-sided on, and the disabled combination passed every
+    // per-dimension check and was sold at whatever stale rate was left on it.
+    const shop = await shopWithAuth('Cell Off Co', 'celloff@example.com', 'CellOffPass123');
+
+    const card = await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/rates`)).json() as any;
+    const target = (r: any) => r.paperSize === 'A4' && r.isColor === true && r.isDuplex === true;
+
+    // Leave a deliberately cheap rate behind on the cell being switched off,
+    // which is what made this worth exploiting.
+    await fetch(`${baseUrl}/api/shops/${shop.shopId}/rates`, {
+      method: 'POST', headers: shop.auth,
+      body: JSON.stringify({
+        rates: card.rates.filter(target).map((r: any) => ({ ...r, enabled: false, perPageCents: 1 })),
+      }),
+    });
+
+    const options = await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/portal-options`)).json() as any;
+
+    // Every dimension is still on offer, which is exactly why the per-dimension
+    // checks were not enough.
+    assert.ok(options.paperSizes.includes('A4'));
+    assert.ok(options.colourModes.includes('colour'));
+    assert.ok(options.sidedModes.includes('duplex'));
+
+    // But the exact combination is not sellable.
+    const sellable = (paperSize: string, isColor: boolean, isDuplex: boolean) =>
+      options.sellableCombinations.some(
+        (c: any) => c.paperSize === paperSize && c.isColor === isColor && c.isDuplex === isDuplex
+      );
+    assert.ok(!sellable('A4', true, true), 'the disabled cell is not on offer');
+    assert.ok(sellable('A4', true, false), 'its siblings still are');
+
+    const order = (isColor: boolean, isDuplex: boolean) =>
+      fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          printerId: shop.printerId, fileName: 'cell.pdf',
+          fileBase64: makePdf(4).toString('base64'),
+          copies: 1, isColor, isDuplex, paperSize: 'A4',
+        }),
+      });
+
+    const refused = await order(true, true);
+    assert.strictEqual(refused.status, 400, 'a disabled combination must be refused');
+    assert.match(((await refused.json()) as any).error, /does not offer A4 colour double-sided/i);
+
+    // And the enabled sibling still sells, at its own rate rather than the
+    // cheap one left on the disabled cell.
+    const allowed = await order(true, false);
+    assert.strictEqual(allowed.status, 201);
+    const job = ((await allowed.json()) as any).job;
+    assert.ok(job.totalPriceInCents > 4, 'priced from the enabled cell, not the disabled one');
+  });
+
+  await t.test('96. A larger order can never cost less than a smaller one', async () => {
+    // Crossing the bulk threshold steps the first-copy rate down while the
+    // additional-copy rate stays put, so the total falls as copies rise
+    // whenever the step is bigger than the additional-copy rate. From the
+    // audit: 10 pages at 10 paise, bulk 5, additional-copy 3, threshold 900 —
+    // eight copies cost 310 and nine cost 290.
+    const shop = await shopWithAuth('Monotonic Co', 'monotonic@example.com', 'MonotonicPass1');
+
+    const card = await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/rates`)).json() as any;
+    const a4Mono = (r: any) => r.paperSize === 'A4' && !r.isColor && !r.isDuplex;
+
+    // Write-time validation refuses the inverting card outright.
+    const inverting = await fetch(`${baseUrl}/api/shops/${shop.shopId}/rates`, {
+      method: 'POST', headers: shop.auth,
+      body: JSON.stringify({
+        bulkEnabled: true,
+        additionalCopyEnabled: true,
+        bulkThresholdCents: 900,
+        rates: card.rates.filter(a4Mono).map((r: any) => ({
+          ...r, perPageCents: 10, bulkPerPageCents: 5, additionalCopyPerPageCents: 3,
+        })),
+      }),
+    });
+    assert.strictEqual(inverting.status, 400, 'an inverting rate card is refused on write');
+    const why = ((await inverting.json()) as any).error;
+    assert.match(why, /larger order cost less/i);
+    assert.match(why, /A4 black and white single-sided/i, 'and it names the cell');
+
+    // A sane card is accepted.
+    const sane = await fetch(`${baseUrl}/api/shops/${shop.shopId}/rates`, {
+      method: 'POST', headers: shop.auth,
+      body: JSON.stringify({
+        bulkEnabled: true,
+        additionalCopyEnabled: true,
+        bulkThresholdCents: 900,
+        rates: card.rates.filter(a4Mono).map((r: any) => ({
+          ...r, perPageCents: 10, bulkPerPageCents: 8, additionalCopyPerPageCents: 6,
+        })),
+      }),
+    });
+    assert.strictEqual(sane.status, 200);
+
+    // And the quote is non-decreasing in copies right across the threshold,
+    // which is the property the calculation now guarantees regardless of what
+    // is stored.
+    const quoteFor = async (copies: number) => {
+      const params = new URLSearchParams({
+        pages: '10', copies: String(copies),
+        isColor: 'false', isDuplex: 'false', paperSize: 'A4',
+      });
+      const res = await fetch(`${baseUrl}/api/shops/${shop.shopId}/quote?${params}`);
+      return ((await res.json()) as any).quote.totalPriceInCents as number;
+    };
+
+    let previous = 0;
+    for (let copies = 1; copies <= 14; copies++) {
+      const total = await quoteFor(copies);
+      assert.ok(
+        total >= previous,
+        `${copies} copies cost ${total}, less than ${copies - 1} copies at ${previous}`
+      );
+      previous = total;
+    }
+  });
+
+  await t.test('97. A file whose pages cannot be counted is refused, not guessed at', async () => {
+    // Office formats reported a hardcoded one page, and that is what a job is
+    // priced from — so a 500-page .docx was charged as one page while the
+    // agent handed the whole document to Word and printed all 500.
+    const shop = await shopWithAuth('Measure Co', 'measure@example.com', 'MeasurePass123');
+
+    const submit = (fileName: string, bytes: Buffer) =>
+      fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          printerId: shop.printerId, fileName,
+          fileBase64: bytes.toString('base64'),
+          copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+        }),
+      });
+
+    // A structurally valid ZIP container, so it clears the content check and is
+    // refused on the pricing ground rather than the format one.
+    const zip = Buffer.concat([
+      Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+      Buffer.alloc(120, 0x00),
+    ]);
+
+    for (const name of ['report.docx', 'sheet.xlsx', 'deck.pptx']) {
+      const res = await submit(name, zip);
+      assert.strictEqual(res.status, 400, `${name} must be refused`);
+      const error = ((await res.json()) as any).error;
+      assert.match(error, /cannot be measured accurately/i);
+      assert.match(error, /export it as a PDF/i, 'and must say what to do instead');
+    }
+
+    // PDFs and images are measurable and still accepted.
+    assert.strictEqual((await submit('fine.pdf', makePdf(7))).status, 201);
+    assert.strictEqual((await submit('fine.png', PNG_1X1)).status, 201);
+
+    // A PDF the parser cannot read is still accepted, because its pages can be
+    // recovered by counting markers — those arrive constantly from phone
+    // scanners, and refusing them would turn real customers away.
+    const scannerish = Buffer.from(
+      `%PDF-1.4\n${'/Type /Page \n'.repeat(3)}trailer<</Root 1 0 R>>\n%%EOF`
+    );
+    const recovered = await submit('scan.pdf', scannerish);
+    assert.strictEqual(recovered.status, 201, 'a broken-xref PDF is still printable');
+    assert.strictEqual(((await recovered.json()) as any).job.pageCount, 3,
+      'and its pages are recovered rather than billed as one');
   });
 
   server.close();

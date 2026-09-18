@@ -351,6 +351,21 @@ export interface PortalOptions {
   orientations: PrintOrientation[];
   allowMultipleCopies: boolean;
   allowPageSelection: boolean;
+  /**
+   * The exact (paper x colour x sides) combinations this shop will actually
+   * sell, rather than the dimensions it will sell along.
+   *
+   * The three lists above are per-dimension, and a customer's order is one
+   * specific cell. A shop that switches off A4-colour-duplex while keeping
+   * A4-colour-single and A3-colour-duplex on still offers 'A4', 'colour' and
+   * 'duplex' on those lists — so the combination it disabled passed every
+   * per-dimension check and was sold at whatever stale rate was left on the
+   * disabled cell.
+   *
+   * `sidedModes` in particular never consulted the rate grid at all: it is
+   * derived from the service toggles alone.
+   */
+  sellableCombinations: Array<{ paperSize: string; isColor: boolean; isDuplex: boolean }>;
 }
 
 /** Which capability key gates a given paper size. */
@@ -398,6 +413,20 @@ export function derivePortalOptions(
   if (offers.has('portrait')) orientations.push('portrait');
   if (offers.has('landscape')) orientations.push('landscape');
 
+  // Every cell the shop both offers along each dimension *and* has priced and
+  // switched on. This is what an order is actually checked against.
+  const sellableCombinations: Array<{ paperSize: string; isColor: boolean; isDuplex: boolean }> = [];
+  for (const paperSize of paperSizes) {
+    for (const isColor of [false, true]) {
+      if (!colourModes.includes(isColor ? 'colour' : 'bw')) continue;
+      for (const isDuplex of [false, true]) {
+        if (!sidedModes.includes(isDuplex ? 'duplex' : 'single')) continue;
+        if (!sellable(paperSize, isColor, isDuplex)) continue;
+        sellableCombinations.push({ paperSize, isColor, isDuplex });
+      }
+    }
+  }
+
   return {
     colourModes,
     sidedModes,
@@ -408,6 +437,7 @@ export function derivePortalOptions(
     orientations: orientations.length > 0 ? orientations : ['auto'],
     allowMultipleCopies: offers.has('multiple-copies'),
     allowPageSelection: offers.has('page-selection'),
+    sellableCombinations,
   };
 }
 
@@ -444,6 +474,27 @@ export function checkJobAgainstPortal(
 
   if (!options.paperSizes.includes(job.paperSize)) {
     return `This shop does not stock ${job.paperSize} paper.`;
+  }
+
+  // The exact combination, not the three dimensions separately. A shop can
+  // switch off one specific cell — A4 colour double-sided, say — while keeping
+  // its siblings on, and each per-dimension check above would still pass it.
+  const offered = options.sellableCombinations;
+  if (
+    offered &&
+    offered.length > 0 &&
+    !offered.some(
+      (c) =>
+        c.paperSize === job.paperSize &&
+        c.isColor === job.isColor &&
+        c.isDuplex === job.isDuplex
+    )
+  ) {
+    return (
+      `This shop does not offer ${job.paperSize} ` +
+      `${job.isColor ? 'colour' : 'black and white'} ` +
+      `${job.isDuplex ? 'double-sided' : 'single-sided'}. Try another combination.`
+    );
   }
 
   if (job.copies > 1 && !options.allowMultipleCopies) {

@@ -2188,6 +2188,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (selectPaperSize) {
       selectPaperSize.addEventListener('change', () => {
         paperSize = selectPaperSize.value || 'A4';
+        // Sellability is per paper size, so changing paper can invalidate the
+        // colour and sides already chosen.
+        applySellableCombinations();
         updateCustomerPrice();
       });
     }
@@ -2566,6 +2569,46 @@ document.addEventListener('DOMContentLoaded', () => {
 
       show('groupCopies', o.allowMultipleCopies);
       show('groupPageRange', o.allowPageSelection);
+
+      // A shop can switch off one exact combination while keeping its siblings
+      // on — A4 colour double-sided, say. The pills above are per dimension, so
+      // they cannot express that; without this the customer picks a
+      // combination the server then refuses at submit, after they have chosen
+      // everything else.
+      applySellableCombinations();
+    }
+
+    /**
+     * Steers away from a combination this shop has switched off.
+     *
+     * Deliberately corrective rather than restrictive: the pills stay
+     * available, and if the current selection is unsellable the sided or colour
+     * choice moves to one that is. The server still refuses an unsellable
+     * order, so this is about not walking the customer into that refusal.
+     */
+    function applySellableCombinations() {
+      const combos = portalOptions?.sellableCombinations;
+      if (!Array.isArray(combos) || combos.length === 0) return;
+
+      const sellable = (c, d) => combos.some(
+        (x) => x.paperSize === paperSize && x.isColor === c && x.isDuplex === d
+      );
+
+      if (sellable(isColor, isDuplex)) return;
+
+      // Try keeping the colour choice, which customers care about more than
+      // sides, and move the sides instead.
+      if (sellable(isColor, !isDuplex)) {
+        selectDuplexMode(!isDuplex);
+        return;
+      }
+
+      // Otherwise take the first combination this shop sells on this paper.
+      const fallback = combos.find((x) => x.paperSize === paperSize);
+      if (fallback) {
+        selectColorMode(fallback.isColor);
+        selectDuplexMode(fallback.isDuplex);
+      }
     }
 
     /**

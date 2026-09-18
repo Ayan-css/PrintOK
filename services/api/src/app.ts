@@ -54,6 +54,22 @@ import {
 const BOOT_TIME = new Date().toISOString();
 
 /**
+ * Formats whose page count cannot be established from the file.
+ *
+ * Page breaks in a .docx or .xlsx depend on fonts, margins and the printer's
+ * own paper size, so there is no count to read out of the bytes — every one of
+ * these reported a hardcoded single page, and that is the figure a job is
+ * priced from. A 500-page document was charged as one page while the agent
+ * handed the whole thing to Word and printed all 500, leaving the shop to pay
+ * for the other 499 sheets.
+ *
+ * They are refused rather than guessed at. A controlled headless converter
+ * would let them be accepted properly, and is the right fix; until one exists,
+ * refusing with the export-as-PDF advice is the truthful answer.
+ */
+const UNMEASURABLE_FORMATS = new Set(['word', 'excel', 'csv', 'unknown']);
+
+/**
  * Whether an inbound confirmation may move this job to Paid, and why not.
  *
  * `RefundPending -> Paid` is a legal transition and deliberately so: the state
@@ -899,6 +915,38 @@ export function createApp(
           return res.status(400).json({ error: 'The discount threshold must be a whole number of paise, at least 1.' });
         }
         update.bulkThresholdCents = t;
+      }
+
+      // Refuse a card whose own numbers make a bigger order cheaper.
+      //
+      // Bulk steps the first-copy rate down at the threshold while the
+      // additional-copy rate stays put, so whenever that step exceeds the
+      // additional-copy rate the total falls as copies rise. Caught here, where
+      // the merchant can see which cell is wrong, rather than only clamped at
+      // checkout where nobody would ever learn about it.
+      //
+      // Checked against the card as it will be after this write, since a
+      // request may change the rows, the switches, or only one of them.
+      const after = { ...(await storage.getShopRateCard(req.params.shopId)), ...update };
+      if (after.bulkEnabled && after.additionalCopyEnabled) {
+        for (const rate of after.rates) {
+          if (rate.enabled === false) continue;
+          if (rate.bulkPerPageCents === null || rate.bulkPerPageCents === undefined) continue;
+          if (rate.additionalCopyPerPageCents === null || rate.additionalCopyPerPageCents === undefined) continue;
+
+          const bulkStep = rate.perPageCents - rate.bulkPerPageCents;
+          if (rate.additionalCopyPerPageCents < bulkStep) {
+            const label = `${rate.paperSize} ${rate.isColor ? 'colour' : 'black and white'} ` +
+              `${rate.isDuplex ? 'double-sided' : 'single-sided'}`;
+            return res.status(400).json({
+              error:
+                `Those rates would make a larger order cost less than a smaller one. On ${label}, ` +
+                `the bulk discount takes ${bulkStep} paise off each page while an extra copy only ` +
+                `adds ${rate.additionalCopyPerPageCents} paise, so crossing the threshold reduces ` +
+                'the total. Raise the additional-copy rate or reduce the bulk discount.',
+            });
+          }
+        }
       }
 
       return res.json(await storage.updateShopRateCard(req.params.shopId, update));
@@ -2615,6 +2663,34 @@ export function createApp(
 
       if (!docResult.isSupported) {
         return res.status(400).json({ error: docResult.errorMessage });
+      }
+
+      // A page count that cannot be measured must not be charged for.
+      //
+      // Office formats reported a hardcoded one page, and that is the figure a
+      // job is priced from — so a 500-page .docx was charged as one page while
+      // the agent handed the whole thing to Word and printed all 500. The shop
+      // paid for the other 499 sheets.
+      //
+      // Counting them honestly needs a layout engine: page breaks in a .docx
+      // depend on fonts, margins and the printer's own paper size, so there is
+      // no count to read out of the file. Until a controlled converter exists,
+      // the job is refused with the one thing the customer can do about it.
+      //
+      // Keyed on the format rather than on pageCountVerified, deliberately. A
+      // PDF whose cross-reference table is broken also comes back unverified,
+      // and those arrive constantly from phone scanners and government
+      // portals — for them there is still a count to recover by counting page
+      // markers in the raw bytes, and a shop would rather print one for the
+      // right money than turn the customer away. An Office file offers nothing
+      // to recover a count from at all.
+      if (UNMEASURABLE_FORMATS.has(docResult.format)) {
+        return res.status(400).json({
+          error:
+            'This file type cannot be measured accurately, so it cannot be priced honestly — ' +
+            'a long document would be charged as a single page. Please export it as a PDF and ' +
+            'upload that instead. PDFs, JPGs, PNGs and WebP images all work.',
+        });
       }
 
       // Tamper-proof page count override

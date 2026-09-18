@@ -162,36 +162,51 @@ export async function processDocument(
     };
     return {
       pageCount: 1,
+      // Exactly one page, not an estimate: an image is one sheet.
+      pageCountVerified: true,
       format: 'image',
       mimeType: mimeMap[ext] || 'image/jpeg',
       isSupported: true,
     };
   }
 
-  // 3. Word Documents (.docx, .doc)
+  // 3. Office formats — accepted as files, but their page count is a guess.
+  //
+  // Every one of these returned a hardcoded `pageCount: 1`, and that number is
+  // what the job is priced from. So a 500-page .docx was charged as one page
+  // while the agent handed the whole document to Word and printed all 500 —
+  // the shop paid for 499 sheets out of its own pocket, on every such order.
+  //
+  // Counting them properly needs a layout engine: page breaks in a .docx depend
+  // on fonts, margins and the printer's own paper size, so there is no honest
+  // count to read out of the file. The page count is therefore reported as
+  // unverified, and the caller refuses the job rather than charging a figure it
+  // knows to be wrong. A controlled headless converter would let these be
+  // accepted properly; until one exists, refusing is the truthful answer.
   if (['.docx', '.doc'].includes(ext)) {
     return {
-      pageCount: 1, // Base page estimate
+      pageCount: 1,
+      pageCountVerified: false,
       format: 'word',
       mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       isSupported: true,
     };
   }
 
-  // 4. Excel & CSV
   if (['.xlsx', '.csv'].includes(ext)) {
     return {
       pageCount: 1,
+      pageCountVerified: false,
       format: ext === '.csv' ? 'csv' : 'excel',
       mimeType: ext === '.csv' ? 'text/csv' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       isSupported: true,
     };
   }
 
-  // 5. PowerPoint
   if (ext === '.pptx') {
     return {
       pageCount: 1,
+      pageCountVerified: false,
       format: 'unknown',
       mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
       isSupported: true,
@@ -200,6 +215,7 @@ export async function processDocument(
 
   return {
     pageCount: 1,
+    pageCountVerified: false,
     format: 'unknown',
     mimeType: 'application/octet-stream',
     isSupported: true,
