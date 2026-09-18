@@ -70,6 +70,34 @@ const BOOT_TIME = new Date().toISOString();
 const UNMEASURABLE_FORMATS = new Set(['word', 'excel', 'csv', 'unknown']);
 
 /**
+ * The client-supplied key that makes a retry safe.
+ *
+ * `createPrintJob` has always looked one up and returned the original job
+ * rather than creating a second — but nothing ever passed it one from the
+ * customer route, so the feature was inert and a double-tapped Pay button
+ * produced two jobs and two charges.
+ *
+ * Read from a header rather than the body: the body carries the document, and
+ * a retry has to be recognisable without re-reading megabytes of base64 to
+ * find the key inside it.
+ *
+ * Bounded and shape-checked. It reaches a unique index, so an unbounded string
+ * is an unbounded index entry, and a key is only ever something the client
+ * generated for itself.
+ */
+function readIdempotencyKey(req: Request): string | undefined {
+  const raw = req.headers['idempotency-key'] || req.headers['x-idempotency-key'];
+  const key = Array.isArray(raw) ? raw[0] : raw;
+  if (!key) return undefined;
+
+  const trimmed = String(key).trim();
+  if (trimmed.length < 8 || trimmed.length > 128) return undefined;
+  if (!/^[A-Za-z0-9._:-]+$/.test(trimmed)) return undefined;
+
+  return trimmed;
+}
+
+/**
  * Whether an inbound confirmation may move this job to Paid, and why not.
  *
  * `RefundPending -> Paid` is a legal transition and deliberately so: the state
@@ -2775,6 +2803,13 @@ export function createApp(
           queueWithoutPayment,
           orientation,
           pageRange: selectedPages ? requestedRange : undefined,
+          // The idempotency machinery existed and was never given a key from
+          // this route, so it did nothing: a double-tapped Pay button, or a
+          // retry after a flaky connection, created a second job and charged
+          // for it. Taken from a header so the client owns the key and a retry
+          // of the *same* submission reuses it, which is the only way it can
+          // mean anything.
+          idempotencyKey: readIdempotencyKey(req),
         }
       );
 

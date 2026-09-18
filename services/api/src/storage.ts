@@ -646,6 +646,15 @@ export class MemoryStorage implements IStorageProvider {
     return printer;
   }
 
+  /**
+   * Allocates a counter token.
+   *
+   * Already atomic here, and worth saying why rather than leaving it to look
+   * like luck: the method is synchronous with no await between reading the
+   * counter and writing it back, so Node runs it to completion before serving
+   * another request. The Postgres path cannot rely on that and increments a
+   * dedicated row in one statement instead.
+   */
   private getNextTokenNumber(printerId: string): string {
     const today = new Date().toISOString().substring(0, 10);
     const existing = this.dailyTokenCounters.get(printerId);
@@ -707,6 +716,7 @@ export class MemoryStorage implements IStorageProvider {
       shopId: printer?.shopId ?? '',
       printerId,
       tokenNumber,
+      tokenDay: new Date().toISOString().substring(0, 10),
       fileName,
       fileUrl: storageResult.fileUrl,
       s3Key: storageResult.s3Key,

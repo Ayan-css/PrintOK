@@ -241,6 +241,12 @@ model PrintJob {
 
   /// Counter shown to the customer at the counter, e.g. "001".
   tokenNumber String?
+  /// The day that counter belongs to, as YYYY-MM-DD.
+  ///
+  /// Tokens restart each morning, so "printer + token" is not unique on its
+  /// own — #001 exists once a day. With the day it is, which is what lets the
+  /// uniqueness be enforced by the database rather than argued about.
+  tokenDay    String?
 
   // ---- Customer identity (optional, opt-in per shop) ----
   /// Only set when the shop has asked for it. The published privacy policy
@@ -343,6 +349,7 @@ model PrintJob {
 
   events JobEvent[]
 
+  @@unique([printerId, tokenDay, tokenNumber])
   @@index([printerId, printState])
   @@index([shopId, createdAt])
   @@index([printState, createdAt])
@@ -579,4 +586,27 @@ model WebhookEvent {
   createdAt DateTime @default(now())
 
   @@index([createdAt])
+}
+
+/// Hands out the next counter token for one printer on one day.
+///
+/// The token used to be derived from a COUNT of the day's jobs, read and then
+/// used — with no transaction and no constraint. Two customers submitting at
+/// the same printer in the same moment both read the same count and both got
+/// #007, and the token is what a shop calls out to hand documents over, so the
+/// wrong customer collects someone else's printout.
+///
+/// A row per printer per day, incremented atomically, so the number is
+/// allocated by the database rather than inferred from it.
+model PrinterDailyToken {
+  printerId String
+  /// YYYY-MM-DD.
+  day       String
+  /// The next token to hand out. Starts at 1.
+  nextValue Int    @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@id([printerId, day])
 }

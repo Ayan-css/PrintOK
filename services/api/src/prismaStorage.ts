@@ -147,12 +147,41 @@ export class PrismaStorage implements IStorageProvider {
 
   // ------------------------------------------------------------------ jobs ---
 
+  /** Today, as YYYY-MM-DD, for keying the per-printer token counter. */
+  private static tokenDay(now: Date = new Date()): string {
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  }
+
   /**
-   * Per-printer daily counter shown to the customer at the counter.
+   * Allocates the next counter token for a printer, atomically.
    *
-   * Derived from the day's job count, so two submissions landing in the same
-   * millisecond can collide on a token. The token is a human-facing convenience,
-   * not an identifier — `orderId` is the unique reference.
+   * This used to COUNT the day's jobs and use count+1 — a read, then a write,
+   * with nothing in between to stop a second request reading the same number.
+   * Two customers submitting at the same printer in the same moment both got
+   * #007, and the token is what a shop calls out when handing documents over,
+   * so the wrong customer collects someone else's printout.
+   *
+   * One statement now. `ON CONFLICT DO UPDATE ... RETURNING` increments and
+   * returns in a single round trip, which Postgres serialises per row, so
+   * concurrent callers queue behind each other and each gets its own number.
+   * Parameterised, not interpolated.
+   */
+  private async allocateTokenNumber(printerId: string, day: string): Promise<string> {
+    const rows = await this.prisma.$queryRaw<Array<{ allocated: number }>>`
+      INSERT INTO "PrinterDailyToken" ("printerId", "day", "nextValue", "createdAt", "updatedAt")
+      VALUES (${printerId}, ${day}, 2, NOW(), NOW())
+      ON CONFLICT ("printerId", "day")
+        DO UPDATE SET "nextValue" = "PrinterDailyToken"."nextValue" + 1, "updatedAt" = NOW()
+      RETURNING "nextValue" - 1 AS "allocated"
+    `;
+
+    const allocated = Number(rows[0]?.allocated ?? 1);
+    return `#${String(allocated).padStart(3, '0')}`;
+  }
+
+  /**
+   * Superseded by allocateTokenNumber and kept only for the one caller that
+   * wants a preview without consuming a number.
    */
   private async getNextTokenNumber(printerId: string): Promise<string> {
     const startOfDay = new Date();
@@ -207,8 +236,9 @@ export class PrismaStorage implements IStorageProvider {
 
     const storageResult = await this.s3Service.storeDocument(id, fileName, fileBase64);
 
-    const tokenNumber = await this.getNextTokenNumber(printerId);
     const now = new Date();
+    const tokenDay = PrismaStorage.tokenDay(now);
+    const tokenNumber = await this.allocateTokenNumber(printerId, tokenDay);
     const printState = autoApprovePayment || options.queueWithoutPayment
       ? PrintState.Queued
       : PrintState.AwaitingPayment;
@@ -225,6 +255,7 @@ export class PrismaStorage implements IStorageProvider {
         shopId: printer.shopId,
         printerId,
         tokenNumber,
+        tokenDay,
         fileName,
         s3Key: storageResult.s3Key,
         fileUrl: storageResult.fileUrl,
@@ -1819,6 +1850,7 @@ export class PrismaStorage implements IStorageProvider {
       printerId: j.printerId,
       deviceId: j.deviceId ?? undefined,
       tokenNumber: j.tokenNumber ?? undefined,
+      tokenDay: j.tokenDay ?? undefined,
 
       customerName: j.customerName ?? undefined,
       customerPhone: j.customerPhone ?? undefined,

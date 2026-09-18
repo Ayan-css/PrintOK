@@ -4345,6 +4345,54 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     }
   });
 
+  await t.test('100. A repeated submission is one job, not two charges', async () => {
+    // createPrintJob has always looked up an idempotency key and returned the
+    // original job rather than creating a second — and nothing ever passed it
+    // one from the customer route, so the feature was inert. A double-tapped
+    // Pay button, or a retry after a flaky connection, created a second job and
+    // charged for it.
+    const shop = await shopWithAuth('Idem Co', 'idem@example.com', 'IdemPass123456');
+    const pdf = makePdf(3).toString('base64');
+
+    const submit = (key?: string) => fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(key ? { 'Idempotency-Key': key } : {}),
+      },
+      body: JSON.stringify({
+        printerId: shop.printerId, fileName: 'twice.pdf', fileBase64: pdf,
+        copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+      }),
+    });
+
+    const key = 'job-double-tap-0001';
+    const first = (await (await submit(key)).json()) as any;
+    const second = (await (await submit(key)).json()) as any;
+
+    assert.strictEqual(second.job.id, first.job.id, 'a retry returns the original job');
+
+    // And really only one job exists, rather than two that happen to look alike.
+    const queue = await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/jobs`, {
+      headers: shop.auth,
+    })).json() as any;
+    const matching = queue.jobs.filter((j: any) => j.fileName === 'twice.pdf');
+    assert.strictEqual(matching.length, 1, 'the shop sees one order, not two');
+
+    // A genuinely new order with its own key is a new job.
+    const other = (await (await submit('job-different-0002')).json()) as any;
+    assert.notStrictEqual(other.job.id, first.job.id);
+
+    // No key at all still works — an older page must keep functioning — it
+    // simply gets no protection.
+    assert.strictEqual((await submit(undefined)).status, 201);
+
+    // A key too short or shaped wrongly is ignored rather than rejected: it is
+    // a client convenience, and failing the order over it would be worse.
+    assert.strictEqual((await submit('short')).status, 201);
+    assert.strictEqual((await submit('has spaces and $ymbols')).status, 201);
+  });
+
   server.close();
 });
 

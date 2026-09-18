@@ -9,7 +9,15 @@ services:
     container_name: printok-postgres
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      # Bound to loopback. "5432:5432" binds 0.0.0.0, so on any shared network —
+      # a café, a co-working space, a college LAN — this database was reachable
+      # by anyone, with credentials that are in this file. It may hold real
+      # customer documents, names and phone numbers if a developer has pointed
+      # it at a copy of production data.
+      #
+      # Container-to-container connectivity is unaffected: services reach each
+      # other over the compose network by name, not through a published port.
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: printok_user
       POSTGRES_PASSWORD: printok_pass
@@ -27,8 +35,10 @@ services:
     container_name: printok-minio
     restart: unless-stopped
     ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # MinIO Console (Web UI)
+      # Loopback, for the same reason as Postgres above. The console on 9001 is
+      # a full object browser, and the root credentials are in this file.
+      - "127.0.0.1:9000:9000"   # S3 API
+      - "127.0.0.1:9001:9001"   # MinIO Console (Web UI)
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin

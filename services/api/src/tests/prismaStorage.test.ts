@@ -401,6 +401,47 @@ test('PrismaStorage (PostgreSQL) integration', async (t) => {
     assert.ok(stats.todayRevenueCents > 0);
   });
 
+  await t.test('concurrent submissions never share a counter token', async () => {
+    // The token came from SELECT COUNT(*) over the day's jobs, read and then
+    // used, with no transaction and no constraint. Two customers submitting at
+    // the same printer in the same moment both read the same count and both got
+    // #007 — and the token is what a shop calls out when handing documents
+    // over, so the wrong customer collects someone else's printout.
+    //
+    // Only a real database can show this: Node runs each handler body to
+    // completion, so MemoryStorage cannot race with itself.
+    const pdf = Buffer.from('%PDF-1.4 token race').toString('base64');
+
+    const submit = () => storage.createPrintJob(
+      printer.id, 'race.pdf', pdf, 1, 1, false, false, false, 'A4'
+    );
+
+    const jobs = await Promise.all([
+      submit(), submit(), submit(), submit(), submit(),
+      submit(), submit(), submit(), submit(), submit(),
+    ]);
+
+    const tokens = jobs.map((j) => j.tokenNumber);
+    assert.strictEqual(
+      new Set(tokens).size,
+      tokens.length,
+      `ten concurrent submissions must get ten distinct tokens, got ${tokens.join(', ')}`
+    );
+
+    // And they are a clean run rather than ten random numbers, so the counter
+    // is still a counter.
+    const numbers = tokens.map((t) => Number(String(t).replace('#', ''))).sort((a, b) => a - b);
+    for (let i = 1; i < numbers.length; i++) {
+      assert.strictEqual(numbers[i], numbers[i - 1] + 1, 'tokens must be consecutive');
+    }
+
+    // Every job records which day its token belongs to, which is what makes
+    // the uniqueness constraint possible at all — tokens restart each morning.
+    for (const job of jobs) {
+      assert.match(String(job.tokenDay), /^\d{4}-\d{2}-\d{2}$/);
+    }
+  });
+
   await t.test('concurrent admin bootstrap produces exactly one owner', async () => {
     // This is the test that needs a real database. The old code counted admins
     // and then inserted, with no transaction and no lock: under READ COMMITTED

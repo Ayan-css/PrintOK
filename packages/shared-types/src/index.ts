@@ -704,6 +704,8 @@ export interface PrintJob {
   /** Agent device that claimed the job; unset until assignment. */
   deviceId?: string;
   tokenNumber?: string;
+  /** The day that token belongs to, as YYYY-MM-DD. Tokens restart each morning. */
+  tokenDay?: string;
 
   /**
    * Customer identity, present only when the shop asked for it.

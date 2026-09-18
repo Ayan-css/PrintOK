@@ -9,6 +9,14 @@ document.addEventListener('DOMContentLoaded', () => {
       ? 'http://localhost:4000'
       : 'https://prinok-api.onrender.com');
 
+  /** A fresh idempotency key. crypto.randomUUID where available, else random. */
+  function newSubmissionKey() {
+    try {
+      if (window.crypto?.randomUUID) return `job-${window.crypto.randomUUID()}`;
+    } catch { /* fall through */ }
+    return `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+  }
+
   const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // must match the "Max 25MB" promise in the drop zone
 
   // State Variables
@@ -23,6 +31,15 @@ document.addEventListener('DOMContentLoaded', () => {
   let pageRangeMode = 'all'; // 'all' or 'custom'
   let customPageRange = '';
   let orientation = 'auto'; // 'auto' | 'portrait' | 'landscape'
+  /**
+   * Identifies this submission across retries.
+   *
+   * Regenerated whenever a different file is chosen, so a genuinely new order
+   * is a new key, while every retry of the same order — a double tap, a
+   * reconnect, a resubmit after a payment popup closed — carries the one the
+   * server already knows.
+   */
+  let submissionKey = newSubmissionKey();
   let currentPrinterId = null;
   let currentShopId = null; // resolved from the printer, then used to price the order
   let pollingTimer = null;
@@ -1968,6 +1985,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function resetFileSelection() {
       selectedFile = null;
       fileBase64 = null;
+      submissionKey = newSubmissionKey();
       detectedTotalPages = 1;
       pageCount = 1;
       copies = 1;
@@ -2001,6 +2019,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
       selectedFile = file;
       fileBase64 = null;
+      // A different file is a different order, so it gets its own key. Without
+      // this, a second order in the same visit would reuse the first's key and
+      // the server would hand back the first job.
+      submissionKey = newSubmissionKey();
       setPayButtonsEnabled(false);
 
       if (infoFileName) infoFileName.textContent = file.name;
@@ -2722,7 +2744,13 @@ document.addEventListener('DOMContentLoaded', () => {
         // payment is actually confirmed.
         const res = await fetch(`${API_BASE}/api/print-jobs?autoApprove=false`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            // Same key for every retry of this one submission, so a double tap
+            // or a reconnect returns the original job instead of creating and
+            // charging for a second. Minted when the file was chosen, not here.
+            'Idempotency-Key': submissionKey,
+          },
           body: JSON.stringify({
             printerId: currentPrinterId,
             fileName: selectedFile.name,
