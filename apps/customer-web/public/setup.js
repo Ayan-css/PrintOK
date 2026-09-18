@@ -39,8 +39,26 @@
 
   // ------------------------------------------------------------------ utils ---
 
+  /**
+   * The merchant session, from localStorage.
+   *
+   * Matches app.js. It was sessionStorage in both, which is why a shop owner
+   * signed in again every time they opened the browser: the token was usually
+   * still valid, the browser had just discarded it. Falls back to the old
+   * location once so an upgrade mid-shift does not sign anyone out.
+   */
   function token() {
-    try { return sessionStorage.getItem(SESSION_KEY); } catch { return null; }
+    try {
+      const stored = localStorage.getItem(SESSION_KEY);
+      if (stored) return stored;
+      const legacy = sessionStorage.getItem(SESSION_KEY);
+      if (legacy) {
+        localStorage.setItem(SESSION_KEY, legacy);
+        sessionStorage.removeItem(SESSION_KEY);
+        return legacy;
+      }
+      return null;
+    } catch { return null; }
   }
 
   function readShopId() {
@@ -58,7 +76,20 @@
     const headers = { 'Content-Type': 'application/json' };
     const t = token();
     if (t) headers.Authorization = `Bearer ${t}`;
-    return fetch(`${API_BASE}${path}`, { ...options, headers: { ...headers, ...(options.headers || {}) } });
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers: { ...headers, ...(options.headers || {}) },
+    });
+
+    // A session in continuous use renews itself server-side; store the new
+    // token when one comes back, so a long setup session cannot expire
+    // underneath the person filling it in.
+    try {
+      const renewed = res.headers.get('x-printok-session-renewed');
+      if (renewed) localStorage.setItem(SESSION_KEY, renewed);
+    } catch { /* header unreadable; the existing token is still good */ }
+
+    return res;
   }
 
   function toast(type, title, message) {

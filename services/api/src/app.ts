@@ -21,6 +21,7 @@ import {
 import {
   PLAN_CATALOGUE, PLAN_TIERS, getPlan,
   PAYMENT_GATEWAY_FEE_BPS, PAYMENT_GATEWAY_LABEL, calculateShopNetCents,
+  wasPaidThroughGateway,
   Printer, PrintJob, ShopPortalConfig, CUSTOMER_NAME_MAX, CUSTOMER_PHONE_MAX,
   ShopRate, ShopRateCard,
   SERVICE_CATALOGUE, SERVICE_GROUPS, defaultEnabledServices, resolveEnabledServices,
@@ -31,7 +32,7 @@ import {
 } from '@printok/shared-types';
 import {
   hashPassword, verifyPassword, validatePasswordStrength,
-  issueAdminToken, verifyAdminToken, canWrite, AdminTokenPayload,
+  issueAdminToken, verifyAdminToken, canWrite, AdminTokenPayload, shouldRenewToken,
 } from './adminAuth';
 import {
   generatePairingCode, normalizePairingCode, hashDeviceToken, issueDeviceToken,
@@ -119,6 +120,61 @@ function customerJobView(job: PrintJob) {
     queuedAt: job.queuedAt,
     printedAt: job.printedAt,
     completedAt: job.completedAt,
+  };
+}
+
+/**
+ * What a shop banked across a set of paid orders, order by order.
+ *
+ * Shared by the earnings screen and the payout summary because they are two
+ * views of one number and had been computing it two ways: earnings per job, the
+ * payout summary from a single aggregate. An aggregate cannot tell a cash order
+ * from an online one, so it deducted a gateway fee from both.
+ *
+ * The gateway fee is per order and conditional. A counter-cash sale never
+ * touched Razorpay, so nothing is deducted for it.
+ */
+function summariseShopEarnings(jobs: PrintJob[], commissionBps: number) {
+  const rows = jobs.map((job) => {
+    const gross = job.totalPriceInCents || 0;
+    const paidOnline = wasPaidThroughGateway(job);
+    const { gatewayFeeCents, serviceFeeCents, netCents } = calculateShopNetCents(
+      gross, commissionBps, { gatewayFeeApplies: paidOnline }
+    );
+
+    return {
+      jobId: job.id,
+      orderId: job.orderId,
+      tokenNumber: job.tokenNumber ?? null,
+      createdAt: job.createdAt,
+      fileName: job.fileName,
+      customerName: job.customerName ?? null,
+      paymentRef: job.paymentRef ?? null,
+      /** How the money arrived, so the row can explain its own deductions. */
+      paymentMethod: paidOnline ? ('online' as const) : ('cash' as const),
+      printState: job.printState,
+      grossCents: gross,
+      // What the shop actually banked on this order, and what each deduction
+      // was for. A single "net" number invites the question this answers.
+      razorpayFeeCents: gatewayFeeCents,
+      platformCommissionCents: serviceFeeCents,
+      netCents,
+    };
+  });
+
+  const sum = (pick: (r: (typeof rows)[number]) => number) => rows.reduce((t, r) => t + pick(r), 0);
+
+  return {
+    rows,
+    totals: {
+      orders: rows.length,
+      grossCents: sum((r) => r.grossCents),
+      razorpayFeeCents: sum((r) => r.razorpayFeeCents),
+      platformCommissionCents: sum((r) => r.platformCommissionCents),
+      netCents: sum((r) => r.netCents),
+      cashOrders: rows.filter((r) => r.paymentMethod === 'cash').length,
+      onlineOrders: rows.filter((r) => r.paymentMethod === 'online').length,
+    },
   };
 }
 
@@ -323,6 +379,24 @@ export function createApp(
     if (options.requireOwner && user.role !== 'owner') {
       res.status(403).json({ error: 'Only the shop owner can do that.' });
       return null;
+    }
+
+    // A session in continuous use renews itself, so a twelve-hour token does
+    // not mean a shop owner signing in every morning. Offered as a response
+    // header rather than a body field, because every authenticated route would
+    // otherwise have to remember to include it; the client stores it when it
+    // sees it and is unaffected when it does not.
+    if (shouldRenewToken(payload)) {
+      res.setHeader(
+        'x-printok-session-renewed',
+        issueAdminToken(
+          { id: user.id, email: user.email, role: user.role, shopId: user.shopId },
+          undefined,
+          'merchant'
+        )
+      );
+      // So a browser on another origin can actually read it.
+      res.setHeader('access-control-expose-headers', 'x-printok-session-renewed');
     }
 
     return { ...payload, shopId: user.shopId };
@@ -3128,29 +3202,39 @@ export function createApp(
 
     try {
       const { shopId } = req.params;
-      const [stats, shop, plan] = await Promise.all([
-        storage.getShopStats(shopId),
+      const [shop, plan, recent] = await Promise.all([
         storage.getShop(shopId),
         storage.getShopPlan(shopId),
+        storage.getRecentJobsForShop(shopId, 500),
       ]);
-
-      const grossCents = stats ? stats.todayRevenueCents : 0;
 
       // The shop's own commission, not a hardcoded 2%: a Start shop pays 8% and
       // was previously shown a figure from a plan it is not on.
       const commissionBps = plan?.commissionBps ?? 800;
-      const { gatewayFeeCents, serviceFeeCents, netCents } =
-        calculateShopNetCents(grossCents, commissionBps);
 
+      // Computed from today's orders rather than from a single revenue
+      // aggregate. The aggregate could not distinguish a cash sale from an
+      // online one, so it deducted a gateway fee from both — and this screen
+      // then disagreed with the earnings screen, which is built per order.
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const todaysPaid = recent.filter(
+        (j) => j.paymentState === PaymentState.Paid && new Date(j.createdAt) >= startOfToday
+      );
+
+      const { totals } = summariseShopEarnings(todaysPaid, commissionBps);
       const routeLinked = shop?.razorpayAccountStatus === 'activated';
 
       return res.json({
         shopId,
-        grossCents,
+        grossCents: totals.grossCents,
         commissionBps,
-        razorpayFeeCents: gatewayFeeCents,
-        platformCommissionCents: serviceFeeCents,
-        netAvailableCents: netCents,
+        razorpayFeeCents: totals.razorpayFeeCents,
+        platformCommissionCents: totals.platformCommissionCents,
+        netAvailableCents: totals.netCents,
+        // So the screen can say why a cash order carries no gateway deduction.
+        cashOrders: totals.cashOrders,
+        onlineOrders: totals.onlineOrders,
         // The shop's own payout destination. This was hardcoded, so every shop
         // was shown the same address regardless of what it had registered.
         payoutUpiId: shop?.upiId || null,
@@ -3206,30 +3290,7 @@ export function createApp(
         (j) => j.paymentState === PaymentState.Paid && inRange(String(j.createdAt))
       );
 
-      const rows = earned.map((job) => {
-        const gross = job.totalPriceInCents || 0;
-        const { gatewayFeeCents, serviceFeeCents, netCents } = calculateShopNetCents(gross, commissionBps);
-
-        return {
-          jobId: job.id,
-          orderId: job.orderId,
-          tokenNumber: job.tokenNumber ?? null,
-          createdAt: job.createdAt,
-          fileName: job.fileName,
-          customerName: job.customerName ?? null,
-          paymentRef: job.paymentRef ?? null,
-          printState: job.printState,
-          grossCents: gross,
-          // What the shop actually banked on this order, and what each
-          // deduction was for. A single "net" number invites the question this
-          // answers.
-          razorpayFeeCents: gatewayFeeCents,
-          platformCommissionCents: serviceFeeCents,
-          netCents,
-        };
-      });
-
-      const sum = (pick: (r: (typeof rows)[number]) => number) => rows.reduce((t, r) => t + pick(r), 0);
+      const { rows, totals } = summariseShopEarnings(earned, commissionBps);
 
       return res.json({
         settlement: shop.razorpayAccountStatus === 'activated' ? 'automatic' : 'pending-route',
@@ -3237,13 +3298,7 @@ export function createApp(
         gatewayFeeBps: PAYMENT_GATEWAY_FEE_BPS,
         // Named so nobody reads these as a settlement statement.
         feesAreEstimated: true,
-        totals: {
-          orders: rows.length,
-          grossCents: sum((r) => r.grossCents),
-          razorpayFeeCents: sum((r) => r.razorpayFeeCents),
-          platformCommissionCents: sum((r) => r.platformCommissionCents),
-          netCents: sum((r) => r.netCents),
-        },
+        totals,
         rows: rows.slice(0, 200),
       });
     } catch (err: any) {

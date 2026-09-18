@@ -23,6 +23,12 @@
 
     /** Wipes the session. Safe to call when there is nothing to wipe. */
     clear() {
+      // Both stores. The token lives in localStorage now, so that a shop owner
+      // is not signed out every time they close the browser — which makes this
+      // button the way to hand a shared counter PC to the next person, rather
+      // than closing the tab and hoping. sessionStorage is still cleared, to
+      // catch a token left there by an older build.
+      try { localStorage.removeItem(this.TOKEN_KEY); } catch { /* private browsing */ }
       try { sessionStorage.removeItem(this.TOKEN_KEY); } catch { /* private browsing */ }
       try { localStorage.removeItem(this.CONTEXT_KEY); } catch { /* private browsing */ }
     },

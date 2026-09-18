@@ -101,6 +101,25 @@ function signingSecret(): string {
   return secret;
 }
 
+/**
+ * Whether a still-valid token is old enough to be worth replacing.
+ *
+ * Past half its life, so a session in continuous use is renewed long before it
+ * expires while an idle one is left to lapse. This is what lets the token stay
+ * short-lived — twelve hours — without a shop owner signing in every morning:
+ * the session follows the work rather than the clock.
+ *
+ * Deliberately not applied to the admin console, whose token is meant to die
+ * with the tab.
+ */
+export function shouldRenewToken(
+  payload: AdminTokenPayload,
+  nowSeconds: number = Math.floor(Date.now() / 1000)
+): boolean {
+  const age = nowSeconds - payload.iat;
+  return age > TOKEN_TTL_SECONDS / 2;
+}
+
 export function issueAdminToken(
   user: { id: string; email: string; role: string; shopId?: string },
   nowSeconds: number = Math.floor(Date.now() / 1000),

@@ -1025,20 +1025,59 @@ export function getPlan(tier: string): PlanDefinition | undefined {
 export const PLAN_TIERS: readonly PlanTier[] = PLAN_CATALOGUE.map((p) => p.tier);
 
 /**
+ * Whether an order's money came through the payment gateway at all.
+ *
+ * A job paid in cash at the counter never touched Razorpay, so no MDR was
+ * charged on it and none may be deducted from what the shop keeps.
+ *
+ * The two paths are distinguishable by what they record: an online payment
+ * carries a gateway payment id — `razorpayPaymentId` since the payment-binding
+ * change, `paymentRef` on older rows — while the counter-cash path confirms
+ * through `manual-override`, which passes no payment reference because there
+ * is no payment to reference.
+ */
+export function wasPaidThroughGateway(job: {
+  razorpayPaymentId?: string;
+  paymentRef?: string;
+}): boolean {
+  return Boolean(job.razorpayPaymentId || job.paymentRef);
+}
+
+/**
  * What a shop actually keeps from an order.
  *
  * The gateway takes its cut before settlement and PrintOk's fee applies to the
  * order value, so the two are calculated independently rather than compounded.
+ *
+ * `gatewayFeeApplies` must be false for an order paid in cash. It used to be
+ * unconditional, so every counter sale was shown with a "Razorpay 2% + 18% GST"
+ * line deducted from it — understating the shop's earnings on money that never
+ * left the till, and attributing the deduction to a company that charged
+ * nothing for it. Defaulted to true because that is right for every online
+ * order; pass `wasPaidThroughGateway(job)` rather than assuming.
  */
 export function calculateShopNetCents(
   grossCents: number,
-  commissionBps: number
-): { gatewayFeeCents: number; serviceFeeCents: number; netCents: number } {
-  const gatewayFeeCents = Math.round((grossCents * PAYMENT_GATEWAY_FEE_BPS) / 10_000);
+  commissionBps: number,
+  options: { gatewayFeeApplies?: boolean } = {}
+): {
+  gatewayFeeCents: number;
+  serviceFeeCents: number;
+  netCents: number;
+  /** False for counter cash, so a caller can label the row rather than infer. */
+  gatewayFeeApplies: boolean;
+} {
+  const gatewayFeeApplies = options.gatewayFeeApplies !== false;
+
+  const gatewayFeeCents = gatewayFeeApplies
+    ? Math.round((grossCents * PAYMENT_GATEWAY_FEE_BPS) / 10_000)
+    : 0;
   const serviceFeeCents = Math.round((grossCents * commissionBps) / 10_000);
+
   return {
     gatewayFeeCents,
     serviceFeeCents,
     netCents: Math.max(0, grossCents - gatewayFeeCents - serviceFeeCents),
+    gatewayFeeApplies,
   };
 }

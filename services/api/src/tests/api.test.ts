@@ -3853,6 +3853,98 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // The money screens
+  // ---------------------------------------------------------------------------
+
+  await t.test('92. A cash order carries no gateway fee', async () => {
+    // calculateShopNetCents deducted PAYMENT_GATEWAY_FEE_BPS unconditionally
+    // and the row was labelled "Razorpay 2% + 18% GST" — on every order,
+    // including cash taken over the counter that never touched Razorpay. The
+    // shop's earnings were understated on every counter sale, and the
+    // deduction was attributed to a company that charged nothing for it.
+    const shop = await shopWithAuth('Cash Books Co', 'cashbooks@example.com', 'CashBooksPass1');
+
+    const newJob = async (fileName: string) => {
+      const res = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          printerId: shop.printerId, fileName,
+          fileBase64: makePdf(5).toString('base64'),
+          copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
+        }),
+      });
+      return ((await res.json()) as any).job;
+    };
+
+    // --- one paid in cash at the counter ---
+    const cash = await newJob('cash.pdf');
+    await fetch(`${baseUrl}/api/print-jobs/${cash.id}/manual-override`, {
+      method: 'POST', headers: shop.auth,
+    });
+
+    // --- one paid online, through the gateway ---
+    const online = await newJob('online.pdf');
+    const orderRes = await fetch(`${baseUrl}/api/payments/create-order`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jobId: online.id }),
+    });
+    const orderId = ((await orderRes.json()) as any).orderId as string;
+    const pay = 'pay_books_online';
+    const confirmed = await fetch(`${baseUrl}/api/payments/verify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jobId: online.id, razorpayOrderId: orderId, razorpayPaymentId: pay,
+        razorpaySignature: signCheckout(orderId, pay),
+      }),
+    });
+    assert.strictEqual(confirmed.status, 200);
+
+    const earnings = await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/earnings`, {
+      headers: shop.auth,
+    })).json() as any;
+
+    const cashRow = earnings.rows.find((r: any) => r.jobId === cash.id);
+    const onlineRow = earnings.rows.find((r: any) => r.jobId === online.id);
+    assert.ok(cashRow && onlineRow, 'both orders must appear in earnings');
+
+    // The cash row: nothing deducted for a gateway that was never involved.
+    assert.strictEqual(cashRow.paymentMethod, 'cash');
+    assert.strictEqual(cashRow.razorpayFeeCents, 0, 'a cash order owes Razorpay nothing');
+    assert.strictEqual(
+      cashRow.netCents,
+      cashRow.grossCents - cashRow.platformCommissionCents,
+      'cash net is gross minus our commission, and nothing else'
+    );
+
+    // The online row still carries it.
+    assert.strictEqual(onlineRow.paymentMethod, 'online');
+    assert.ok(onlineRow.razorpayFeeCents > 0, 'an online order does pay a gateway fee');
+
+    // Same gross, different net — which is the whole point.
+    assert.strictEqual(cashRow.grossCents, onlineRow.grossCents, 'same price both ways');
+    assert.ok(cashRow.netCents > onlineRow.netCents, 'the shop keeps more of a cash sale');
+
+    // Totals add up rather than being computed a second way.
+    assert.strictEqual(earnings.totals.cashOrders, 1);
+    assert.strictEqual(earnings.totals.onlineOrders, 1);
+    assert.strictEqual(
+      earnings.totals.razorpayFeeCents,
+      onlineRow.razorpayFeeCents,
+      'the only gateway fee in the totals is the online one'
+    );
+
+    // And the payout summary agrees with the earnings screen, which it could
+    // not before: it worked from a single revenue aggregate that cannot tell a
+    // cash order from an online one.
+    const payout = await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/payout-summary`, {
+      headers: shop.auth,
+    })).json() as any;
+    assert.strictEqual(payout.grossCents, earnings.totals.grossCents, 'the two screens agree on gross');
+    assert.strictEqual(payout.razorpayFeeCents, earnings.totals.razorpayFeeCents, '…and on fees');
+    assert.strictEqual(payout.netAvailableCents, earnings.totals.netCents, '…and on net');
+  });
+
   server.close();
 });
 

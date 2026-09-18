@@ -109,6 +109,53 @@ test('customer web routing', async (t) => {
     );
   });
 
+  await t.test('the merchant session survives a browser restart, the admin one does not', async () => {
+    // A shop owner signed in again every morning because both merchant scripts
+    // kept the token in sessionStorage, which the browser discards on close —
+    // the token itself was usually still valid. Moving one file and not the
+    // other would sign people out of exactly one screen, so both are asserted.
+    //
+    // The admin console is deliberately the other way round: its token shows
+    // every shop's revenue and should die with the tab.
+    const fs = require('fs');
+    const path = require('path');
+    const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
+
+    const app = read('app.js');
+    const setup = read('setup.js');
+    const admin = read('admin.js');
+
+    const sessionKey = app.match(/KEY:\s*'([^']*merchant[^']*)'/)?.[1];
+    assert.ok(sessionKey, 'app.js must define a merchant session key');
+
+    for (const [name, source] of [['app.js', app], ['setup.js', setup]]) {
+      assert.match(
+        source,
+        /localStorage\.getItem\(\s*(this\.KEY|SESSION_KEY|'printok_merchant_token')/,
+        `${name} must read the merchant token from localStorage, or the session dies with the browser`
+      );
+      assert.match(
+        source,
+        /localStorage\.setItem\(\s*(this\.KEY|SESSION_KEY|'printok_merchant_token')/,
+        `${name} must persist the merchant token to localStorage`
+      );
+    }
+
+    // And the renewed-token header is honoured, or a long session still lapses
+    // mid-use however it is stored.
+    for (const [name, source] of [['app.js', app], ['setup.js', setup]]) {
+      assert.ok(
+        source.includes('x-printok-session-renewed'),
+        `${name} must adopt a server-renewed session token`
+      );
+    }
+
+    assert.ok(
+      !admin.includes('localStorage.setItem'),
+      'the admin console token must stay in sessionStorage'
+    );
+  });
+
   await t.test('a merchant can sign out, and signing out clears the whole session', async () => {
     // There was no sign-out at all on either merchant page: the way to hand a
     // shared counter PC to the next person was to close the tab. This checks

@@ -90,16 +90,55 @@ document.addEventListener('DOMContentLoaded', () => {
    * token rather than trusting a shop id held in browser storage. Kept in
    * sessionStorage so it dies with the tab.
    */
+  /**
+   * The merchant session.
+   *
+   * Kept in localStorage, not sessionStorage. sessionStorage dies with the
+   * browser, which meant a shop owner signed in again every single morning
+   * even though their token was usually still valid — the browser had simply
+   * thrown it away.
+   *
+   * The counter-PC concern that motivated sessionStorage is real and is
+   * answered differently: there is a sign-out button on every merchant screen
+   * now, which is the deliberate way to hand the machine over, and the token
+   * itself still expires twelve hours after it was last used. What changed is
+   * that closing a browser is no longer treated as signing out, because nobody
+   * means it that way.
+   *
+   * The admin console deliberately stays on sessionStorage: a token that shows
+   * every shop's revenue should die with the tab.
+   */
   const MerchantSession = {
     KEY: 'printok_merchant_token',
     get() {
-      try { return sessionStorage.getItem(this.KEY); } catch { return null; }
+      try {
+        const stored = localStorage.getItem(this.KEY);
+        if (stored) return stored;
+
+        // Adopt a token left by the previous build, so upgrading does not sign
+        // everyone out mid-shift.
+        const legacy = sessionStorage.getItem(this.KEY);
+        if (legacy) {
+          this.set(legacy);
+          return legacy;
+        }
+        return null;
+      } catch { return null; }
     },
     set(token) {
       try {
-        if (token) sessionStorage.setItem(this.KEY, token);
-        else sessionStorage.removeItem(this.KEY);
+        if (token) localStorage.setItem(this.KEY, token);
+        else localStorage.removeItem(this.KEY);
+        // Either way the old location must not keep a copy.
+        sessionStorage.removeItem(this.KEY);
       } catch { /* private browsing */ }
+    },
+    /** Stores a token the server renewed on this request, if it sent one. */
+    adopt(res) {
+      try {
+        const renewed = res.headers.get('x-printok-session-renewed');
+        if (renewed) this.set(renewed);
+      } catch { /* header unreadable; the existing token is still good */ }
     },
     headers(extra = {}) {
       const token = this.get();
@@ -144,6 +183,7 @@ document.addEventListener('DOMContentLoaded', () => {
       ...options,
       headers: MerchantSession.headers(options.headers || {}),
     });
+    MerchantSession.adopt(res);
     if (res.status === 401) {
       MerchantSession.set(null);
       const login = document.getElementById('merchantLoginView');
@@ -1022,7 +1062,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
         totals.innerHTML = [
           tile('Customers paid', t.grossCents, `${t.orders} order${t.orders === 1 ? '' : 's'}`),
-          tile('Razorpay fees', t.razorpayFeeCents, `${(data.gatewayFeeBps / 100).toFixed(2)}% estimated`),
+          tile(
+            'Razorpay fees',
+            t.razorpayFeeCents,
+            // Named against the orders it actually applies to. A shop taking
+            // mostly cash was previously shown a gateway fee on every order,
+            // which is money Razorpay never charged.
+            t.cashOrders
+              ? `${(data.gatewayFeeBps / 100).toFixed(2)}% on ${t.onlineOrders} online order${t.onlineOrders === 1 ? '' : 's'}`
+              : `${(data.gatewayFeeBps / 100).toFixed(2)}% estimated`
+          ),
           tile('PrintOk commission', t.platformCommissionCents, `${(data.commissionBps / 100).toFixed(2)}% of each order`),
           tile('You keep', t.netCents, 'after both'),
         ].join('');
@@ -1037,11 +1086,17 @@ document.addEventListener('DOMContentLoaded', () => {
               <td>${escapeHtml(new Date(r.createdAt).toLocaleDateString())}</td>
               <td>
                 <div class="ledger-file">${escapeHtml(r.fileName)}</div>
-                <div class="ledger-meta">${escapeHtml(r.tokenNumber || r.orderId)}</div>
+                <div class="ledger-meta">${escapeHtml(r.tokenNumber || r.orderId)}${
+                  r.paymentMethod === 'cash' ? ' · cash at counter' : ''
+                }</div>
               </td>
               <td>${escapeHtml(r.customerName || '—')}</td>
               <td class="num">${formatRupees(r.grossCents)}</td>
-              <td class="num ledger-out">−${formatRupees(r.razorpayFeeCents)}</td>
+              <td class="num ledger-out">${
+                // A dash, not "−₹0.00": cash never went through Razorpay, so
+                // there is no deduction to show rather than a zero one.
+                r.razorpayFeeCents > 0 ? `−${formatRupees(r.razorpayFeeCents)}` : '—'
+              }</td>
               <td class="num ledger-out">−${formatRupees(r.platformCommissionCents)}</td>
               <td class="num ledger-net">${formatRupees(r.netCents)}</td>
             </tr>`).join('');
@@ -1049,9 +1104,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const note = document.getElementById('ledgerNote');
       if (note) {
-        note.textContent = data.feesAreEstimated
-          ? 'Razorpay fees are estimated at the published rate. The exact amount appears on your Razorpay settlement statement.'
+        const cashNote = data.totals?.cashOrders
+          ? ' Orders paid in cash at the counter carry no Razorpay fee.'
           : '';
+        note.textContent = data.feesAreEstimated
+          ? 'Razorpay fees are estimated at the published rate. The exact amount appears on your '
+            + 'Razorpay settlement statement.' + cashNote
+          : cashNote.trim();
       }
     }
 
