@@ -5155,6 +5155,97 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     }
   });
 
+  await t.test('107c. A provider can be configured without owning a domain', async () => {
+    // Resend only sends from a domain verified by DNS, which is no use before
+    // there is a domain to verify: its no-domain address delivers solely to
+    // your own inbox, and a password reset that reaches only you resets
+    // nobody's password. Brevo will send from a single address confirmed by
+    // clicking a link in it, so this is the provider that works at zero cost
+    // and zero domains — and the one most likely to be misconfigured, because
+    // it disagrees with Resend on every field.
+    const { EmailService, parseFromAddress } = await import('../email');
+
+    // EMAIL_FROM is one variable in two shapes: Resend takes the whole string,
+    // Brevo wants the halves separately and sends from nothing useful if handed
+    // the raw form.
+    assert.deepStrictEqual(parseFromAddress('PrintOk <noreply@printok.app>'),
+      { email: 'noreply@printok.app', name: 'PrintOk' });
+    assert.deepStrictEqual(parseFromAddress('  Print Ok  < a@b.co >  '),
+      { email: 'a@b.co', name: 'Print Ok' });
+    assert.deepStrictEqual(parseFromAddress('"PrintOk" <a@b.co>'),
+      { email: 'a@b.co', name: 'PrintOk' });
+    // A bare address is legitimate and must not become a nameless <undefined>.
+    assert.deepStrictEqual(parseFromAddress('plain@example.com'), { email: 'plain@example.com' });
+    assert.deepStrictEqual(parseFromAddress('<only@example.com>'), { email: 'only@example.com' });
+
+    const saved = {
+      provider: process.env.EMAIL_PROVIDER,
+      key: process.env.EMAIL_API_KEY,
+      from: process.env.EMAIL_FROM,
+    };
+    const restore = () => {
+      for (const [k, v] of Object.entries({
+        EMAIL_PROVIDER: saved.provider, EMAIL_API_KEY: saved.key, EMAIL_FROM: saved.from,
+      })) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    };
+
+    try {
+      process.env.EMAIL_PROVIDER = 'brevo';
+      process.env.EMAIL_API_KEY = 'test-brevo-key';
+      process.env.EMAIL_FROM = 'PrintOk <ayan@example.com>';
+      const brevo = new EmailService();
+      assert.strictEqual(brevo.providerName, 'brevo');
+      assert.strictEqual(brevo.canSend, true, 'a configured Brevo can send');
+
+      // Brevo authenticates on its own header, not Bearer, and names its body
+      // fields differently. Sent Resend's way it answers 401 about a missing
+      // key, which reads exactly like a wrong key rather than a wrong header —
+      // so the request shape is asserted rather than trusted.
+      const realFetch = globalThis.fetch;
+      let seen: { url: string; headers: any; body: any } | undefined;
+      globalThis.fetch = (async (url: any, init: any) => {
+        seen = { url: String(url), headers: init.headers, body: JSON.parse(init.body) };
+        return new Response(JSON.stringify({ messageId: 'brevo-123' }), { status: 201 });
+      }) as any;
+
+      try {
+        const sent = await brevo.send({ to: 'shop@example.com', subject: 'S', text: 'T' });
+        assert.strictEqual(sent.ok, true, 'a 201 is a success, not only a 200');
+        assert.strictEqual((sent as any).id, 'brevo-123', 'Brevo returns messageId, not id');
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+
+      assert.match(seen!.url, /api\.brevo\.com/);
+      assert.strictEqual(seen!.headers['api-key'], 'test-brevo-key');
+      assert.ok(!seen!.headers.Authorization, 'Brevo must not be sent a Bearer header');
+      assert.deepStrictEqual(seen!.body.sender, { email: 'ayan@example.com', name: 'PrintOk' });
+      assert.deepStrictEqual(seen!.body.to, [{ email: 'shop@example.com' }]);
+      assert.strictEqual(seen!.body.textContent, 'T', 'Brevo names the plain body textContent');
+      assert.ok(!('text' in seen!.body), "and does not read Resend's 'text'");
+
+      // Half-configured stays honest: no key means no sending, and it says so
+      // rather than reporting success into a void.
+      delete process.env.EMAIL_API_KEY;
+      const halfDone = new EmailService();
+      assert.strictEqual(halfDone.canSend, false);
+      assert.strictEqual(halfDone.providerName, 'none');
+      const refused = await halfDone.send({ to: 'a@b.co', subject: 'S', text: 'T' });
+      assert.strictEqual(refused.ok, false);
+
+      // A typo in the provider name must not look like having configured
+      // nothing, because the two need completely different fixes.
+      process.env.EMAIL_PROVIDER = 'bravo';
+      process.env.EMAIL_API_KEY = 'k';
+      assert.strictEqual(new EmailService().providerName, 'none', 'an unknown provider sends nothing');
+    } finally {
+      restore();
+    }
+  });
+
   await t.test('108. An operator can see what needs a person, and logs carry no secrets', async () => {
     // The project's own assessment was that nothing alerts anyone: a shop
     // offline overnight went unnoticed, and every defect found that week was
