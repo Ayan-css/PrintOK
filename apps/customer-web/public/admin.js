@@ -372,6 +372,68 @@
    */
   let planTiers = [];
 
+  /**
+   * Fleet view and publication.
+   *
+   * Built with DOM nodes rather than innerHTML: version strings and device
+   * names come from agents, which is to say from other people's machines, and
+   * a device named with a <script> tag should be a funny name rather than a
+   * script running in the operator console.
+   */
+  async function loadFleet() {
+    const box = $('adminFleetSummary');
+    if (!box) return;
+
+    try {
+      const data = await api('/api/admin/agent-releases');
+      const active = data.active;
+      const fleet = data.fleet || { total: 0, outdated: 0, byVersion: [] };
+
+      const rows = [];
+
+      const current = document.createElement('p');
+      current.className = 'meta-text';
+      if (!active) {
+        current.textContent =
+          'No build has been published. Every agent is told it is up to date, and nothing updates itself.';
+      } else {
+        current.textContent =
+          `Published: ${active.version} · ${active.mode === 'auto' ? 'installs automatically' : 'notify only'}`
+          + `${active.paused ? ' · PAUSED, offered to nobody' : ''}`
+          + ` · ${fleet.outdated} of ${fleet.total} device${fleet.total === 1 ? '' : 's'} behind`;
+      }
+      rows.push(current);
+
+      if (fleet.byVersion.length) {
+        const list = document.createElement('div');
+        list.className = 'plan-usage';
+        for (const entry of fleet.byVersion) {
+          const row = document.createElement('div');
+          // Behind the published build is the state worth colouring; being on
+          // it is the normal case and needs no decoration.
+          const behind = active && entry.version !== active.version;
+          row.className = 'plan-usage-row' + (behind ? ' is-over' : '');
+          const name = document.createElement('span');
+          name.textContent = entry.version === 'unknown' ? 'version not reported' : entry.version;
+          const count = document.createElement('strong');
+          count.textContent = `${entry.count} device${entry.count === 1 ? '' : 's'}`;
+          row.append(name, count);
+          list.append(row);
+        }
+        rows.push(list);
+      }
+
+      box.replaceChildren(...rows);
+    } catch (err) {
+      box.replaceChildren(
+        Object.assign(document.createElement('p'), {
+          className: 'meta-text',
+          textContent: `Could not load the fleet: ${err.message}`,
+        })
+      );
+    }
+  }
+
   async function loadConsole() {
     try {
       const includeArchived = $('adminShowArchived').checked;
@@ -551,4 +613,44 @@
       }
     });
   });
+
+  // Fleet panel wiring. Loaded on demand rather than with the console, because
+  // it is a second round trip an operator does not always need.
+  document.getElementById('btnLoadFleet')?.addEventListener('click', loadFleet);
+
+  document.getElementById('agentReleaseForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const hint = $('releaseFormHint');
+    const value = (id) => (document.getElementById(id)?.value || '').trim();
+
+    try {
+      const { release } = await api('/api/admin/agent-releases', {
+        method: 'POST',
+        body: JSON.stringify({
+          version: value('releaseVersion'),
+          downloadUrl: value('releaseUrl'),
+          sha256: value('releaseSha'),
+          mode: value('releaseMode'),
+          notes: value('releaseNotes'),
+          paused: document.getElementById('releasePaused')?.checked === true,
+        }),
+      });
+
+      if (hint) {
+        hint.textContent =
+          `Published ${release.version}. `
+          + (release.paused
+            ? 'It is paused, so no agent is being offered it yet.'
+            : release.mode === 'auto'
+              ? 'Agents will install it as they check in.'
+              : 'Agents will report it as available and install nothing.');
+      }
+      toast('success', 'Published', `Agent ${release.version} is now the published build.`);
+      loadFleet();
+    } catch (err) {
+      if (hint) hint.textContent = err.message;
+      toast('danger', 'Not published', err.message);
+    }
+  });
+
 })();

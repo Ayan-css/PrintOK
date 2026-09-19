@@ -191,6 +191,66 @@
           </div>
         </div>
 
+        <!--
+          Agent fleet and updates.
+
+          Publishing a build decides what runs, as a service, on every shop's
+          counter PC. The form therefore states the checksum requirement rather
+          than hiding it, and defaults to notify: agents surface the update and
+          install nothing until someone chooses auto.
+        -->
+        <div class="card card--elevated admin-panel">
+          <div class="card-header admin-panel-header">
+            <div>
+              <h2 class="card-title">Print Agent Fleet</h2>
+              <p class="meta-text">
+                Which build each shop is running, and what they are told to upgrade to.
+              </p>
+            </div>
+            <button class="btn btn-outline btn-sm" id="btnLoadFleet" type="button">Load</button>
+          </div>
+
+          <div id="adminFleetSummary"><p class="meta-text">Not loaded.</p></div>
+
+          <details class="admin-release-form">
+            <summary>Publish a build</summary>
+            <p class="meta-text">
+              Whatever is published here runs as a service on every connected shop PC.
+              Agents verify the installer against the checksum below and refuse a mismatch,
+              and they only ever download from PrintOk's published releases &mdash; so a
+              wrong checksum means nothing installs, rather than something wrong installing.
+            </p>
+            <form id="agentReleaseForm" class="grid-2">
+              <label>Version
+                <input class="form-input" id="releaseVersion" placeholder="1.4.0" required>
+              </label>
+              <label>Installer URL (GitHub release)
+                <input class="form-input" id="releaseUrl" type="url"
+                       placeholder="https://github.com/.../PrintOkAgentSetup.exe" required>
+              </label>
+              <label>SHA-256 of the installer
+                <input class="form-input" id="releaseSha" placeholder="64 hex characters" required>
+              </label>
+              <label>Rollout
+                <select class="form-input" id="releaseMode">
+                  <option value="notify" selected>Notify only &mdash; agents report it, install nothing</option>
+                  <option value="auto">Automatic &mdash; agents install it themselves</option>
+                </select>
+              </label>
+              <label class="grid-span-2">What changed (shown to shop owners)
+                <input class="form-input" id="releaseNotes" maxlength="500"
+                       placeholder="Fixes colour printing on HP LaserJet drivers">
+              </label>
+              <label class="checkbox-row grid-span-2">
+                <input type="checkbox" id="releasePaused">
+                <span>Publish paused &mdash; nothing is offered until you unpause</span>
+              </label>
+              <button class="btn btn-primary grid-span-2" type="submit">Publish to fleet</button>
+            </form>
+            <p class="meta-text" id="releaseFormHint"></p>
+          </details>
+        </div>
+
         <!-- Operator audit trail -->
         <div class="card card--elevated admin-panel">
           <div class="card-header admin-panel-header">

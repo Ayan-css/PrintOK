@@ -1229,3 +1229,89 @@ export function calculateShopNetCents(
     gatewayFeeApplies,
   };
 }
+
+/* ============================================================================
+ * Agent updates
+ *
+ * An update channel is a remote code execution channel: whatever the server
+ * names here is what runs as a service on every shop's counter PC. Everything
+ * in this section exists to make that channel narrow and legible rather than
+ * convenient.
+ * ========================================================================== */
+
+/** What a device should do about a published release. */
+export type AgentUpdateMode = 'notify' | 'auto';
+
+export interface AgentUpdateManifest {
+  /** True when the device is already on the published build, or none exists. */
+  upToDate: boolean;
+  /** The published version, absent when nothing has been published. */
+  version?: string;
+  downloadUrl?: string;
+  /** Lowercase hex SHA-256 the agent must verify before executing anything. */
+  sha256?: string;
+  mode?: AgentUpdateMode;
+  notes?: string;
+}
+
+/**
+ * Compares two dotted version strings numerically.
+ *
+ * Returns > 0 when `a` is newer, < 0 when older, 0 when equivalent.
+ *
+ * String comparison is the obvious implementation and it is wrong in a way that
+ * only appears after ten releases: "1.10.0" sorts before "1.9.0" because "1"
+ * precedes "9". A fleet would stop upgrading at 1.9 and nothing would report an
+ * error — every device would simply believe it was current.
+ *
+ * Missing components count as zero, so "1.4" and "1.4.0" are the same build.
+ * Anything unparseable compares as older than everything, because a device that
+ * cannot say what it is running is one that should be offered the update.
+ */
+export function compareAgentVersions(a: string, b: string): number {
+  const parts = (v: string): number[] =>
+    String(v ?? '').trim().split('.').map((piece) => {
+      const n = Number.parseInt(piece, 10);
+      return Number.isFinite(n) && n >= 0 ? n : -1;
+    });
+
+  const left = parts(a);
+  const right = parts(b);
+
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    const l = left[i] ?? 0;
+    const r = right[i] ?? 0;
+    if (l !== r) return l - r;
+  }
+  return 0;
+}
+
+/** A SHA-256 as the agent requires it: 64 lowercase hex characters. */
+export function isValidSha256(value: string): boolean {
+  return /^[a-f0-9]{64}$/.test(String(value ?? '').trim().toLowerCase());
+}
+
+/**
+ * Hosts the platform will publish an installer from.
+ *
+ * Checked when a release is published, so a typo or a pasted wrong link is
+ * refused by the console rather than distributed to the fleet. It is NOT the
+ * security boundary — the agent keeps its own download allowlist and refuses
+ * anything outside it, because a server that has been compromised will happily
+ * pass its own checks.
+ */
+export const AGENT_RELEASE_HOSTS: readonly string[] = [
+  'github.com',
+  'objects.githubusercontent.com',
+];
+
+/** Whether a URL is one the console will accept for a published release. */
+export function isAllowedReleaseUrl(raw: string): boolean {
+  try {
+    const url = new URL(String(raw));
+    if (url.protocol !== 'https:') return false;
+    return AGENT_RELEASE_HOSTS.includes(url.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}

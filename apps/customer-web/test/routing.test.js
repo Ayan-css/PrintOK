@@ -257,6 +257,81 @@ test('customer web routing', async (t) => {
     );
   });
 
+  await t.test('the deployed config carries the headers, not only the dev server', async () => {
+    // The test above passes against server.js, which sets these headers
+    // correctly. Production does not run server.js — Vercel serves the static
+    // files and reads vercel.json — so for one deploy the suite was green while
+    // the live site sent no security headers at all, and the merchant dashboard
+    // was framable by anyone.
+    //
+    // The cause was two config files: the repo root carried the headers and
+    // apps/customer-web/vercel.json, the one Vercel actually reads because that
+    // is the project root, did not. Nothing compared them, so nothing noticed.
+    //
+    // This asserts the deployed file itself. It cannot catch a wrong Vercel
+    // project setting, but it catches the headers going missing from the config
+    // that setting points at.
+    const fs = require('fs');
+    const path = require('path');
+    const config = JSON.parse(
+      fs.readFileSync(path.join(__dirname, '..', 'vercel.json'), 'utf8')
+    );
+
+    const headerRoutes = (config.routes || []).filter(
+      (r) => r.headers && r.headers['X-Frame-Options']
+    );
+    assert.ok(headerRoutes.length >= 2,
+      'vercel.json must set security headers; the dev server agreeing is not enough');
+
+    // Every header route must continue, or it answers the request itself and
+    // the page is never served.
+    for (const route of headerRoutes) {
+      assert.strictEqual(route.continue, true,
+        `${route.src} sets headers and must fall through to the route that serves the page`);
+    }
+
+    // The privileged rule targets the merchant screens; the general rule is the
+    // one that excludes them by lookahead.
+    const privileged = headerRoutes.find((r) => !/\(\?!/.test(r.src) && /dashboard/.test(r.src));
+    const general = headerRoutes.find((r) => /\(\?!/.test(r.src));
+
+    assert.ok(privileged, 'the merchant screens need their own rule');
+    assert.strictEqual(privileged.headers['X-Frame-Options'], 'DENY',
+      'nothing legitimately frames the dashboard, setup or admin screens');
+
+    assert.ok(general, 'the remaining pages need a rule too');
+    assert.strictEqual(general.headers['X-Frame-Options'], 'SAMEORIGIN');
+
+    // The two patterns must not overlap, or which one wins depends on how
+    // Vercel merges headers across matching routes — and the answer would be
+    // "whichever, silently".
+    assert.match(general.src, /\(\?!/,
+      'the general rule must exclude the privileged paths by negative lookahead');
+
+    // Both rules carry the full set, since a route that matches sets only its
+    // own headers.
+    for (const route of headerRoutes) {
+      for (const key of [
+        'X-Content-Type-Options',
+        'Referrer-Policy',
+        'Permissions-Policy',
+        'Content-Security-Policy-Report-Only',
+      ]) {
+        assert.ok(route.headers[key], `${route.src} is missing ${key}`);
+      }
+      assert.strictEqual(route.headers['X-Content-Type-Options'], 'nosniff');
+      assert.match(route.headers['Content-Security-Policy-Report-Only'],
+        /checkout\.razorpay\.com/, 'Razorpay Checkout must still be able to load');
+      assert.match(route.headers['Content-Security-Policy-Report-Only'], /object-src 'none'/);
+    }
+
+    // Legacy `routes` and modern `headers`/`rewrites` are mutually exclusive in
+    // Vercel: a top-level `headers` key alongside `routes` fails the build, so
+    // the obvious fix is the one that does not deploy.
+    assert.ok(!config.headers,
+      'a top-level headers key cannot be combined with routes — Vercel rejects it');
+  });
+
   await t.test('a merchant can sign out, and signing out clears the whole session', async () => {
     // There was no sign-out at all on either merchant page: the way to hand a
     // shared counter PC to the next person was to close the tab. This checks

@@ -667,3 +667,48 @@ model PasswordResetToken {
   @@index([merchantId])
   @@index([expiresAt])
 }
+
+/// A published agent build that connected devices may upgrade themselves to.
+///
+/// An update channel is a remote code execution channel: whatever is named here
+/// is what runs, as a service, on every shop's counter PC. So this table is an
+/// audit log rather than a settings row — one row per publication, never
+/// updated in place, recording who published what and when. Rolling back means
+/// publishing the older version again, which leaves the attempt visible instead
+/// of erasing it.
+model AgentRelease {
+  id      String @id
+  /// Semantic version of the build, e.g. "1.4.0". Compared numerically against
+  /// what each device reports, so "1.10.0" is correctly newer than "1.9.0".
+  version String
+
+  /// Where the installer is fetched from. The agent independently refuses any
+  /// host not on its own download allowlist, so a compromised API cannot point
+  /// the fleet at an attacker's binary merely by answering with a URL.
+  downloadUrl String
+  /// Lowercase hex SHA-256 of the installer. The agent verifies the bytes it
+  /// downloaded before executing anything; a mismatch is refused and reported.
+  sha256      String
+
+  /// notify  — devices report that an update exists and do nothing else.
+  /// auto    — devices download, verify and install it themselves.
+  /// Defaults to notify, because the install path cannot be exercised without
+  /// a Windows machine and an untested one must not reach a fleet by default.
+  mode String @default("notify")
+
+  /// Stops devices acting on this release without publishing another, for when
+  /// a bad build is noticed mid-rollout.
+  paused Boolean @default(false)
+
+  /// What changed, shown in the tray so a shop owner knows why it restarted.
+  notes String?
+
+  /// The operator who published it. Not a foreign key: the audit record must
+  /// outlive the account.
+  publishedBy      String?
+  publishedByEmail String?
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}

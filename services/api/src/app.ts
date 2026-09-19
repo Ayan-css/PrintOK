@@ -22,6 +22,8 @@ import {
 } from './configDownloadToken';
 import {
   PLAN_CATALOGUE, PLAN_TIERS, getPlan, platformFeeFor,
+  compareAgentVersions, isValidSha256, isAllowedReleaseUrl,
+  AGENT_RELEASE_HOSTS, AgentUpdateManifest, AgentUpdateMode,
   DEFAULT_PLAN_TIER, DEFAULT_PLATFORM_FEE_BPS,
   PAYMENT_GATEWAY_FEE_BPS, PAYMENT_GATEWAY_LABEL, calculateShopNetCents,
   wasPaidThroughGateway,
@@ -2412,6 +2414,185 @@ export function createApp(
         accountId: shop.razorpayAccountId,
         status: live.status || shop.razorpayAccountStatus,
         routeEnabled: routeService.isEnabled,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * What build this device should be running.
+   *
+   * Polled by paired agents. The answer is deliberately thin — a version, a
+   * URL, a hash and what to do about it — because this is the one response in
+   * the API that decides what code executes on a shop's counter PC.
+   *
+   * Three things this endpoint does NOT do, each on purpose:
+   *
+   *   - It never serves the installer itself. The agent fetches that from the
+   *     published URL and checks it against its own download allowlist, so a
+   *     server that has been compromised cannot hand the fleet a binary merely
+   *     by answering this call.
+   *   - It never tells a device to downgrade. Only a strictly newer version is
+   *     offered, so publishing an old row by mistake cannot roll a fleet
+   *     backwards onto a build with a known defect.
+   *   - It answers upToDate when nothing is published, rather than erroring.
+   *     An agent whose update check fails must keep printing.
+   */
+  app.get('/api/agent/update-manifest', async (req: Request, res: Response) => {
+    const identity = await authenticateAgent(storage, req, res);
+    if (!identity) return;
+
+    try {
+      const release = await storage.getActiveAgentRelease();
+      const reported = String(req.headers['x-agent-version'] || '').trim();
+
+      // Paused stops a rollout mid-flight without publishing another row, for
+      // when a bad build is noticed after it has reached some of the fleet.
+      if (!release || release.paused) {
+        return res.json({ upToDate: true } satisfies AgentUpdateManifest);
+      }
+
+      if (compareAgentVersions(release.version, reported) <= 0) {
+        return res.json({ upToDate: true } satisfies AgentUpdateManifest);
+      }
+
+      return res.json({
+        upToDate: false,
+        version: release.version,
+        downloadUrl: release.downloadUrl,
+        sha256: release.sha256,
+        mode: release.mode,
+        ...(release.notes ? { notes: release.notes } : {}),
+      } satisfies AgentUpdateManifest);
+    } catch (err: any) {
+      // An update check that fails must never stop a shop printing, so this is
+      // an "up to date" rather than a 500 the agent has to interpret.
+      console.error('[Agent update] Could not build a manifest:', err?.message || err);
+      return res.json({ upToDate: true } satisfies AgentUpdateManifest);
+    }
+  });
+
+  /**
+   * Publishes a build for the fleet to run.
+   *
+   * Owner-only, and deliberately the narrowest admin route in the file: it is
+   * the one that decides what executes on other people's computers. The URL is
+   * checked against AGENT_RELEASE_HOSTS and the hash against the shape the
+   * agent will verify, so a pasted wrong link or a truncated digest is refused
+   * here rather than distributed and then refused 200 times.
+   */
+  app.post('/api/admin/agent-releases', async (req: Request, res: Response) => {
+    const admin = await authenticateAdmin(req, res);
+    if (!admin) return;
+
+    // Owner-only, checked here the way shop deletion checks it. Publishing a
+    // build decides what runs on other people's computers, which is not a
+    // read-only operator's call.
+    if (admin.role !== 'owner') {
+      return res.status(403).json({
+        error: 'Only an owner can publish an agent build.',
+      });
+    }
+
+    try {
+      const { version, downloadUrl, sha256, mode, paused, notes } = req.body || {};
+
+      const cleanVersion = String(version || '').trim();
+      if (!/^\d+(\.\d+){1,3}$/.test(cleanVersion)) {
+        return res.status(400).json({
+          error: 'A version looks like 1.4.0 — numbers and dots only, so it can be compared against what each device reports.',
+        });
+      }
+
+      const cleanUrl = String(downloadUrl || '').trim();
+      if (!isAllowedReleaseUrl(cleanUrl)) {
+        return res.status(400).json({
+          error:
+            'The installer must be an https:// URL on a published release host ' +
+            `(${AGENT_RELEASE_HOSTS.join(', ')}). Agents refuse anything else anyway.`,
+        });
+      }
+
+      const cleanHash = String(sha256 || '').trim().toLowerCase();
+      if (!isValidSha256(cleanHash)) {
+        return res.status(400).json({
+          error:
+            'A SHA-256 is 64 hex characters. Agents verify the installer against it and refuse ' +
+            'a mismatch, so a wrong digest means nothing installs.',
+        });
+      }
+
+      const cleanMode: AgentUpdateMode = mode === 'auto' ? 'auto' : 'notify';
+
+      // Refuse to publish a build older than the one already out. Rolling
+      // forward is a decision; rolling a fleet backwards by mistyping a version
+      // is an accident, and this is where it is cheapest to catch.
+      const current = await storage.getActiveAgentRelease();
+      if (current && compareAgentVersions(cleanVersion, current.version) < 0 && req.body?.force !== true) {
+        return res.status(409).json({
+          error:
+            `Version ${cleanVersion} is older than the published ${current.version}. ` +
+            'If you mean to roll the fleet back, send force: true.',
+        });
+      }
+
+      const release = await storage.publishAgentRelease({
+        version: cleanVersion,
+        downloadUrl: cleanUrl,
+        sha256: cleanHash,
+        mode: cleanMode,
+        paused: paused === true,
+        notes: notes ? String(notes).slice(0, 500) : undefined,
+        publishedBy: admin.sub,
+        publishedByEmail: admin.email,
+      });
+
+      logOps('warn', 'agent.release_published', {
+        version: release.version, mode: release.mode, paused: release.paused, by: admin.sub,
+      });
+
+      return res.status(201).json({ release });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /** Which devices are on which build, and what has been published. */
+  app.get('/api/admin/agent-releases', async (req: Request, res: Response) => {
+    const admin = await authenticateAdmin(req, res);
+    if (!admin) return;
+
+    try {
+      const [active, history, fleet] = await Promise.all([
+        storage.getActiveAgentRelease(),
+        storage.listAgentReleases(20),
+        storage.listAgentFleet(),
+      ]);
+
+      // Grouped by what each device reports, because the useful question is
+      // "how much of the fleet has taken it", not "list 200 rows".
+      const byVersion = new Map<string, number>();
+      for (const device of fleet) {
+        const key = device.agentVersion || 'unknown';
+        byVersion.set(key, (byVersion.get(key) || 0) + 1);
+      }
+
+      const outdated = active
+        ? fleet.filter((d) => compareAgentVersions(active.version, d.agentVersion || '') > 0)
+        : [];
+
+      return res.json({
+        active: active ?? null,
+        history,
+        fleet: {
+          total: fleet.length,
+          outdated: outdated.length,
+          byVersion: [...byVersion.entries()]
+            .map(([version, count]) => ({ version, count }))
+            .sort((a, b) => compareAgentVersions(b.version, a.version)),
+          devices: fleet,
+        },
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });

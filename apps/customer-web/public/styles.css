@@ -4878,3 +4878,38 @@ body::before {
   font-size: 12px;
   opacity: 0.85;
 }
+
+/* Agent release form. Reuses .plan-usage for the version breakdown, so the
+   fleet panel and the plan card read as one system rather than two. */
+.admin-release-form {
+  border-top: 1px solid var(--color-border);
+  margin-top: 14px;
+  padding-top: 12px;
+}
+
+.admin-release-form summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.admin-release-form form {
+  margin-top: 12px;
+  gap: 10px;
+}
+
+.admin-release-form label {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.grid-span-2 {
+  grid-column: 1 / -1;
+}
+
+.checkbox-row {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+}

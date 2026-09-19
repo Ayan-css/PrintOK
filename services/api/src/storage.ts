@@ -248,6 +248,32 @@ export interface StoredIdempotencyRecord {
   expiresAt: string;
 }
 
+export interface AgentReleaseRecord {
+  id: string;
+  version: string;
+  downloadUrl: string;
+  sha256: string;
+  mode: 'notify' | 'auto';
+  paused: boolean;
+  notes?: string;
+  publishedBy?: string;
+  publishedByEmail?: string;
+  createdAt: string;
+}
+
+export interface AgentFleetEntry {
+  deviceId: string;
+  deviceName?: string;
+  printerId: string;
+  printerName?: string;
+  shopId: string;
+  shopName?: string;
+  agentVersion?: string;
+  osVersion?: string;
+  lastSeenAt?: string;
+  status: string;
+}
+
 export interface IStorageProvider {
   calculateChecksum(content: string | Buffer): string;
   createShop(
@@ -273,6 +299,15 @@ export interface IStorageProvider {
    * credential the same escape route.
    */
   rotatePrinterApiKey(printerId: string): Promise<{ apiKey: string } | undefined>;
+
+  /** The release devices are currently told to run, or undefined if none. */
+  getActiveAgentRelease(): Promise<AgentReleaseRecord | undefined>;
+  /** Publishes a release. Never updates in place: each publication is a row. */
+  publishAgentRelease(release: Omit<AgentReleaseRecord, 'id' | 'createdAt'>): Promise<AgentReleaseRecord>;
+  /** Recent publications, newest first, for the audit view. */
+  listAgentReleases(limit?: number): Promise<AgentReleaseRecord[]>;
+  /** Every paired device with the version it last reported. */
+  listAgentFleet(): Promise<AgentFleetEntry[]>;
   /** Printers belonging to a shop, for the dashboard after sign-in. */
   listPrintersForShop(shopId: string): Promise<Printer[]>;
   /**
@@ -709,6 +744,49 @@ export class MemoryStorage implements IStorageProvider {
 
   public async getPrinter(id: string): Promise<Printer | undefined> {
     return this.printers.get(id);
+  }
+
+  private agentReleases: AgentReleaseRecord[] = [];
+
+  public async getActiveAgentRelease(): Promise<AgentReleaseRecord | undefined> {
+    return this.agentReleases[this.agentReleases.length - 1];
+  }
+
+  public async publishAgentRelease(
+    release: Omit<AgentReleaseRecord, 'id' | 'createdAt'>
+  ): Promise<AgentReleaseRecord> {
+    const record: AgentReleaseRecord = {
+      ...release,
+      id: `rel_${crypto.randomBytes(6).toString('hex')}`,
+      createdAt: new Date().toISOString(),
+    };
+    this.agentReleases.push(record);
+    return record;
+  }
+
+  public async listAgentReleases(limit = 20): Promise<AgentReleaseRecord[]> {
+    return [...this.agentReleases].reverse().slice(0, limit);
+  }
+
+  public async listAgentFleet(): Promise<AgentFleetEntry[]> {
+    const out: AgentFleetEntry[] = [];
+    for (const device of this.agentDevices.values()) {
+      const printer = this.printers.get(device.printerId);
+      const shop = printer ? this.shops.get(printer.shopId) : undefined;
+      out.push({
+        deviceId: device.id,
+        deviceName: device.deviceName,
+        printerId: device.printerId,
+        printerName: printer?.printerName,
+        shopId: printer?.shopId ?? '',
+        shopName: shop?.name,
+        agentVersion: device.agentVersion,
+        osVersion: device.osVersion,
+        lastSeenAt: device.lastSeenAt,
+        status: device.status,
+      });
+    }
+    return out;
   }
 
   public async rotatePrinterApiKey(printerId: string): Promise<{ apiKey: string } | undefined> {

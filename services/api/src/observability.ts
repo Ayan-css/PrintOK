@@ -85,7 +85,11 @@ export type OpsEvent =
   | 'agent.rejected'
   | 'route.transfer_failed'
   | 'plan.limit_reached'
-  | 'email.failed';
+  | 'email.failed'
+  // Publishing a build decides what executes on every shop's counter PC, so it
+  // is logged at warn regardless of outcome: this is the line an incident
+  // review looks for first.
+  | 'agent.release_published';
 
 /**
  * Emits one structured line.

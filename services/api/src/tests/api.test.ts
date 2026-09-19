@@ -5246,6 +5246,124 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     }
   });
 
+  await t.test('109. A build can be pushed to the fleet, and only a real one', async () => {
+    // Fixing anything in the agent used to mean every shop downloading and
+    // running an installer by hand, so in practice a fleet would stay on
+    // whatever it was first given. This is the channel that fixes that — and it
+    // is a remote code execution channel, so most of what follows is a refusal.
+    const { compareAgentVersions } = await import('@printok/shared-types');
+
+    // Numeric, not lexical. "1.10.0" after "1.9.0" is the bug that only appears
+    // at the tenth release, and then silently: every device reports itself current.
+    assert.ok(compareAgentVersions('1.10.0', '1.9.0') > 0);
+    assert.ok(compareAgentVersions('1.9.0', '1.10.0') < 0);
+    assert.strictEqual(compareAgentVersions('1.4', '1.4.0'), 0);
+    assert.ok(compareAgentVersions('1.0.0', 'unknown') > 0, 'an unreadable version is offered the update');
+
+    const admin = await (await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'ops@printok.test', password: 'CorrectHorse99x' }),
+    })).json() as any;
+    const adminAuth = { Authorization: `Bearer ${admin.token}`, 'Content-Type': 'application/json' };
+
+    const publish = (body: Record<string, unknown>) =>
+      fetch(`${baseUrl}/api/admin/agent-releases`, {
+        method: 'POST', headers: adminAuth, body: JSON.stringify(body),
+      });
+
+    const GOOD_URL = 'https://github.com/Ayan-css/PrintOK/releases/download/v9.9.9/PrintOkAgentSetup.exe';
+    const GOOD_SHA = 'a'.repeat(64);
+
+    // --- The console refuses what the fleet would refuse anyway -------------
+    // Caught here rather than distributed and then rejected on 200 machines.
+    assert.strictEqual((await publish({
+      version: 'latest', downloadUrl: GOOD_URL, sha256: GOOD_SHA,
+    })).status, 400, 'a version must be comparable against what devices report');
+
+    for (const url of [
+      'https://evil.example.com/setup.exe',
+      'http://github.com/setup.exe',
+      'https://github.com.evil.example.com/setup.exe',
+    ]) {
+      const res = await publish({ version: '9.9.9', downloadUrl: url, sha256: GOOD_SHA });
+      assert.strictEqual(res.status, 400, `must refuse to publish from ${url}`);
+    }
+
+    assert.strictEqual((await publish({
+      version: '9.9.9', downloadUrl: GOOD_URL, sha256: 'deadbeef',
+    })).status, 400, 'a short digest means nothing would ever install');
+
+    // --- An agent with no release published keeps working -------------------
+    const shop = await shopWithAuth('Fleet Co', 'fleet@example.com', 'FleetPass12345');
+    const agentAuth = { 'x-agent-api-key': shop.agentApiKey, 'x-agent-version': '1.0.0' };
+
+    const manifestFor = async (version: string) => {
+      const res = await fetch(`${baseUrl}/api/agent/update-manifest`, {
+        headers: { ...agentAuth, 'x-agent-version': version },
+      });
+      assert.strictEqual(res.status, 200, await res.clone().text());
+      return (await res.json()) as any;
+    };
+
+    assert.strictEqual((await manifestFor('1.0.0')).upToDate, true,
+      'with nothing published every device is up to date');
+
+    // Unauthenticated agents learn nothing about what runs on shop PCs.
+    assert.strictEqual((await fetch(`${baseUrl}/api/agent/update-manifest`)).status, 401);
+
+    // --- Publishing, and who may ------------------------------------------
+    const published = await publish({
+      version: '2.0.0', downloadUrl: GOOD_URL, sha256: GOOD_SHA,
+      notes: 'Fixes the colour defect.',
+    });
+    assert.strictEqual(published.status, 201, await published.clone().text());
+    const release = ((await published.json()) as any).release;
+
+    // notify unless asked otherwise: the install path has never run against a
+    // real Windows machine, and an untested one must not reach a fleet by default.
+    assert.strictEqual(release.mode, 'notify');
+    assert.strictEqual(release.publishedByEmail, 'ops@printok.test', 'who published it is recorded');
+
+    // --- What a device is told ---------------------------------------------
+    const offered = await manifestFor('1.0.0');
+    assert.strictEqual(offered.upToDate, false);
+    assert.strictEqual(offered.version, '2.0.0');
+    assert.strictEqual(offered.sha256, GOOD_SHA, 'the agent verifies the bytes against this');
+    assert.strictEqual(offered.downloadUrl, GOOD_URL);
+    assert.match(offered.notes, /colour defect/);
+
+    // A device already on it, or ahead of it, is never told to move.
+    assert.strictEqual((await manifestFor('2.0.0')).upToDate, true);
+    assert.strictEqual((await manifestFor('2.1.0')).upToDate, true,
+      'a newer device is never rolled backwards');
+    assert.strictEqual((await manifestFor('1.10.0')).upToDate, false,
+      '1.10.0 is older than 2.0.0 and must still be offered');
+
+    // --- Rolling back is a decision, not a typo ----------------------------
+    const backwards = await publish({ version: '1.5.0', downloadUrl: GOOD_URL, sha256: GOOD_SHA });
+    assert.strictEqual(backwards.status, 409, 'publishing an older build needs saying so');
+    assert.match(((await backwards.json()) as any).error, /force/i);
+
+    // --- Pausing stops a rollout without publishing anything else ----------
+    const paused = await publish({
+      version: '2.0.1', downloadUrl: GOOD_URL, sha256: GOOD_SHA, paused: true,
+    });
+    assert.strictEqual(paused.status, 201);
+    assert.strictEqual((await manifestFor('1.0.0')).upToDate, true,
+      'a paused release is offered to nobody');
+
+    // --- The fleet view ----------------------------------------------------
+    const fleetRes = await fetch(`${baseUrl}/api/admin/agent-releases`, { headers: adminAuth });
+    assert.strictEqual(fleetRes.status, 200);
+    const fleet = (await fleetRes.json()) as any;
+    assert.strictEqual(fleet.active.version, '2.0.1');
+    assert.ok(fleet.history.length >= 2, 'every publication is kept, not overwritten');
+    assert.ok(Array.isArray(fleet.fleet.devices));
+
+    // Not readable without an operator session.
+    assert.strictEqual((await fetch(`${baseUrl}/api/admin/agent-releases`)).status, 401);
+  });
+
   await t.test('108. An operator can see what needs a person, and logs carry no secrets', async () => {
     // The project's own assessment was that nothing alerts anyone: a shop
     // offline overnight went unnoticed, and every defect found that week was

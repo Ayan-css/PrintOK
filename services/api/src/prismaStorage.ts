@@ -14,6 +14,7 @@ import {
   AdminUserRecord, ShopPlan, AdminShopSummary, AdminOverview,
   ShopRemovalSafety, ShopRemovalResult, AdminAuditEntry,
   ContactEnquiryRecord, CreateContactEnquiryInput, MerchantUserRecord, ShopProfileUpdate,
+  AgentReleaseRecord, AgentFleetEntry,
 } from './storage';
 import { S3StorageService } from './s3Storage';
 import { calculateJobPriceBreakdown, calculateGridPriceBreakdown, buildDefaultRateCard, DEFAULT_PRICING_CONFIG } from './pricing';
@@ -914,6 +915,79 @@ export class PrismaStorage implements IStorageProvider {
 
   public async countAdminUsers(): Promise<number> {
     return this.prisma.adminUser.count();
+  }
+
+  public async getActiveAgentRelease(): Promise<AgentReleaseRecord | undefined> {
+    // The newest row wins. Rolling back means publishing the older version
+    // again, so a rollback is itself a record rather than an erasure.
+    const row = await this.prisma.agentRelease.findFirst({ orderBy: { createdAt: 'desc' } });
+    return row ? this.toAgentRelease(row) : undefined;
+  }
+
+  public async publishAgentRelease(
+    release: Omit<AgentReleaseRecord, 'id' | 'createdAt'>
+  ): Promise<AgentReleaseRecord> {
+    const row = await this.prisma.agentRelease.create({
+      data: {
+        id: `rel_${crypto.randomBytes(6).toString('hex')}`,
+        version: release.version,
+        downloadUrl: release.downloadUrl,
+        sha256: release.sha256,
+        mode: release.mode,
+        paused: release.paused,
+        notes: release.notes ?? null,
+        publishedBy: release.publishedBy ?? null,
+        publishedByEmail: release.publishedByEmail ?? null,
+      },
+    });
+    return this.toAgentRelease(row);
+  }
+
+  public async listAgentReleases(limit = 20): Promise<AgentReleaseRecord[]> {
+    const rows = await this.prisma.agentRelease.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(Math.max(1, limit), 100),
+    });
+    return rows.map((r) => this.toAgentRelease(r));
+  }
+
+  private toAgentRelease(row: any): AgentReleaseRecord {
+    return {
+      id: row.id,
+      version: row.version,
+      downloadUrl: row.downloadUrl,
+      sha256: row.sha256,
+      mode: row.mode === 'auto' ? 'auto' : 'notify',
+      paused: Boolean(row.paused),
+      notes: row.notes ?? undefined,
+      publishedBy: row.publishedBy ?? undefined,
+      publishedByEmail: row.publishedByEmail ?? undefined,
+      createdAt: row.createdAt.toISOString(),
+    };
+  }
+
+  public async listAgentFleet(): Promise<AgentFleetEntry[]> {
+    // One query with the two joins it needs, rather than a device query
+    // followed by a printer lookup per row: the fleet view is the page an
+    // operator opens while something is wrong, and it must not itself be slow.
+    const rows = await this.prisma.agentDevice.findMany({
+      include: { printer: { include: { shop: true } } },
+      orderBy: { lastSeenAt: 'desc' },
+      take: 500,
+    });
+
+    return rows.map((d) => ({
+      deviceId: d.id,
+      deviceName: d.deviceName ?? undefined,
+      printerId: d.printerId,
+      printerName: (d as any).printer?.printerName ?? undefined,
+      shopId: (d as any).printer?.shopId ?? '',
+      shopName: (d as any).printer?.shop?.name ?? undefined,
+      agentVersion: d.agentVersion ?? undefined,
+      osVersion: d.osVersion ?? undefined,
+      lastSeenAt: d.lastSeenAt ? d.lastSeenAt.toISOString() : undefined,
+      status: d.status,
+    }));
   }
 
   public async rotatePrinterApiKey(printerId: string): Promise<{ apiKey: string } | undefined> {

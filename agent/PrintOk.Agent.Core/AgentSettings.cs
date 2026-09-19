@@ -74,13 +74,71 @@ public sealed class AgentSettings
     /// against a local API, and a loopback address is not somewhere a remote
     /// attacker can receive anything.
     /// </summary>
-    private static readonly string[] AllowedHosts =
+    private static readonly string[] BuiltInAllowedHosts =
     {
         "prinok-api.onrender.com",
         "localhost",
         "127.0.0.1",
         "::1",
     };
+
+    /// <summary>
+    /// A machine-level environment variable naming further hosts this agent may
+    /// use, comma separated.
+    ///
+    /// The API host was a compiled-in constant, which made it unchangeable
+    /// without rebuilding and reinstalling the agent on every shop PC. Moving
+    /// PrintOk to a different domain would have stopped every installed agent
+    /// printing, because each one would refuse the new address by design.
+    ///
+    /// Deliberately an environment variable and NOT the agent's settings file.
+    /// The threat this allowlist exists for is someone at an unlocked counter
+    /// retyping the Server box in the tray window — no admin rights, no trace.
+    /// Reading extra hosts from the same file that box writes to would hand
+    /// that person the bypass. A machine-level environment variable needs
+    /// administrator access to set, which is the installer's job and not a
+    /// passer-by's.
+    ///
+    /// It only ever ADDS to the built-in list. There is no way to configure the
+    /// allowlist away entirely.
+    /// </summary>
+    public const string AllowedHostsVariable = "PRINTOK_ALLOWED_API_HOSTS";
+
+    /// <summary>
+    /// Every host this agent will talk to: the built-in set plus anything an
+    /// administrator has added.
+    ///
+    /// Read on each call rather than cached, so a host added by an installer is
+    /// picked up without restarting the service.
+    /// </summary>
+    public static IReadOnlyList<string> AllowedHosts()
+    {
+        string? configured = Environment.GetEnvironmentVariable(AllowedHostsVariable);
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            return BuiltInAllowedHosts;
+        }
+
+        var hosts = new List<string>(BuiltInAllowedHosts);
+
+        foreach (string entry in configured.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            // Accept a bare host or a whole URL, because whoever sets this will
+            // have the base URL to hand and pasting it is the obvious mistake.
+            string host = Uri.TryCreate(entry, UriKind.Absolute, out Uri? parsed) ? parsed.Host : entry;
+
+            // A wildcard would let one careless entry admit an attacker's
+            // subdomain, so each host is named in full.
+            if (host.Contains('*') || host.Contains('/') || host.Length == 0)
+            {
+                continue;
+            }
+
+            hosts.Add(host);
+        }
+
+        return hosts;
+    }
 
     /// <summary>
     /// Whether the agent may be pointed at this address, and why not.
@@ -114,7 +172,7 @@ public sealed class AgentSettings
             return "Only https:// addresses are allowed, so print jobs cannot be read in transit.";
         }
 
-        if (!AllowedHosts.Contains(uri.Host, StringComparer.OrdinalIgnoreCase))
+        if (!AllowedHosts().Contains(uri.Host, StringComparer.OrdinalIgnoreCase))
         {
             return
                 $"This agent will not connect to '{uri.Host}'. Customers' documents pass through "
