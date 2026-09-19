@@ -4844,3 +4844,37 @@ body::before {
   color: var(--color-text-secondary);
   padding: 22px 10px;
 }
+
+/* Plan usage against allowance. Follows .settlement-notice: same border token,
+   same radius, same colour-mix tinting, so the plan card reads as part of the
+   dashboard rather than as something bolted onto it. */
+.plan-usage {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.plan-usage-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+}
+
+/* Only the over-limit case is coloured. A shop inside its allowance needs no
+   decoration, and tinting every row would make the one that matters invisible. */
+.plan-usage-row.is-over {
+  border-color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+}
+
+.plan-usage-note {
+  flex-basis: 100%;
+  font-size: 12px;
+  opacity: 0.85;
+}

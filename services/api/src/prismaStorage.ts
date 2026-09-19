@@ -6,6 +6,7 @@ import {
   FailureCategory,
   ShopContactDetails, ShopPortalConfig, DEFAULT_PORTAL_CONFIG, ShopRateCard,
   parseOrientation,
+  platformFeeFor, DEFAULT_PLATFORM_FEE_BPS,
 } from '@printok/shared-types';
 import {
   IStorageProvider, CreateJobOptions, TransitionMeta, StateChangeResult, StoredIdempotencyRecord,
@@ -1060,7 +1061,7 @@ export class PrismaStorage implements IStorageProvider {
         jobsLast30Days: recentByShop.get(shop.id) ?? 0,
         grossRevenueCents,
         // Commission is derived from the shop's own rate, not a global constant.
-        commissionCents: Math.round((grossRevenueCents * shop.commissionBps) / 10_000),
+        commissionCents: platformFeeFor(grossRevenueCents, shop.commissionBps),
         jobsRequiringAction: actionByShop.get(shop.id) ?? 0,
         lastJobAt: lastJobByShop.get(shop.id)?.toISOString(),
         archivedAt: shop.archivedAt?.toISOString(),
@@ -1684,7 +1685,11 @@ export class PrismaStorage implements IStorageProvider {
     for (const row of paidByShop) {
       const gross = row._sum.totalPriceInCents ?? 0;
       grossRevenueCents += gross;
-      commissionCents += Math.round((gross * (rateByShop.get(row.shopId) ?? 500)) / 10_000);
+      // The fallback was a hardcoded 500 bps — a 5% rate that has never been in
+      // any published catalogue, applied to any shop whose row was missing from
+      // the rate map. It inflated the platform's own revenue figure rather than
+      // any shop's bill, which is why nothing caught it.
+      commissionCents += platformFeeFor(gross, rateByShop.get(row.shopId) ?? DEFAULT_PLATFORM_FEE_BPS);
     }
 
     return {

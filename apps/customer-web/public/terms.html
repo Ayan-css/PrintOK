@@ -141,28 +141,32 @@
           <li>You give the payout details that are yours, and keep them current.</li>
         </ul>
 
-        <h3>4.2 Plans and service fees</h3>
+        <h3>4.2 Plans and platform fees</h3>
         <p>
-          Every paid order carries a <strong>PrintOk service fee</strong>, charged as a percentage of
-          the order value and set by your plan:
+          Every paid order carries a <strong>PrintOk platform fee</strong>, charged as a percentage
+          of the order value and set by your plan. It is ours, and it is separate from the payment
+          gateway's charge described below:
         </p>
         <table class="legal-table">
           <thead>
-            <tr><th>Plan</th><th>Monthly</th><th>Service fee</th><th>Orders / month</th><th>Printers</th></tr>
+            <tr><th>Plan</th><th>Monthly</th><th>PrintOk platform fee</th><th>Orders / month</th><th>Printers</th><th>Staff</th></tr>
           </thead>
           <tbody>
-            <tr><td>Start</td><td>Free</td><td>8.0%</td><td>100</td><td>1</td></tr>
-            <tr><td>Smart</td><td>₹79</td><td>4.0%</td><td>500</td><td>2</td></tr>
-            <tr><td>Business</td><td>₹249</td><td>2.0%</td><td>2,500</td><td>5</td></tr>
-            <tr><td>Enterprise</td><td>₹599</td><td>0.5%</td><td>10,000</td><td>10</td></tr>
+            <tr><td>Free</td><td>Free</td><td>2.0%</td><td>100</td><td>1</td><td>1</td></tr>
+            <tr><td>Starter</td><td>₹149</td><td>1.0%</td><td>1,000</td><td>2</td><td>3</td></tr>
+            <tr><td>Business</td><td>₹349</td><td>0.5%</td><td>4,000</td><td>5</td><td>8</td></tr>
+            <tr><td>Pro</td><td>₹699</td><td>0%</td><td>10,000</td><td>10</td><td>15</td></tr>
           </tbody>
         </table>
         <p>
           <strong>Payment gateway charges are separate</strong> and are deducted before settlement.
           Razorpay's charge is currently <strong>2.36%</strong> of the order value (inclusive of GST)
           and is set by Razorpay, not by us. On a ₹100 order on the Business plan you therefore
-          receive <strong>₹95.64</strong>: ₹100 less the ₹2.00 service fee and the ₹2.36 gateway
-          charge. The figure shown in your dashboard payout summary is the figure you are paid.
+          receive <strong>₹97.14</strong>: ₹100 less the ₹0.50 platform fee and the ₹2.36 gateway
+          charge. On the Free plan the same order returns <strong>₹95.64</strong>, because the
+          platform fee is ₹2.00 rather than ₹0.50. Note that on Pro, where the PrintOk platform
+          fee is nil, Razorpay's charge still applies — a 0% platform fee does not mean nothing is
+          deducted. The figure shown in your dashboard payout summary is the figure you are paid.
         </p>
         <p>
           We may change plan pricing or fees on <strong>30 days' notice</strong> by email. Orders

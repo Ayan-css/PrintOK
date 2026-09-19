@@ -607,8 +607,8 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const shopsRes = await fetch(`${baseUrl}/api/admin/shops`, { headers: auth });
     const { shops } = (await shopsRes.json()) as any;
     assert.ok(shops.length >= 1);
-    assert.strictEqual(shops[0].plan.planTier, 'start', 'new shops default to the entry tier');
-    assert.strictEqual(shops[0].plan.commissionBps, 800);
+    assert.strictEqual(shops[0].plan.planTier, 'free', 'new shops default to the entry tier');
+    assert.strictEqual(shops[0].plan.commissionBps, 200, 'Free publishes a 2% platform fee');
 
     // Login works with the stored hash, and is case-insensitive on email.
     const login = await fetch(`${baseUrl}/api/admin/login`, {
@@ -682,12 +682,12 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const moved = await fetch(`${baseUrl}/api/admin/shops/${shopId}/plan`, {
       method: 'PATCH',
       headers: auth,
-      body: JSON.stringify({ planTier: 'enterprise' }),
+      body: JSON.stringify({ planTier: 'pro' }),
     });
     assert.strictEqual(moved.status, 200);
     const movedPlan = ((await moved.json()) as any).plan;
-    assert.strictEqual(movedPlan.planTier, 'enterprise');
-    assert.strictEqual(movedPlan.commissionBps, 50, 'Enterprise publishes a 0.5% fee');
+    assert.strictEqual(movedPlan.planTier, 'pro');
+    assert.strictEqual(movedPlan.commissionBps, 0, 'Pro publishes no platform fee at all');
   });
 
   await t.test('16. Cash jobs wait for the shop, and are not auto-approved', async () => {
@@ -1021,14 +1021,23 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     // The agreed catalogue, asserted explicitly rather than against itself, so
     // an accidental edit to the numbers fails here.
     assert.deepStrictEqual(
-      plans.map((p: any) => [p.tier, p.monthlyPriceCents, p.commissionBps, p.maxOrdersPerMonth, p.maxPrinters]),
+      plans.map((p: any) => [
+        p.tier, p.monthlyPriceCents, p.platformFeeBps, p.maxOrdersPerMonth, p.maxPrinters, p.maxStaff,
+      ]),
       [
-        ['start', 0, 800, 100, 1],
-        ['smart', 7900, 400, 500, 2],
-        ['business', 24900, 200, 2500, 5],
-        ['enterprise', 59900, 50, 10000, 10],
+        ['free', 0, 200, 100, 1, 1],
+        ['starter', 14900, 100, 1000, 2, 3],
+        ['business', 34900, 50, 4000, 5, 8],
+        ['pro', 69900, 0, 10000, 10, 15],
       ]
     );
+
+    // The old field name is carried alongside so a landing page cached from
+    // before the rename still renders a rate. Same number, never a second source.
+    for (const p of plans) {
+      assert.strictEqual(p.commissionBps, p.platformFeeBps,
+        `${p.tier}: the compatibility alias must equal the real rate`);
+    }
 
     assert.strictEqual(plans.filter((p: any) => p.popular).length, 1, 'exactly one tier is featured');
     assert.strictEqual(plans.find((p: any) => p.popular).tier, 'business');
@@ -1046,31 +1055,93 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     for (const plan of PLAN_CATALOGUE) {
       const block = new RegExp(
         `tier: '${plan.tier}'[\\s\\S]{0,400}?monthlyPriceCents: ${plan.monthlyPriceCents}` +
-        `[\\s\\S]{0,80}?commissionBps: ${plan.commissionBps}` +
+        `[\\s\\S]{0,80}?platformFeeBps: ${plan.platformFeeBps}` +
         `[\\s\\S]{0,120}?maxOrdersPerMonth: ${plan.maxOrdersPerMonth}` +
-        `[\\s\\S]{0,60}?maxPrinters: ${plan.maxPrinters}`
+        `[\\s\\S]{0,60}?maxPrinters: ${plan.maxPrinters}` +
+        `[\\s\\S]{0,60}?maxStaff: ${plan.maxStaff}`
       );
       assert.match(landing, block,
         `landing.js fallback for '${plan.tier}' does not match PLAN_CATALOGUE`);
     }
   });
 
-  await t.test('25. A shop keeps order value minus gateway and service fees', async () => {
-    // ₹100 order on Business: 2.36% gateway, 2% service fee.
+  await t.test('25. A shop keeps order value minus gateway and platform fees', async () => {
+    // ₹100 order on Free: 2.36% gateway, 2% PrintOk platform fee.
     const { gatewayFeeCents, serviceFeeCents, netCents } = calculateShopNetCents(10000, 200);
     assert.strictEqual(gatewayFeeCents, 236);
     assert.strictEqual(serviceFeeCents, 200);
     assert.strictEqual(netCents, 9564);
 
-    // On Enterprise the gateway takes nearly five times what PrintOk does,
+    // On Business the gateway now takes nearly five times what PrintOk does,
     // which is exactly why the landing page states it separately.
-    const enterprise = calculateShopNetCents(10000, 50);
-    assert.strictEqual(enterprise.serviceFeeCents, 50);
-    assert.ok(enterprise.gatewayFeeCents > enterprise.serviceFeeCents * 4);
+    const business = calculateShopNetCents(10000, 50);
+    assert.strictEqual(business.serviceFeeCents, 50);
+    assert.ok(business.gatewayFeeCents > business.serviceFeeCents * 4);
+
+    // Pro: PrintOk takes nothing, and the gateway still does. "0% platform fee"
+    // must never be read as "nothing is deducted", which is why this is pinned.
+    const pro = calculateShopNetCents(10000, 0);
+    assert.strictEqual(pro.serviceFeeCents, 0, 'Pro pays no platform fee');
+    assert.strictEqual(pro.gatewayFeeCents, 236, "Razorpay's charge is unaffected by our plan");
+    assert.strictEqual(pro.netCents, 9764);
+
+    // Cash never touched Razorpay, so no gateway fee may be deducted from it —
+    // but the platform fee still applies, because the order still used PrintOk.
+    const cash = calculateShopNetCents(10000, 200, { gatewayFeeApplies: false });
+    assert.strictEqual(cash.gatewayFeeCents, 0);
+    assert.strictEqual(cash.serviceFeeCents, 200);
 
     // Fees never exceed the order.
-    const tiny = calculateShopNetCents(100, 800);
+    const tiny = calculateShopNetCents(100, 200);
     assert.ok(tiny.netCents >= 0);
+  });
+
+  await t.test('25b. The platform fee is the plan rate, on the order, rounded once', async () => {
+    const { platformFeeFor, PLAN_CATALOGUE: cat } = await import('@printok/shared-types');
+
+    const rate = (tier: string) => cat.find((p) => p.tier === tier)!.platformFeeBps;
+
+    // ₹100 order, every tier. These are the figures the plan page promises.
+    assert.strictEqual(platformFeeFor(10000, rate('free')), 200);     // ₹2.00
+    assert.strictEqual(platformFeeFor(10000, rate('starter')), 100);  // ₹1.00
+    assert.strictEqual(platformFeeFor(10000, rate('business')), 50);  // ₹0.50
+    assert.strictEqual(platformFeeFor(10000, rate('pro')), 0);        // nil
+
+    // ₹1,000 order, every tier.
+    assert.strictEqual(platformFeeFor(100000, rate('free')), 2000);    // ₹20
+    assert.strictEqual(platformFeeFor(100000, rate('starter')), 1000); // ₹10
+    assert.strictEqual(platformFeeFor(100000, rate('business')), 500); // ₹5
+    assert.strictEqual(platformFeeFor(100000, rate('pro')), 0);
+
+    // Rounding: half away from zero, once, at the order level. A ₹40.10 order
+    // at 0.5% is 20.05 paise and bills as 20.
+    assert.strictEqual(platformFeeFor(4010, 50), 20);
+    assert.strictEqual(platformFeeFor(4030, 50), 20);  // 20.15 -> 20
+    assert.strictEqual(platformFeeFor(4110, 50), 21);  // 20.55 -> 21
+
+    // Pro is exactly zero, not merely small. A rounding scheme that let a 0%
+    // tier bill a paise would make the headline false.
+    for (const gross of [1, 99, 100, 4000, 999999]) {
+      assert.strictEqual(platformFeeFor(gross, 0), 0, `Pro must bill nothing on ${gross}`);
+    }
+
+    // Degenerate inputs bill nothing rather than NaN, which would otherwise
+    // reach the ledger and the shop's settlement.
+    assert.strictEqual(platformFeeFor(0, 200), 0);
+    assert.strictEqual(platformFeeFor(-100, 200), 0);
+    assert.strictEqual(platformFeeFor(Number.NaN, 200), 0);
+    assert.strictEqual(platformFeeFor(10000, Number.NaN), 0);
+
+    // The fee is computed per order and never on a running total, so a month is
+    // the sum of what each order was actually charged. These two genuinely
+    // disagree, which is the point: three ₹1 orders at 0.5% bill 1 paise each
+    // and 3 in total, where the same ₹3 billed once would be 2. The ledger has
+    // to match the orders, not a recomputation of them.
+    const orders = [100, 100, 100];
+    const summed = orders.reduce((t, g) => t + platformFeeFor(g, 50), 0);
+    assert.strictEqual(summed, 3, 'each order rounds on its own');
+    assert.strictEqual(platformFeeFor(300, 50), 2, 'the same gross billed once would differ');
+    assert.notStrictEqual(summed, platformFeeFor(300, 50));
   });
 
   await t.test('26. Route splits the order and never silently pretends to', async () => {
@@ -1116,8 +1187,8 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     // was told and PrintOk lost the difference.
     for (const plan of PLAN_CATALOGUE) {
       const gross = 10000;
-      const told = calculateShopNetCents(gross, plan.commissionBps);
-      const { transfer } = route.buildTransfer('acc_test', gross, plan.commissionBps, 'job_x');
+      const told = calculateShopNetCents(gross, plan.platformFeeBps);
+      const { transfer } = route.buildTransfer('acc_test', gross, plan.platformFeeBps, 'job_x');
 
       assert.strictEqual(
         transfer.amount, told.netCents,
@@ -2264,6 +2335,14 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(claimRes.status, 201, `claim must succeed: ${JSON.stringify(claim)}`);
     const owner = { Authorization: `Bearer ${claim.token}`, 'Content-Type': 'application/json' };
 
+    // Free covers one sign-in account and the owner is it, so this shop needs a
+    // plan with seats before it can have staff at all. Moved deliberately
+    // rather than by loosening the cap: the cap is the behaviour under test in
+    // 104b, and a fixture must not quietly disable it.
+    await storage.updateShopPlan(reg.shop.id, {
+      planTier: 'starter', commissionBps: 100, planStatus: 'active',
+    });
+
     const added = await fetch(`${baseUrl}/api/shops/${reg.shop.id}/staff`, {
       method: 'POST', headers: owner,
       body: JSON.stringify({ email: 'helper@example.com', name: 'Helper', password: 'HelperPass123' }),
@@ -2922,7 +3001,17 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
   }
 
   /** A shop with a merchant session, which most of the tests below need. */
-  async function shopWithAuth(name: string, email: string, password: string) {
+  /**
+   * A registered, claimed shop.
+   *
+   * `tier` exists because the Free plan covers one sign-in account and the
+   * owner is that account — so a fixture that needs a staff member needs a plan
+   * with seats. Moving the fixture onto one is the honest fix; loosening the
+   * cap so the tests pass would delete the behaviour the cap exists for.
+   */
+  async function shopWithAuth(
+    name: string, email: string, password: string, tier?: string
+  ) {
     const reg = await (await fetch(`${baseUrl}/api/shops/register`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ shopName: name, ownerEmail: email, printerName: `${name} printer` }),
@@ -2938,6 +3027,17 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     // unexplained 401 from whichever route the test happened to call first.
     assert.strictEqual(claimRes.status, 201, `claim for ${name} failed: ${JSON.stringify(claim)}`);
     assert.ok(claim.token, `claim for ${name} returned no token`);
+
+    if (tier) {
+      const { getPlan: planFor } = await import('@printok/shared-types');
+      const definition = planFor(tier);
+      assert.ok(definition, `no such plan: ${tier}`);
+      await storage.updateShopPlan(reg.shop.id, {
+        planTier: tier as any,
+        commissionBps: definition!.platformFeeBps,
+        planStatus: 'active',
+      });
+    }
 
     return {
       shopId: reg.shop.id,
@@ -3608,7 +3708,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     // Not after a retention window — immediately, on the transition itself.
     // The windows in the sweep exist only for documents that never reach this
     // point: an abandoned checkout, or a paid job a shop never printed.
-    const shop = await shopWithAuth('Purge Now Co', 'purgenow@example.com', 'PurgeNowPass1');
+    const shop = await shopWithAuth('Purge Now Co', 'purgenow@example.com', 'PurgeNowPass1', 'starter');
 
     const created = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -3670,7 +3770,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
   // ---------------------------------------------------------------------------
 
   await t.test('87. Staff cannot change shop-wide money policy or extract the agent key', async () => {
-    const shop = await shopWithAuth('Staff Limits Co', 'stafflimits@example.com', 'StaffLimitsPass1');
+    const shop = await shopWithAuth('Staff Limits Co', 'stafflimits@example.com', 'StaffLimitsPass1', 'starter');
 
     const added = await fetch(`${baseUrl}/api/shops/${shop.shopId}/staff`, {
       method: 'POST', headers: shop.auth,
@@ -3711,7 +3811,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
   });
 
   await t.test('88. The legacy agent key can be rotated', async () => {
-    const shop = await shopWithAuth('Rotate Co', 'rotate@example.com', 'RotatePass123');
+    const shop = await shopWithAuth('Rotate Co', 'rotate@example.com', 'RotatePass123', 'starter');
     const original = shop.agentApiKey;
 
     // The old key works.
@@ -3969,7 +4069,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     // saying they belong to the money screen, which had no such route either.
     // So a shop that signed up without them could never say where to be paid,
     // and the payout summary read a upiId that stayed null for ever.
-    const shop = await shopWithAuth('Payout Co', 'payout@example.com', 'PayoutPass123');
+    const shop = await shopWithAuth('Payout Co', 'payout@example.com', 'PayoutPass123', 'starter');
 
     const before = await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/payout-details`, {
       headers: shop.auth,
@@ -4052,14 +4152,22 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     // There is no merchant-facing plan route at all: planTier is settable only
     // by an operator, so a shop owner cannot see what they are on, what it is
     // costing them, or what the alternatives would be.
-    const shop = await shopWithAuth('Plan Co', 'plan@example.com', 'PlanOwnerPass123');
+    const shop = await shopWithAuth('Plan Co', 'plan@example.com', 'PlanOwnerPass123', 'starter');
 
     const res = await fetch(`${baseUrl}/api/shops/${shop.shopId}/plan`, { headers: shop.auth });
     assert.strictEqual(res.status, 200);
     const plan = (await res.json()) as any;
 
-    assert.strictEqual(plan.current.tier, 'start');
-    assert.strictEqual(plan.current.commissionBps, 800);
+    assert.strictEqual(plan.current.tier, 'starter');
+    assert.strictEqual(plan.current.platformFeeBps, 100);
+    assert.strictEqual(plan.current.commissionBps, 100, 'the compatibility alias agrees');
+
+    // Usage is reported against the allowance, from the same counter the server
+    // refuses against — so the dashboard cannot show room the server denies.
+    assert.strictEqual(plan.usage.printers.limit, 2);
+    assert.strictEqual(plan.usage.staff.limit, 3);
+    assert.strictEqual(plan.usage.orders.limit, 1000);
+    assert.strictEqual(plan.usage.staff.used, 1, 'the owner occupies a seat');
     assert.ok(Array.isArray(plan.options) && plan.options.length > 1);
     assert.ok(plan.options.some((o: any) => o.isCurrent), 'the current tier is marked');
 
@@ -4604,7 +4712,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     // that backwards double-counts the GST.
     assert.strictEqual(stored?.gatewayFeeCents, 100);
     assert.strictEqual(stored?.gatewayTaxCents, 18);
-    assert.strictEqual(stored?.commissionBpsUsed, 800, 'the rate at the time, recorded');
+    assert.strictEqual(stored?.commissionBpsUsed, 200, 'the rate at the time, recorded');
     assert.strictEqual(stored?.grossCents, job.totalPriceInCents);
 
     const before = await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/earnings`, {
@@ -4634,7 +4742,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     })).json() as any;
     const sameRow = after.rows.find((r: any) => r.jobId === job.id);
 
-    assert.strictEqual(sameRow.commissionBps, 800, 'the old order keeps its old rate');
+    assert.strictEqual(sameRow.commissionBps, 200, 'the old order keeps its old rate');
     assert.strictEqual(
       sameRow.platformCommissionCents,
       row.platformCommissionCents,
@@ -4664,12 +4772,12 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
       }),
     });
 
-    // Start allows 100 a month, which is impractical to reach here — so the
+    // Free allows 100 a month, which is impractical to reach here — so the
     // shop is put on a tier whose cap this test can actually cross. Rather than
     // inventing one, the check is driven by the catalogue's own figure.
     const { PLAN_CATALOGUE: catalogue } = await import('@printok/shared-types');
-    const start = catalogue.find((p: any) => p.tier === 'start')!;
-    assert.ok(start.maxOrdersPerMonth > 0, 'the cap comes from the catalogue');
+    const free = catalogue.find((p: any) => p.tier === 'free')!;
+    assert.ok(free.maxOrdersPerMonth > 0, 'the cap comes from the catalogue');
 
     // First order is fine.
     assert.strictEqual((await order()).status, 201);
@@ -4680,22 +4788,22 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const usage = await storage.countShopUsage(shop.shopId);
     assert.ok(usage.ordersThisMonth >= 1, 'the order counted toward the month');
 
-    // Enterprise has the highest cap, so a shop on it is never refused here.
+    // Pro has the highest cap, so a shop on it is never refused here.
     await fetch(`${baseUrl}/api/admin/shops/${shop.shopId}/plan`, {
-      method: 'PATCH', headers: adminAuth, body: JSON.stringify({ planTier: 'enterprise' }),
+      method: 'PATCH', headers: adminAuth, body: JSON.stringify({ planTier: 'pro' }),
     });
     assert.strictEqual((await order()).status, 201, 'a high tier keeps selling');
 
     // And the file-size ceiling is the plan's, not the platform's 50MB body cap.
     await fetch(`${baseUrl}/api/admin/shops/${shop.shopId}/plan`, {
-      method: 'PATCH', headers: adminAuth, body: JSON.stringify({ planTier: 'start' }),
+      method: 'PATCH', headers: adminAuth, body: JSON.stringify({ planTier: 'free' }),
     });
 
     const oversized = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         printerId: shop.printerId, fileName: 'big.pdf',
-        // Start accepts 10MB; this is comfortably past it while staying well
+        // Free accepts 10MB; this is comfortably past it while staying well
         // inside the 50MB body limit.
         fileBase64: Buffer.concat([makePdf(1), Buffer.alloc(12 * 1024 * 1024, 0x20)]).toString('base64'),
         copies: 1, isColor: false, isDuplex: false, paperSize: 'A4',
@@ -4703,6 +4811,114 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     });
     assert.strictEqual(oversized.status, 402, 'over the plan ceiling is a payment-required, not a 400');
     assert.match(((await oversized.json()) as any).error, /plan accepts up to 10MB/i);
+  });
+
+  await t.test('104b. Seats are capped, a downgrade deletes nothing, and Route agrees', async () => {
+    const { PLAN_CATALOGUE: cat, platformFeeFor: fee } = await import('@printok/shared-types');
+    const planOf = (tier: string) => cat.find((p) => p.tier === tier)!;
+
+    const admin = await (await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'ops@printok.test', password: 'CorrectHorse99x' }),
+    })).json() as any;
+    const adminAuth = { Authorization: `Bearer ${admin.token}`, 'Content-Type': 'application/json' };
+
+    const setPlan = (shopId: string, planTier: string) => fetch(
+      `${baseUrl}/api/admin/shops/${shopId}/plan`,
+      { method: 'PATCH', headers: adminAuth, body: JSON.stringify({ planTier }) }
+    );
+
+    const shop = await shopWithAuth('Seats Co', 'seats@example.com', 'SeatsPass12345');
+    const addStaff = (email: string) => fetch(`${baseUrl}/api/shops/${shop.shopId}/staff`, {
+      method: 'POST', headers: shop.auth,
+      body: JSON.stringify({ email, password: 'SeatStaffPass123' }),
+    });
+
+    // --- Free: one account, and the owner is it. ---------------------------
+    assert.strictEqual(planOf('free').maxStaff, 1);
+    const refused = await addStaff('seat1@example.com');
+    assert.strictEqual(refused.status, 402, 'a seat beyond the plan is payment-required, not forbidden');
+    assert.match(((await refused.json()) as any).error, /Free plan covers 1 staff account/i);
+
+    // --- Upgrade: Free -> Starter opens seats immediately. -----------------
+    assert.strictEqual((await setPlan(shop.shopId, 'starter')).status, 200);
+    assert.strictEqual(planOf('starter').maxStaff, 3);
+    assert.strictEqual((await addStaff('seat1@example.com')).status, 201, 'upgrading opens the seat');
+    assert.strictEqual((await addStaff('seat2@example.com')).status, 201);
+
+    // Owner + 2 = 3, which is the whole allowance.
+    const full = await addStaff('seat3@example.com');
+    assert.strictEqual(full.status, 402, 'the third seat is the last');
+
+    // The upgrade also moved the platform fee to the new tier's published rate.
+    const afterUpgrade = await (await fetch(
+      `${baseUrl}/api/shops/${shop.shopId}/plan`, { headers: shop.auth })).json() as any;
+    assert.strictEqual(afterUpgrade.current.platformFeeBps, planOf('starter').platformFeeBps);
+    assert.strictEqual(afterUpgrade.usage.staff.used, 3);
+    assert.strictEqual(afterUpgrade.usage.staff.limit, 3);
+    assert.strictEqual(afterUpgrade.usage.staff.over, false);
+
+    // --- Downgrade: nothing is deleted. -----------------------------------
+    // This is the part that must never be "clean up the excess". Three people
+    // sign in to this shop; removing two because the plan shrank would lock
+    // real staff out of a till mid-shift, with no warning and no undo.
+    assert.strictEqual((await setPlan(shop.shopId, 'free')).status, 200);
+
+    const staffAfter = await (await fetch(
+      `${baseUrl}/api/shops/${shop.shopId}/staff`, { headers: shop.auth })).json() as any;
+    const active = staffAfter.staff.filter((u: any) => u.status === 'active');
+    assert.strictEqual(active.length, 3, 'a downgrade removes nobody');
+
+    // But it does stop the shop adding a fourth, and says which side of the
+    // line it is on rather than repeating the "upgrade to add" message.
+    const overLimit = await addStaff('seat4@example.com');
+    assert.strictEqual(overLimit.status, 402);
+    const overBody = (await overLimit.json()) as any;
+    assert.match(overBody.error, /Nothing has been removed/i);
+    assert.match(overBody.error, /remove 3/i, 'it says how many, not just that there are too many');
+
+    // And the dashboard reports the same over-limit state the server enforces.
+    const afterDowngrade = await (await fetch(
+      `${baseUrl}/api/shops/${shop.shopId}/plan`, { headers: shop.auth })).json() as any;
+    assert.strictEqual(afterDowngrade.usage.staff.used, 3);
+    assert.strictEqual(afterDowngrade.usage.staff.limit, 1);
+    assert.strictEqual(afterDowngrade.usage.staff.over, true, 'the shop is told it is over');
+
+    // --- The printer branch of the same guard. -----------------------------
+    // Exercised directly because no route adds a printer to an existing shop
+    // yet, so there is nothing to POST to. Registration creates exactly one,
+    // which every plan covers.
+    const usage = await storage.countShopUsage(shop.shopId);
+    assert.strictEqual(usage.printers, 1, 'registration creates one printer');
+    assert.ok(usage.printers <= planOf('free').maxPrinters, 'and one is within even Free');
+
+    // --- Route uses the plan's fee, not a hardcoded rate. ------------------
+    const { RazorpayRouteService } = await import('../razorpayRoute');
+    const route = new RazorpayRouteService();
+
+    for (const tier of ['free', 'starter', 'business', 'pro'] as const) {
+      const plan = planOf(tier);
+      const gross = 10000; // ₹100
+      const { transfer, serviceFeeCents } = route.buildTransfer(
+        'acc_test', gross, plan.platformFeeBps, 'job_seat'
+      );
+      assert.strictEqual(serviceFeeCents, fee(gross, plan.platformFeeBps),
+        `${tier}: Route must charge the plan's fee`);
+
+      // Razorpay's charge is deducted whatever our plan says. On Pro our fee is
+      // nil and the gateway's is not, which is the case most likely to be
+      // misread as "nothing is deducted".
+      assert.strictEqual(transfer.amount, gross - serviceFeeCents - 236,
+        `${tier}: the gateway fee is deducted independently of the platform fee`);
+    }
+
+    assert.strictEqual(
+      route.buildTransfer('acc_test', 10000, planOf('pro').platformFeeBps, 'j').serviceFeeCents, 0,
+      'Pro pays PrintOk nothing per order'
+    );
+
+    // Route stays gated regardless of any of the above.
+    assert.strictEqual(route.isEnabled, false, 'pricing changes must not switch Route on');
   });
 
   // ---------------------------------------------------------------------------

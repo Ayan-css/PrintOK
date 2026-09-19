@@ -1725,10 +1725,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!res.ok) return; // staff accounts get 403, which is correct
         const plan = await res.json();
 
+        // `platformFeeBps` is the current name; `commissionBps` is the same
+        // number under the old one, so a page still cached from before the
+        // rename renders a rate rather than "NaN%".
+        const feeBps = plan.current.platformFeeBps ?? plan.current.commissionBps ?? 0;
+
         const badge = document.getElementById('planCurrentBadge');
         if (badge) {
           badge.textContent =
-            `${plan.current.name || plan.current.tier} · ${(plan.current.commissionBps / 100).toFixed(2)}%`;
+            `${plan.current.name || plan.current.tier} · ${(feeBps / 100).toFixed(2)}%`;
         }
 
         const month = document.getElementById('planThisMonth');
@@ -1736,8 +1741,41 @@ document.addEventListener('DOMContentLoaded', () => {
           month.textContent = plan.thisMonth.orders
             ? `This month: ${plan.thisMonth.orders} paid order${plan.thisMonth.orders === 1 ? '' : 's'}, `
               + `${formatRupees(plan.thisMonth.grossCents)} collected, `
-              + `${formatRupees(plan.thisMonth.commissionCents)} in PrintOk commission.`
+              + `${formatRupees(plan.thisMonth.commissionCents)} in PrintOk platform fees.`
             : 'No paid orders yet this month.';
+        }
+
+        // Usage against the allowance, from the same counter the server
+        // enforces against. `over` is the downgrade case: nothing is removed
+        // when a plan shrinks, so a shop can legitimately sit above a limit and
+        // is told rather than cut off.
+        const usageBox = document.getElementById('planUsage');
+        if (usageBox) {
+          if (!plan.usage) {
+            usageBox.textContent = '';
+          } else {
+            const rows = [
+              ['Orders this month', plan.usage.orders],
+              ['Printers', plan.usage.printers],
+              ['Staff', plan.usage.staff],
+            ];
+            usageBox.replaceChildren(...rows.map(([label, u]) => {
+              const row = document.createElement('div');
+              row.className = 'plan-usage-row' + (u.over ? ' is-over' : '');
+              const name = document.createElement('span');
+              name.textContent = label;
+              const value = document.createElement('strong');
+              value.textContent = `${u.used.toLocaleString('en-IN')} / ${u.limit.toLocaleString('en-IN')}`;
+              row.append(name, value);
+              if (u.over) {
+                const note = document.createElement('span');
+                note.className = 'plan-usage-note';
+                note.textContent = 'over your plan — nothing has been removed, but you cannot add more';
+                row.append(note);
+              }
+              return row;
+            }));
+          }
         }
 
         const options = document.getElementById('planOptions');
@@ -1747,8 +1785,10 @@ document.addEventListener('DOMContentLoaded', () => {
               <div class="pricing-type">${escapeHtml(o.name)}${o.isCurrent ? ' · current' : ''}</div>
               <div class="pricing-rate">${formatRupees(o.monthlyPriceCents)} <span>/ month</span></div>
               <div class="pricing-meta">
-                ${(o.commissionBps / 100).toFixed(2)}% commission •
-                ${o.maxOrdersPerMonth} orders • ${o.maxPrinters} printer${o.maxPrinters === 1 ? '' : 's'}
+                ${((o.platformFeeBps ?? o.commissionBps ?? 0) / 100).toFixed(2)}% platform fee •
+                ${o.maxOrdersPerMonth.toLocaleString('en-IN')} orders •
+                ${o.maxPrinters} printer${o.maxPrinters === 1 ? '' : 's'} •
+                ${o.maxStaff ?? 1} staff
               </div>
               <div class="pricing-meta" style="font-weight: 600;">
                 At your volume: ${formatRupees(o.wouldCostCents)}/month

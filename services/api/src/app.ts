@@ -21,7 +21,8 @@ import {
   CONFIG_DOWNLOAD_SCOPE,
 } from './configDownloadToken';
 import {
-  PLAN_CATALOGUE, PLAN_TIERS, getPlan,
+  PLAN_CATALOGUE, PLAN_TIERS, getPlan, platformFeeFor,
+  DEFAULT_PLAN_TIER, DEFAULT_PLATFORM_FEE_BPS,
   PAYMENT_GATEWAY_FEE_BPS, PAYMENT_GATEWAY_LABEL, calculateShopNetCents,
   wasPaidThroughGateway,
   Printer, PrintJob, ShopPortalConfig, CUSTOMER_NAME_MAX, CUSTOMER_PHONE_MAX,
@@ -121,7 +122,7 @@ async function checkOrderAllowance(
   shopId: string
 ): Promise<{ allowed: true } | { allowed: false; error: string; usage: unknown }> {
   const plan = await storage.getShopPlan(shopId);
-  const tier = plan?.planTier ?? 'start';
+  const tier = plan?.planTier ?? DEFAULT_PLAN_TIER;
   const definition = getPlan(tier);
   if (!definition) return { allowed: true };
 
@@ -139,6 +140,59 @@ async function checkOrderAllowance(
       ordersThisMonth: usage.ordersThisMonth,
       maxOrdersPerMonth: definition.maxOrdersPerMonth,
     },
+  };
+}
+
+/**
+ * Whether a shop may add another printer or staff account.
+ *
+ * Separate from checkOrderAllowance because the failure mode is different. An
+ * order cap is reached by trading and clears next month; a printer or seat cap
+ * is reached by choice and clears only by upgrading or by removing something.
+ *
+ * **Downgrades never delete anything.** A shop that drops from Business to
+ * Starter with five printers keeps all five: they are paired devices that
+ * somebody is printing on, and silently unpairing them would stop a shop
+ * trading without warning. What it cannot do is add a sixth. So the check is
+ * on *adding*, never on *having*, and the message says which side of that line
+ * the shop is on.
+ *
+ * NOTE on the 'printer' branch: nothing calls it yet, because no route adds a
+ * printer to an existing shop — createPrinter runs only during registration,
+ * for the shop's first one. It is implemented and tested so that the route
+ * which eventually allows a second printer has a guard to call, rather than
+ * shipping the cap and the bypass together. Wire it there when that route
+ * exists.
+ */
+async function checkResourceAllowance(
+  storage: IStorageProvider,
+  shopId: string,
+  resource: 'printer' | 'staff'
+): Promise<{ allowed: true } | { allowed: false; error: string; usage: unknown }> {
+  const plan = await storage.getShopPlan(shopId);
+  const tier = plan?.planTier ?? DEFAULT_PLAN_TIER;
+  const definition = getPlan(tier);
+  if (!definition) return { allowed: true };
+
+  const usage = await storage.countShopUsage(shopId);
+  const [current, limit, noun] = resource === 'printer'
+    ? [usage.printers, definition.maxPrinters, 'printer']
+    : [usage.staff, definition.maxStaff, 'staff account'];
+
+  if (current < limit) return { allowed: true };
+
+  // Distinguish "you are full" from "you are already over", because the second
+  // can only happen after a downgrade and needs a different instruction.
+  const over = current > limit;
+
+  return {
+    allowed: false,
+    error: over
+      ? `This shop has ${current} ${noun}s but the ${definition.name} plan covers ${limit}. ` +
+        `Nothing has been removed — remove ${current - limit + 1} to add another, or upgrade the plan.`
+      : `The ${definition.name} plan covers ${limit} ${noun}${limit === 1 ? '' : 's'}, and this shop ` +
+        `has ${current}. Upgrade from the dashboard to add another.`,
+    usage: { tier, [resource === 'printer' ? 'printers' : 'staff']: current, limit },
   };
 }
 
@@ -1523,11 +1577,17 @@ export function createApp(
     const merchant = await authenticateMerchant(req, res, { requireOwner: true });
     if (!merchant) return;
 
-    // Seats are deliberately NOT capped here. PLAN_CATALOGUE carries orders per
-    // month and printers, and no seat figure at all — so enforcing one would
-    // mean inventing a commercial number and applying it to live shops. Orders
-    // and file size are enforced because the catalogue actually states them.
-    // Add maxStaffSeats to the catalogue and this becomes a three-line check.
+    // Seats are capped now that the catalogue states a figure. It did not
+    // before, and enforcing an invented number against live shops would have
+    // been worse than not enforcing one.
+    const seats = await checkResourceAllowance(storage, req.params.shopId, 'staff');
+    if (!seats.allowed) {
+      // 402, not 403: "your plan does not cover this" is an upgrade prompt, not
+      // a refusal of permission. The owner is allowed to do this — their plan
+      // is what is in the way.
+      logOps('info', 'plan.limit_reached', { shopId: req.params.shopId, resource: 'staff' });
+      return res.status(402).json({ error: seats.error, usage: seats.usage });
+    }
 
     try {
       const { email, name, password } = req.body || {};
@@ -2366,11 +2426,16 @@ export function createApp(
    */
   app.get('/api/plans', (_req: Request, res: Response) => {
     return res.json({
-      plans: PLAN_CATALOGUE,
+      // `commissionBps` is the same number as `platformFeeBps`, carried so a
+      // landing page still cached from before the rename renders a rate rather
+      // than "undefined%". One source, two names, for one deploy.
+      plans: PLAN_CATALOGUE.map((p) => ({ ...p, commissionBps: p.platformFeeBps })),
       paymentGateway: {
         feeBps: PAYMENT_GATEWAY_FEE_BPS,
         label: PAYMENT_GATEWAY_LABEL,
-        note: 'Charged by Razorpay and deducted before settlement. Separate from the PrintOk service fee.',
+        note:
+          'Charged by Razorpay and deducted before settlement. Separate from the PrintOk ' +
+          'platform fee, and not absorbed by PrintOk.',
       },
     });
   });
@@ -2675,7 +2740,7 @@ export function createApp(
       // explicitly, so a shop is never left paying its old rate on a new plan.
       const resolvedCommission = commissionBps !== undefined
         ? Number(commissionBps)
-        : (planTier ? getPlan(planTier)?.commissionBps : undefined);
+        : (planTier ? getPlan(planTier)?.platformFeeBps : undefined);
 
       const plan = await storage.updateShopPlan(req.params.shopId, {
         planTier, commissionBps: resolvedCommission, planStatus,
@@ -3206,7 +3271,7 @@ export function createApp(
       // And the plan's file-size ceiling. The 50MB body limit is a platform
       // bound that applies to everyone; this is the one the shop is paying for.
       const shopPlan = await storage.getShopPlan(printer.shopId);
-      const maxUpload = PLAN_MAX_UPLOAD_BYTES[shopPlan?.planTier ?? 'start'] ?? PLAN_MAX_UPLOAD_BYTES.start;
+      const maxUpload = PLAN_MAX_UPLOAD_BYTES[shopPlan?.planTier ?? DEFAULT_PLAN_TIER] ?? PLAN_MAX_UPLOAD_BYTES.start;
       if (fileBuffer.length > maxUpload) {
         return res.status(402).json({
           error:
@@ -3616,7 +3681,7 @@ export function createApp(
         // does — so this records the estimate and marks it as one. The webhook
         // overwrites it with the real numbers when it arrives.
         const plan = await storage.getShopPlan(result.job.shopId);
-        await freezeFeeLedger(storage, result.job, plan?.commissionBps ?? 800);
+        await freezeFeeLedger(storage, result.job, plan?.commissionBps ?? DEFAULT_PLATFORM_FEE_BPS);
 
         logOps('info', 'payment.confirmed', {
           jobId: result.job.id, shopId: result.job.shopId,
@@ -3809,7 +3874,7 @@ export function createApp(
         // `tax`.
         const entity = body?.payload?.payment?.entity;
         const plan = await storage.getShopPlan(paymentResult.job.shopId);
-        await freezeFeeLedger(storage, paymentResult.job, plan?.commissionBps ?? 800, {
+        await freezeFeeLedger(storage, paymentResult.job, plan?.commissionBps ?? DEFAULT_PLATFORM_FEE_BPS, {
           feeCents: entity?.fee,
           taxCents: entity?.tax,
         });
@@ -4130,13 +4195,17 @@ export function createApp(
 
     try {
       const { shopId } = req.params;
-      const [plan, recent] = await Promise.all([
+      // Usage comes from the same counter the limits are enforced against, so
+      // the dashboard cannot show "3 / 3 staff" while the server is refusing a
+      // fourth for a different reason.
+      const [plan, recent, usage] = await Promise.all([
         storage.getShopPlan(shopId),
         storage.getRecentJobsForShop(shopId, 500),
+        storage.countShopUsage(shopId),
       ]);
 
-      const commissionBps = plan?.commissionBps ?? 800;
-      const currentTier = plan?.planTier ?? 'start';
+      const commissionBps = plan?.commissionBps ?? DEFAULT_PLATFORM_FEE_BPS;
+      const currentTier = plan?.planTier ?? DEFAULT_PLAN_TIER;
 
       // This calendar month's paid orders, so the comparison below is about
       // this shop rather than an illustration.
@@ -4148,19 +4217,44 @@ export function createApp(
       );
       const grossCents = paidThisMonth.reduce((t, j) => t + (j.totalPriceInCents || 0), 0);
 
+      const definition = getPlan(currentTier);
+
       return res.json({
         current: {
           tier: currentTier,
+          platformFeeBps: commissionBps,
+          // Retained under the old name for a dashboard served from cache
+          // mid-deploy; both are the same value, never two sources.
           commissionBps,
           status: plan?.planStatus ?? 'active',
-          ...(getPlan(currentTier) ? { name: getPlan(currentTier)!.name } : {}),
+          ...(definition ? { name: definition.name } : {}),
+          ...(definition ? { monthlyPriceCents: definition.monthlyPriceCents } : {}),
         },
+        // What the shop is using against what its plan covers. `over` is the
+        // downgrade case: existing resources are never removed, so a shop can
+        // legitimately sit above a limit and needs telling rather than cutting off.
+        usage: definition
+          ? {
+              orders: {
+                used: usage.ordersThisMonth, limit: definition.maxOrdersPerMonth,
+                over: usage.ordersThisMonth > definition.maxOrdersPerMonth,
+              },
+              printers: {
+                used: usage.printers, limit: definition.maxPrinters,
+                over: usage.printers > definition.maxPrinters,
+              },
+              staff: {
+                used: usage.staff, limit: definition.maxStaff,
+                over: usage.staff > definition.maxStaff,
+              },
+            }
+          : undefined,
         thisMonth: {
           orders: paidThisMonth.length,
           grossCents,
           // What the shop has paid us in commission so far this month, at its
           // own rate — the number the comparison below is worth reading against.
-          commissionCents: Math.round((grossCents * commissionBps) / 10_000),
+          commissionCents: platformFeeFor(grossCents, commissionBps),
         },
         // Every tier costed against this shop's own volume, so an upgrade is a
         // arithmetic rather than a pitch.
@@ -4168,12 +4262,19 @@ export function createApp(
           tier: p.tier,
           name: p.name,
           monthlyPriceCents: p.monthlyPriceCents,
-          commissionBps: p.commissionBps,
+          platformFeeBps: p.platformFeeBps,
+          // Kept alongside the new name so a dashboard served from cache during
+          // a deploy still renders a rate rather than "undefined%".
+          commissionBps: p.platformFeeBps,
           maxOrdersPerMonth: p.maxOrdersPerMonth,
           maxPrinters: p.maxPrinters,
+          maxStaff: p.maxStaff,
           isCurrent: p.tier === currentTier,
+          // The subscription plus the platform fee. Razorpay's charge is not
+          // added here: it is deducted by Razorpay from the settlement, not
+          // billed by us, and adding it would overstate what PrintOk costs.
           wouldCostCents:
-            p.monthlyPriceCents + Math.round((grossCents * p.commissionBps) / 10_000),
+            p.monthlyPriceCents + platformFeeFor(grossCents, p.platformFeeBps),
         })),
         changeable: false,
         howToChange:
@@ -4200,7 +4301,7 @@ export function createApp(
 
       // The shop's own commission, not a hardcoded 2%: a Start shop pays 8% and
       // was previously shown a figure from a plan it is not on.
-      const commissionBps = plan?.commissionBps ?? 800;
+      const commissionBps = plan?.commissionBps ?? DEFAULT_PLATFORM_FEE_BPS;
 
       // Computed from today's orders rather than from a single revenue
       // aggregate. The aggregate could not distinguish a cash sale from an
@@ -4276,7 +4377,7 @@ export function createApp(
       const inRange = (iso: string) =>
         (!from || iso >= from) && (!to || iso <= `${to}T23:59:59.999Z`);
 
-      const commissionBps = plan?.commissionBps ?? 800;
+      const commissionBps = plan?.commissionBps ?? DEFAULT_PLATFORM_FEE_BPS;
 
       // Only money that actually arrived. A job awaiting payment has earned
       // nothing, and a refunded one has un-earned what it took.

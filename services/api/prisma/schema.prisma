@@ -51,12 +51,20 @@ model Shop {
   /// GST registration number, where the shop has one. Shape-checked only.
   gstin             String?
 
-  /// Subscription tier: start | smart | business | enterprise (PRD 41).
+  /// Subscription tier: free | starter | business | pro.
   /// Canonical definitions live in PLAN_CATALOGUE in @printok/shared-types.
-  planTier      String @default("start")
-  /// PrintOk service fee in basis points (800 = 8.00%). Integer so money
-  /// arithmetic stays exact. Defaults to the tier's published rate.
-  commissionBps Int    @default(800)
+  /// Rows written before 19 Sep 2026 may still read start | smart | enterprise;
+  /// getPlan() accepts both spellings so an unmigrated row still resolves to a
+  /// plan rather than to undefined, which would skip every limit.
+  planTier      String @default("free")
+  /// PrintOk's OWN platform fee in basis points (200 = 2.00%). Integer so money
+  /// arithmetic stays exact. Defaults to the tier's published rate, but may hold
+  /// a rate an operator negotiated, which is why it is stored per shop and not
+  /// read from the catalogue at point of use.
+  ///
+  /// Deliberately NOT the payment gateway's fee: Razorpay's charge is deducted
+  /// by Razorpay and recorded per order in gatewayFeeCents/gatewayTaxCents.
+  commissionBps Int    @default(200)
   /// active | suspended | cancelled
   planStatus    String @default("active")
 

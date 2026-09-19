@@ -169,15 +169,15 @@
           </td>
           <td>
             <select class="form-input form-input--compact" data-plan-tier="${escapeHtml(shop.id)}" aria-label="Plan tier">
-              ${['free', 'starter', 'pro'].map((t) =>
-                `<option value="${t}"${s.plan.planTier === t ? ' selected' : ''}>${t}</option>`).join('')}
+              ${(planTiers.length ? planTiers : [s.plan.planTier]).map((t) =>
+                `<option value="${escapeHtml(t)}"${s.plan.planTier === t ? ' selected' : ''}>${escapeHtml(t)}</option>`).join('')}
             </select>
           </td>
           <td>
             <div class="commission-cell">
               <input type="number" class="form-input form-input--compact" min="0" max="50" step="0.25"
                      value="${(s.plan.commissionBps / 100).toFixed(2)}"
-                     data-commission="${escapeHtml(shop.id)}" aria-label="Commission percent">
+                     data-commission="${escapeHtml(shop.id)}" aria-label="PrintOk platform fee percent">
               <span class="meta-text">%</span>
             </div>
           </td>
@@ -361,13 +361,28 @@
       s.shop.id.toLowerCase().includes(q)));
   }
 
+  /**
+   * Tier ids, from the API rather than from a list kept here.
+   *
+   * This dropdown used to hardcode ['free', 'starter', 'pro'] — three ids that
+   * were not in PLAN_CATALOGUE at all, and no 'business'. Every plan change an
+   * operator made from this console was therefore rejected as an unknown tier,
+   * and the console reloaded without saying why. Read from /api/plans so the
+   * options are whatever the backend will actually accept.
+   */
+  let planTiers = [];
+
   async function loadConsole() {
     try {
       const includeArchived = $('adminShowArchived').checked;
-      const [{ overview }, { shops }] = await Promise.all([
+      const [{ overview }, { shops }, catalogue] = await Promise.all([
         api('/api/admin/overview'),
         api(`/api/admin/shops?includeArchived=${includeArchived}`),
+        // Public, so it needs no operator token; failing here must not take the
+        // whole console down, so an empty list falls back to the shop's own tier.
+        fetch(`${API_BASE}/api/plans`).then((r) => (r.ok ? r.json() : { plans: [] })).catch(() => ({ plans: [] })),
       ]);
+      planTiers = (catalogue.plans || []).map((p) => p.tier);
       allShops = shops;
       renderOverview(overview);
       applyFilter();
@@ -527,7 +542,7 @@
       if (commissionInput) {
         const percent = Number(commissionInput.value);
         if (!Number.isFinite(percent) || percent < 0 || percent > 50) {
-          toast('warning', 'Invalid commission', 'Enter a percentage between 0 and 50.');
+          toast('warning', 'Invalid platform fee', 'Enter a percentage between 0 and 50.');
           return loadConsole();
         }
         return savePlan(commissionInput.getAttribute('data-commission'), {

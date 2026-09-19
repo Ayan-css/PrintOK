@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import {
   Shop, Printer, PrintJob, PaymentState, PrintState, PrinterTelemetry,
   MerchantPricingConfig, MerchantStats, JobEvent, FailureCategory, PlanTier, getPlan,
+  DEFAULT_PLAN_TIER, platformFeeFor,
   ShopContactDetails, ShopPortalConfig, DEFAULT_PORTAL_CONFIG, ShopRateCard, ShopRate,
   PrintOrientation,
 } from '@printok/shared-types';
@@ -1164,9 +1165,9 @@ export class MemoryStorage implements IStorageProvider {
 
   public async getShopPlan(shopId: string): Promise<ShopPlan | undefined> {
     if (!this.shops.has(shopId)) return undefined;
-    const entry = getPlan('start')!;
+    const entry = getPlan(DEFAULT_PLAN_TIER)!;
     return this.shopPlans.get(shopId)
-      || { planTier: 'start', commissionBps: entry.commissionBps, planStatus: 'active' };
+      || { planTier: DEFAULT_PLAN_TIER, commissionBps: entry.platformFeeBps, planStatus: 'active' };
   }
 
   public async updateShopPlan(shopId: string, plan: Partial<ShopPlan>): Promise<ShopPlan | undefined> {
@@ -1216,7 +1217,7 @@ export class MemoryStorage implements IStorageProvider {
         totalJobs: jobs.length,
         jobsLast30Days: jobs.filter((j) => new Date(j.createdAt).getTime() >= cutoff).length,
         grossRevenueCents,
-        commissionCents: Math.round((grossRevenueCents * plan.commissionBps) / 10_000),
+        commissionCents: platformFeeFor(grossRevenueCents, plan.commissionBps),
         jobsRequiringAction: jobs.filter((j) => j.printState === PrintState.RequiresShopAction).length,
         lastJobAt: lastJob,
         archivedAt: this.archivedShops.get(shop.id)?.at,

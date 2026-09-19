@@ -27,8 +27,8 @@
   // ===========================================================================
   const FALLBACK_PLANS = [
     {
-      tier: 'start', name: 'Start', monthlyPriceCents: 0, commissionBps: 800,
-      maxOrdersPerMonth: 100, maxPrinters: 1,
+      tier: 'free', name: 'Free', monthlyPriceCents: 0, platformFeeBps: 200,
+      maxOrdersPerMonth: 100, maxPrinters: 1, maxStaff: 1,
       tagline: 'Put your counter online and see if it works for you.',
       features: [
         'QR poster for your counter',
@@ -39,29 +39,29 @@
       ],
     },
     {
-      tier: 'smart', name: 'Smart', monthlyPriceCents: 7900, commissionBps: 400,
-      maxOrdersPerMonth: 500, maxPrinters: 2,
+      tier: 'starter', name: 'Starter', monthlyPriceCents: 14900, platformFeeBps: 100,
+      maxOrdersPerMonth: 1000, maxPrinters: 2, maxStaff: 3,
       tagline: 'For a shop printing every day.',
-      features: ['Everything in Start', 'Bulk and duplex pricing', 'Revenue analytics', 'Instant payouts'],
+      features: ['Everything in Free', 'Bulk and duplex pricing', 'Revenue analytics', 'A second printer and three sign-ins'],
     },
     {
-      tier: 'business', name: 'Business', monthlyPriceCents: 24900, commissionBps: 200,
-      maxOrdersPerMonth: 2500, maxPrinters: 5,
+      tier: 'business', name: 'Business', monthlyPriceCents: 34900, platformFeeBps: 50,
+      maxOrdersPerMonth: 4000, maxPrinters: 5, maxStaff: 8,
       tagline: 'For a busy counter running several printers.',
-      features: ['Everything in Smart', 'Multiple connected PCs', 'Priority support', 'Onboarding help'],
+      features: ['Everything in Starter', 'Multiple connected PCs', 'Priority support', 'Onboarding help'],
       popular: true,
     },
     {
-      tier: 'enterprise', name: 'Enterprise', monthlyPriceCents: 59900, commissionBps: 50,
-      maxOrdersPerMonth: 10000, maxPrinters: 10,
+      tier: 'pro', name: 'Pro', monthlyPriceCents: 69900, platformFeeBps: 0,
+      maxOrdersPerMonth: 10000, maxPrinters: 10, maxStaff: 15,
       tagline: 'For print shops and multi-counter operations.',
-      features: ['Everything in Business', 'Lowest service fee', 'Highest order volume', 'Dedicated support contact'],
+      features: ['Everything in Business', 'No PrintOk platform fee at all', 'Highest order volume', 'Dedicated support contact'],
     },
   ];
 
   const FALLBACK_GATEWAY = {
     label: 'Razorpay 2% + 18% GST',
-    note: 'Charged by Razorpay and deducted before settlement. Separate from the PrintOk service fee.',
+    note: 'Charged by Razorpay and deducted before settlement. Separate from the PrintOk platform fee.',
   };
 
   function escapeHtml(value) {
@@ -93,12 +93,13 @@
         </div>
 
         <div class="price-commission">
-          ${escapeHtml(percent(plan.commissionBps))} PrintOk service fee per order
+          ${escapeHtml(percent(plan.platformFeeBps ?? plan.commissionBps))} PrintOk platform fee per order
         </div>
 
         <dl class="plan-limits">
           <div><dt>Orders</dt><dd>${plan.maxOrdersPerMonth.toLocaleString('en-IN')}/month</dd></div>
           <div><dt>Printers</dt><dd>${plan.maxPrinters}</dd></div>
+          <div><dt>Staff</dt><dd>${plan.maxStaff ?? 1}</dd></div>
         </dl>
 
         <ul class="price-features">
@@ -120,13 +121,14 @@
 
     const footnote = document.getElementById('pricingFootnote');
     if (footnote) {
-      // Stated plainly: the gateway fee is not ours, and on Enterprise it is
-      // several times larger than our own. A shop finding that out from its
-      // payout instead of this page would rightly feel misled.
+      // Stated plainly: the gateway fee is not ours, and on Pro — where our own
+      // fee is zero — it is the only per-order charge there is. A shop finding
+      // that out from its payout instead of this page would rightly feel misled,
+      // and "0% platform fee" must never be read as "nothing is deducted".
       footnote.textContent =
-        `Payment gateway charges (${gateway.label}) are billed by Razorpay and deducted before ` +
-        'settlement. They are separate from the PrintOk service fee. ' +
-        'The service fee applies only to orders placed through PrintOk.';
+        `Razorpay payment processing charges (${gateway.label}) are separate from the PrintOk ` +
+        'platform fee. They are billed by Razorpay and deducted before settlement — PrintOk ' +
+        'does not absorb them. The platform fee applies only to orders placed through PrintOk.';
     }
   }
 

@@ -226,33 +226,51 @@
             </div>
 
             <div class="grid-2" role="group" aria-label="Subscription plan">
+              <!--
+                These four are PLAN_CATALOGUE, and nothing else may appear here.
+                This block previously offered "Commission-Only 5%", "Growth
+                ₹299" and "Scale ₹599 / Unlimited" — four tiers at four rates,
+                none of which have ever existed in the catalogue. The API also
+                ignores any plan sent at registration, so a shop that picked
+                "Growth" was charged nothing, given the default tier, and never
+                told. Shown as a read-only ladder for that reason: every shop
+                starts on Free because subscription billing is not live, and
+                pretending otherwise is what caused this.
+              -->
               <label class="option-pill active" id="planPillFree" style="text-align: left; padding: 12px;">
                 <input type="radio" name="regPlanSelect" value="free" class="sr-only" checked>
-                <div style="font-weight: 800; font-size: 14px;">🆓 Commission-Only</div>
+                <div style="font-weight: 800; font-size: 14px;">🆓 Free</div>
                 <div style="font-size: 16px; font-weight: 800; color: var(--color-primary);">₹0 <span>/ month</span></div>
-                <div class="meta-text" style="font-size: 10px; margin-top: 4px;">5% Commission • 1 Printer • 25 orders/day</div>
+                <div class="meta-text" style="font-size: 10px; margin-top: 4px;">2% platform fee • 1 printer • 1 staff • 100 orders/month</div>
               </label>
 
               <label class="option-pill" id="planPillStarter" style="text-align: left; padding: 12px;">
-                <input type="radio" name="regPlanSelect" value="starter" class="sr-only">
-                <div style="font-weight: 800; font-size: 14px;">🚀 Starter Plan</div>
+                <input type="radio" name="regPlanSelect" value="starter" class="sr-only" disabled>
+                <div style="font-weight: 800; font-size: 14px;">🚀 Starter</div>
                 <div style="font-size: 16px; font-weight: 800; color: var(--color-primary);">₹149 <span>/ month</span></div>
-                <div class="meta-text" style="font-size: 10px; margin-top: 4px;">2% Commission • 2 Printers • 50 orders/day</div>
+                <div class="meta-text" style="font-size: 10px; margin-top: 4px;">1% platform fee • 2 printers • 3 staff • 1,000 orders/month</div>
               </label>
 
-              <label class="option-pill" id="planPillGrowth" style="text-align: left; padding: 12px;">
-                <input type="radio" name="regPlanSelect" value="growth" class="sr-only">
-                <div style="font-weight: 800; font-size: 14px;">⚡ Growth Plan</div>
-                <div style="font-size: 16px; font-weight: 800; color: var(--color-primary);">₹299 <span>/ month</span></div>
-                <div class="meta-text" style="font-size: 10px; margin-top: 4px;">1% Commission • 5 Printers • 300 orders/day</div>
+              <label class="option-pill" id="planPillBusiness" style="text-align: left; padding: 12px;">
+                <input type="radio" name="regPlanSelect" value="business" class="sr-only" disabled>
+                <div style="font-weight: 800; font-size: 14px;">⚡ Business</div>
+                <div style="font-size: 16px; font-weight: 800; color: var(--color-primary);">₹349 <span>/ month</span></div>
+                <div class="meta-text" style="font-size: 10px; margin-top: 4px;">0.5% platform fee • 5 printers • 8 staff • 4,000 orders/month</div>
               </label>
 
-              <label class="option-pill" id="planPillScale" style="text-align: left; padding: 12px;">
-                <input type="radio" name="regPlanSelect" value="scale" class="sr-only">
-                <div style="font-weight: 800; font-size: 14px;">👑 Scale Plan</div>
-                <div style="font-size: 16px; font-weight: 800; color: var(--color-primary);">₹599 <span>/ month</span></div>
-                <div class="meta-text" style="font-size: 10px; margin-top: 4px;">0% Commission • 10 Printers • Unlimited</div>
+              <label class="option-pill" id="planPillPro" style="text-align: left; padding: 12px;">
+                <input type="radio" name="regPlanSelect" value="pro" class="sr-only" disabled>
+                <div style="font-weight: 800; font-size: 14px;">👑 Pro</div>
+                <div style="font-size: 16px; font-weight: 800; color: var(--color-primary);">₹699 <span>/ month</span></div>
+                <div class="meta-text" style="font-size: 10px; margin-top: 4px;">No platform fee • 10 printers • 15 staff • 10,000 orders/month</div>
               </label>
+
+              <p class="meta-text" style="font-size: 11px; margin-top: 10px;">
+                Every shop starts on <strong>Free</strong>. Paid plans are not yet
+                self-serve — contact support to move, and nothing is charged until
+                you do. Razorpay's payment processing charges are separate from the
+                PrintOk platform fee on every plan.
+              </p>
             </div>
 
             <div class="grid-2" style="margin-top: 14px;">

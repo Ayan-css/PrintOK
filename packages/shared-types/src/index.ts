@@ -995,18 +995,42 @@ export interface JobQueuedEvent {
  * Anything duplicating these numbers elsewhere is a bug waiting to happen.
  * =========================================================================== */
 
-export type PlanTier = 'start' | 'smart' | 'business' | 'enterprise';
+export type PlanTier = 'free' | 'starter' | 'business' | 'pro';
+
+/**
+ * Tier ids as they were published before 19 Sep 2026, and what each became.
+ *
+ * Kept because shop rows written before the migration carry the old id, and a
+ * row that has not been migrated yet must still resolve to a plan rather than
+ * to `undefined` — which would silently disable every limit for that shop.
+ * `getPlan` accepts either spelling for exactly that reason.
+ */
+export const LEGACY_PLAN_TIERS: Readonly<Record<string, PlanTier>> = {
+  start: 'free',
+  smart: 'starter',
+  business: 'business',
+  enterprise: 'pro',
+};
 
 export interface PlanDefinition {
   tier: PlanTier;
   name: string;
   /** Subscription price in paise. */
   monthlyPriceCents: number;
-  /** PrintOk service fee in basis points (800 = 8.00%). */
-  commissionBps: number;
+  /**
+   * PrintOk's own platform fee, in basis points (200 = 2.00%).
+   *
+   * Deliberately NOT the payment gateway's fee. Razorpay's charge is
+   * PAYMENT_GATEWAY_FEE_BPS, is deducted by Razorpay rather than by us, and is
+   * reported to the shop on its own line. Conflating the two is how a shop ends
+   * up billed twice for one order, so they never share a field.
+   */
+  platformFeeBps: number;
   /** Orders included per calendar month. */
   maxOrdersPerMonth: number;
   maxPrinters: number;
+  /** Sign-in accounts for this shop, owner included. */
+  maxStaff: number;
   tagline: string;
   features: string[];
   /** Exactly one tier carries this. */
@@ -1024,12 +1048,13 @@ export const PAYMENT_GATEWAY_LABEL = 'Razorpay 2% + 18% GST';
 
 export const PLAN_CATALOGUE: readonly PlanDefinition[] = [
   {
-    tier: 'start',
-    name: 'Start',
+    tier: 'free',
+    name: 'Free',
     monthlyPriceCents: 0,
-    commissionBps: 800,
+    platformFeeBps: 200,
     maxOrdersPerMonth: 100,
     maxPrinters: 1,
+    maxStaff: 1,
     tagline: 'Put your counter online and see if it works for you.',
     features: [
       'QR poster for your counter',
@@ -1040,30 +1065,32 @@ export const PLAN_CATALOGUE: readonly PlanDefinition[] = [
     ],
   },
   {
-    tier: 'smart',
-    name: 'Smart',
-    monthlyPriceCents: 7900,
-    commissionBps: 400,
-    maxOrdersPerMonth: 500,
+    tier: 'starter',
+    name: 'Starter',
+    monthlyPriceCents: 14900,
+    platformFeeBps: 100,
+    maxOrdersPerMonth: 1000,
     maxPrinters: 2,
+    maxStaff: 3,
     tagline: 'For a shop printing every day.',
     features: [
-      'Everything in Start',
+      'Everything in Free',
       'Bulk and duplex pricing',
       'Revenue analytics',
-      'Instant payouts',
+      'A second printer and three sign-ins',
     ],
   },
   {
     tier: 'business',
     name: 'Business',
-    monthlyPriceCents: 24900,
-    commissionBps: 200,
-    maxOrdersPerMonth: 2500,
+    monthlyPriceCents: 34900,
+    platformFeeBps: 50,
+    maxOrdersPerMonth: 4000,
     maxPrinters: 5,
+    maxStaff: 8,
     tagline: 'For a busy counter running several printers.',
     features: [
-      'Everything in Smart',
+      'Everything in Starter',
       'Multiple connected PCs',
       'Priority support',
       'Onboarding help',
@@ -1071,27 +1098,51 @@ export const PLAN_CATALOGUE: readonly PlanDefinition[] = [
     popular: true,
   },
   {
-    tier: 'enterprise',
-    name: 'Enterprise',
-    monthlyPriceCents: 59900,
-    commissionBps: 50,
+    tier: 'pro',
+    name: 'Pro',
+    monthlyPriceCents: 69900,
+    platformFeeBps: 0,
     maxOrdersPerMonth: 10000,
     maxPrinters: 10,
+    maxStaff: 15,
     tagline: 'For print shops and multi-counter operations.',
     features: [
       'Everything in Business',
-      'Lowest service fee',
+      'No PrintOk platform fee at all',
       'Highest order volume',
       'Dedicated support contact',
     ],
   },
 ];
 
+/**
+ * Finds a plan by tier id, accepting the pre-19-Sep-2026 spellings.
+ *
+ * A shop row written before the migration still says 'start'. Returning
+ * undefined for it would not merely mislabel the plan — every limit is skipped
+ * when the definition is missing, so an unmigrated shop would silently become
+ * unlimited. Accepting the old id fails safe instead.
+ */
 export function getPlan(tier: string): PlanDefinition | undefined {
-  return PLAN_CATALOGUE.find((p) => p.tier === tier);
+  const canonical = LEGACY_PLAN_TIERS[tier] ?? tier;
+  return PLAN_CATALOGUE.find((p) => p.tier === canonical);
 }
 
 export const PLAN_TIERS: readonly PlanTier[] = PLAN_CATALOGUE.map((p) => p.tier);
+
+/**
+ * The tier a shop is on before anyone chooses one.
+ *
+ * Named rather than written as a literal in each caller, because the previous
+ * arrangement spelled 'start' and 800 into a dozen `??` fallbacks — so a plan
+ * rename left those fallbacks quietly pointing at a tier that no longer
+ * existed, and every one of them had to be found by hand.
+ */
+export const DEFAULT_PLAN_TIER: PlanTier = 'free';
+
+/** The platform fee a shop pays before anyone changes it. Derived, never typed twice. */
+export const DEFAULT_PLATFORM_FEE_BPS: number =
+  PLAN_CATALOGUE.find((p) => p.tier === DEFAULT_PLAN_TIER)!.platformFeeBps;
 
 /**
  * Whether an order's money came through the payment gateway at all.
@@ -1113,6 +1164,34 @@ export function wasPaidThroughGateway(job: {
 }
 
 /**
+ * PrintOk's own platform fee on an order, in paise.
+ *
+ * The one place this arithmetic lives. Every caller — settlement, the Route
+ * transfer, the plan screen, the earnings table — goes through here, so a
+ * rounding change cannot apply to the money a shop is paid but not to the
+ * figure it is shown.
+ *
+ * **Rounding: `Math.round`, half away from zero, at the order level.** A ₹40.10
+ * order at 0.5% is 20.05 paise and bills as 20. The fee is computed per order
+ * and never on a running total, so a month's fees are the sum of what each
+ * order was actually charged, which is what makes the ledger reconcilable
+ * against the shop's own records.
+ *
+ * Rounds to at most a half-paise per order in our favour or theirs. The
+ * alternative — rounding down always — was rejected because it makes a 0% tier
+ * and a 0.004% tier indistinguishable, and Pro's 0% has to mean exactly zero.
+ *
+ * `platformFeeBps` is the shop's effective rate, which is normally its plan's
+ * but may be a rate an operator negotiated. It is NOT the gateway fee; see
+ * PAYMENT_GATEWAY_FEE_BPS.
+ */
+export function platformFeeFor(grossCents: number, platformFeeBps: number): number {
+  if (!Number.isFinite(grossCents) || !Number.isFinite(platformFeeBps)) return 0;
+  if (grossCents <= 0 || platformFeeBps <= 0) return 0;
+  return Math.round((grossCents * platformFeeBps) / 10_000);
+}
+
+/**
  * What a shop actually keeps from an order.
  *
  * The gateway takes its cut before settlement and PrintOk's fee applies to the
@@ -1127,7 +1206,7 @@ export function wasPaidThroughGateway(job: {
  */
 export function calculateShopNetCents(
   grossCents: number,
-  commissionBps: number,
+  platformFeeBps: number,
   options: { gatewayFeeApplies?: boolean } = {}
 ): {
   gatewayFeeCents: number;
@@ -1141,7 +1220,7 @@ export function calculateShopNetCents(
   const gatewayFeeCents = gatewayFeeApplies
     ? Math.round((grossCents * PAYMENT_GATEWAY_FEE_BPS) / 10_000)
     : 0;
-  const serviceFeeCents = Math.round((grossCents * commissionBps) / 10_000);
+  const serviceFeeCents = platformFeeFor(grossCents, platformFeeBps);
 
   return {
     gatewayFeeCents,

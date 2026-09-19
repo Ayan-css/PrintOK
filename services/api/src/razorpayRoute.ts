@@ -1,4 +1,4 @@
-import { PAYMENT_GATEWAY_FEE_BPS } from '@printok/shared-types';
+import { PAYMENT_GATEWAY_FEE_BPS, platformFeeFor } from '@printok/shared-types';
 
 /**
  * Razorpay Route — automatic split settlement to shops.
@@ -109,10 +109,13 @@ export class RazorpayRouteService {
   public buildTransfer(
     shopAccountId: string,
     grossCents: number,
-    commissionBps: number,
+    platformFeeBps: number,
     jobId: string
   ): { transfer: TransferInstruction; serviceFeeCents: number; gatewayFeeCents: number } {
-    const serviceFeeCents = Math.round((grossCents * commissionBps) / 10_000);
+    // Plan-driven, never a literal: the rate arrives from the shop's plan and
+    // the arithmetic is the same helper the shop's earnings screen uses, so the
+    // transfer and the figure the shop is shown cannot disagree.
+    const serviceFeeCents = platformFeeFor(grossCents, platformFeeBps);
     const gatewayFeeCents = Math.round((grossCents * PAYMENT_GATEWAY_FEE_BPS) / 10_000);
     const shopShareCents = Math.max(0, grossCents - serviceFeeCents - gatewayFeeCents);
 
@@ -139,13 +142,13 @@ export class RazorpayRouteService {
    * the gateway fee from the platform account — so the margin is the service
    * fee. This holds on every tier, including Enterprise at 0.5%.
    */
-  public estimatePlatformMargin(grossCents: number, commissionBps: number): {
+  public estimatePlatformMargin(grossCents: number, platformFeeBps: number): {
     serviceFeeCents: number;
     gatewayFeeCents: number;
     retainedCents: number;
     marginCents: number;
   } {
-    const serviceFeeCents = Math.round((grossCents * commissionBps) / 10_000);
+    const serviceFeeCents = platformFeeFor(grossCents, platformFeeBps);
     const gatewayFeeCents = Math.round((grossCents * PAYMENT_GATEWAY_FEE_BPS) / 10_000);
     return {
       serviceFeeCents,
