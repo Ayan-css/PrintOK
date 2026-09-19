@@ -98,3 +98,7 @@ taskFyou.prd
 
 # Agent build output staged for the installer.
 agent/dist/
+
+# Operational task list. Out of git because the repository is public and this
+# names what is not yet hardened.
+TODO.md

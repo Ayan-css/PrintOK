@@ -377,11 +377,18 @@ The API refuses to start, or refuses specific operations, when these are missing
 
 ## Before launch
 
-1. Set the Razorpay keys on Render — **no customer can pay until this is done**
-2. Claim `/admin` — the first visitor becomes owner
-3. Print one real page end to end
-4. Add monitoring — nothing currently alerts anyone when a shop goes offline
-5. Replace the placeholder pricing and contact address on the landing page
+Razorpay keys are set, `/admin` is claimed, one real page has printed, and the
+pricing and contact address are real. What remains is tracked in `TODO.md`,
+which is kept out of git because this repository is public and it names what is
+not yet hardened.
+
+The two that still block a real shop signing up:
+
+1. **The printer compatibility matrix is 27/28 unverified** —
+   `docs/printer-compatibility.md`. The defect that started this project was
+   found by a person watching a printer, not by a test
+2. **Nothing alerts anyone.** Events are structured and greppable; there is no
+   destination and no alert
 
 ---
 
