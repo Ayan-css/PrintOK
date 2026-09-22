@@ -4926,3 +4926,15 @@ body::before {
   opacity: 0.55;
   cursor: default;
 }
+
+/* Automatic settlement status, sat under the payout form it relates to. */
+.razorpay-account {
+  border-top: 1px solid var(--color-border);
+  margin-top: 14px;
+  padding-top: 12px;
+}
+
+.razorpay-account h5 {
+  font-size: 14px;
+  font-weight: 700;
+}

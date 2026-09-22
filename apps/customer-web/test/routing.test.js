@@ -332,6 +332,42 @@ test('customer web routing', async (t) => {
       'a top-level headers key cannot be combined with routes — Vercel rejects it');
   });
 
+  await t.test('a locked-out owner can actually reach the recovery flow', async () => {
+    // The endpoints for this were built, tested and deployed, email delivery
+    // was confirmed to a real inbox, and the whole thing was still unusable:
+    // there was no "forgot password" link anywhere, and nothing read the
+    // ?reset= token the emailed link carries. The API being right is not the
+    // same as a person being able to reach it, and only this end catches that.
+    const fs = require('fs');
+    const path = require('path');
+    const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
+
+    const dashboard = read('dashboard.html');
+    const app = read('app.js');
+
+    // A way in from the sign-in screen.
+    assert.match(dashboard, /id="linkForgotPassword"/,
+      'the sign-in screen needs a way to start a password reset');
+    assert.match(dashboard, /id="formForgotPassword"/);
+
+    // And a way to finish, which is the half that was missing entirely.
+    assert.match(dashboard, /id="formResetPassword"/,
+      'the emailed link needs somewhere to land that can set a new password');
+
+    // Both endpoints are actually called.
+    assert.match(app, /password-reset\/request/, 'nothing requested a reset link');
+    assert.match(app, /password-reset\/confirm/, 'nothing spent the reset token');
+
+    // The token arrives as /dashboard?reset=<token>; without this read, the
+    // link lands on the sign-in page and silently appears to do nothing.
+    assert.match(app, /URLSearchParams\(window\.location\.search\)\.get\('reset'\)/,
+      'the reset token in the emailed link must be read from the URL');
+
+    // Spent tokens do not belong in browser history or in a screenshot.
+    assert.match(app, /history\.replaceState/,
+      'the used token should be stripped from the address bar');
+  });
+
   await t.test('a merchant can sign out, and signing out clears the whole session', async () => {
     // There was no sign-out at all on either merchant page: the way to hand a
     // shared counter PC to the next person was to close the tab. This checks

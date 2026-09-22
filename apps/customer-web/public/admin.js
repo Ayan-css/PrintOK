@@ -434,6 +434,91 @@
     }
   }
 
+  /**
+   * What needs a person right now.
+   *
+   * DOM nodes rather than innerHTML: shop names come from shop owners, and a
+   * shop called <script> should be a silly name rather than script execution
+   * in the operator console.
+   */
+  async function loadOps() {
+    const box = $('adminOpsSummary');
+    if (!box) return;
+
+    box.replaceChildren(Object.assign(document.createElement('p'),
+      { className: 'meta-text', textContent: 'Loading…' }));
+
+    try {
+      const ops = await api('/api/admin/operations');
+
+      const row = (label, value, bad, note) => {
+        const el = document.createElement('div');
+        el.className = 'plan-usage-row' + (bad ? ' is-over' : '');
+        const name = document.createElement('span');
+        name.textContent = label;
+        const val = document.createElement('strong');
+        val.textContent = value;
+        el.append(name, val);
+        if (note) {
+          const n = document.createElement('span');
+          n.className = 'plan-usage-note';
+          n.textContent = note;
+          el.append(n);
+        }
+        return el;
+      };
+
+      const list = document.createElement('div');
+      list.className = 'plan-usage';
+
+      // Email first: with it broken, a locked-out shop owner has no way back
+      // in, and that outranks a printer being off.
+      list.append(row(
+        'Email',
+        ops.email.canSend ? `working (${ops.email.provider})` : 'NOT SENDING',
+        !ops.email.canSend,
+        ops.email.consequence || undefined
+      ));
+
+      const offline = ops.printersOffline;
+      list.append(row(
+        'Printers offline',
+        `${offline.shops} shop${offline.shops === 1 ? '' : 's'}`,
+        offline.shopsFullyDown > 0,
+        offline.shopsFullyDown > 0
+          ? `${offline.shopsFullyDown} cannot print at all — every printer they have is down`
+          : undefined
+      ));
+
+      const stuck = ops.jobsNeedingAttention;
+      list.append(row(
+        'Jobs needing attention',
+        `${stuck.jobs} across ${stuck.shops} shop${stuck.shops === 1 ? '' : 's'}`,
+        stuck.jobs > 0,
+        stuck.jobs > 0 ? 'A customer has paid and has no paper.' : undefined
+      ));
+
+      list.append(row(
+        'Refunds not settling',
+        String(ops.stuckRefunds.count),
+        ops.stuckRefunds.count > 0,
+        ops.stuckRefunds.count > 0 ? 'Money owed that Razorpay has not returned.' : undefined
+      ));
+
+      list.append(row('Storage', ops.storage, ops.storage !== 'postgres',
+        ops.storage !== 'postgres' ? 'In-memory — everything is lost on restart.' : undefined));
+
+      const when = document.createElement('p');
+      when.className = 'meta-text';
+      when.textContent = `Checked ${new Date(ops.checkedAt).toLocaleString()}`;
+
+      box.replaceChildren(list, when);
+    } catch (err) {
+      box.replaceChildren(Object.assign(document.createElement('p'),
+        { className: 'meta-text', textContent: `Could not load: ${err.message}` }));
+    }
+  }
+
   async function loadConsole() {
     try {
       const includeArchived = $('adminShowArchived').checked;
@@ -650,6 +735,32 @@
     } catch (err) {
       if (hint) hint.textContent = err.message;
       toast('danger', 'Not published', err.message);
+    }
+  });
+
+
+  document.getElementById('btnLoadOps')?.addEventListener('click', loadOps);
+
+  document.getElementById('btnReclaimJobs')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    // Returns in-flight jobs to the queue. Safe to repeat, but it moves real
+    // work, so it asks first rather than firing on a mis-click.
+    if (!window.confirm(
+      'Return jobs that are stuck in flight to the queue? Agents will pick them up again.'
+    )) return;
+
+    button.disabled = true;
+    try {
+      const result = await api('/api/admin/reclaim-stale-jobs', { method: 'POST' });
+      const n = result.reclaimed ?? result.count ?? 0;
+      toast('success', 'Reclaimed', n
+        ? `${n} job${n === 1 ? '' : 's'} returned to the queue.`
+        : 'Nothing was stuck.');
+      loadOps();
+    } catch (err) {
+      toast('danger', 'Could not reclaim', err.message);
+    } finally {
+      button.disabled = false;
     }
   });
 

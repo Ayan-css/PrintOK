@@ -637,6 +637,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function showLogin(message) {
       if (loginView) loginView.hidden = false;
       if (dashboardView) dashboardView.hidden = true;
+      hideAuthPanels();
       if (message) {
         const box = document.getElementById('merchantAuthError');
         if (box) { box.textContent = message; box.hidden = false; }
@@ -646,6 +647,133 @@ document.addEventListener('DOMContentLoaded', () => {
     function showDashboard() {
       if (loginView) loginView.hidden = true;
       if (dashboardView) dashboardView.hidden = false;
+      hideAuthPanels();
+    }
+
+    // --- Password recovery --------------------------------------------------
+    // The request and confirm endpoints have existed and been tested for days,
+    // and nothing in the browser could reach either, so a shop owner who forgot
+    // their password stayed locked out no matter how well email worked.
+    const forgotView = document.getElementById('merchantForgotView');
+    const resetView = document.getElementById('merchantResetView');
+
+    function hideAuthPanels() {
+      if (forgotView) forgotView.hidden = true;
+      if (resetView) resetView.hidden = true;
+    }
+
+    function showAuthPanel(panel) {
+      if (loginView) loginView.hidden = panel !== loginView;
+      if (dashboardView) dashboardView.hidden = true;
+      if (forgotView) forgotView.hidden = panel !== forgotView;
+      if (resetView) resetView.hidden = panel !== resetView;
+    }
+
+    /** Shows one alert box and hides its sibling, so two never contradict. */
+    function setAlert(showId, hideId, message) {
+      const show = document.getElementById(showId);
+      const hide = document.getElementById(hideId);
+      if (hide) hide.hidden = true;
+      if (show) { show.textContent = message; show.hidden = false; }
+    }
+
+    document.getElementById('linkForgotPassword')?.addEventListener('click', (event) => {
+      event.preventDefault();
+      const typed = document.getElementById('merchantEmail')?.value;
+      const field = document.getElementById('forgotEmail');
+      // Carry across whatever they already typed rather than making them type
+      // it again on the screen they reached by failing to sign in.
+      if (field && typed) field.value = typed;
+      showAuthPanel(forgotView);
+    });
+
+    document.getElementById('linkBackToLogin')?.addEventListener('click', (event) => {
+      event.preventDefault();
+      showAuthPanel(loginView);
+    });
+
+    document.getElementById('formForgotPassword')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = document.getElementById('btnForgotPassword');
+      const email = document.getElementById('forgotEmail')?.value?.trim();
+      button.disabled = true;
+      button.textContent = 'Sending…';
+
+      try {
+        const res = await fetch(`${API_BASE}/api/merchant/password-reset/request`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email }),
+        });
+        const body = await res.json().catch(() => ({}));
+
+        if (!res.ok) throw new Error(body.error || 'The request could not be sent.');
+
+        // The server answers identically whether or not the account exists, and
+        // so does this: anything else would turn the form into a way to ask
+        // which shops are registered here.
+        setAlert('forgotNotice', 'forgotError', body.message
+          || 'If that address belongs to a shop account, a reset link is on its way.');
+        button.textContent = 'Link sent';
+      } catch (err) {
+        setAlert('forgotError', 'forgotNotice', err.message);
+        button.disabled = false;
+        button.textContent = 'Email me a link';
+      }
+    });
+
+    /**
+     * The other half: the emailed link arrives as /dashboard?reset=<token>.
+     *
+     * Nothing read that parameter, so the link landed on the sign-in screen and
+     * looked like it had done nothing — the single most confusing way for this
+     * to fail, because the email plainly worked.
+     */
+    const resetToken = new URLSearchParams(window.location.search).get('reset');
+    if (resetToken) {
+      showAuthPanel(resetView);
+
+      document.getElementById('formResetPassword')?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const button = document.getElementById('btnResetPassword');
+        const password = document.getElementById('resetPassword')?.value || '';
+        const repeat = document.getElementById('resetPasswordConfirm')?.value || '';
+
+        if (password !== repeat) {
+          setAlert('resetError', 'resetNotice', 'Those two passwords are not the same.');
+          return;
+        }
+
+        button.disabled = true;
+        button.textContent = 'Setting…';
+
+        try {
+          const res = await fetch(`${API_BASE}/api/merchant/password-reset/confirm`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: resetToken, password }),
+          });
+          const body = await res.json().catch(() => ({}));
+
+          if (!res.ok) throw new Error(body.error || 'That reset link did not work.');
+
+          setAlert('resetNotice', 'resetError',
+            `${body.message || 'Your password has been changed.'} Taking you to sign in…`);
+
+          // No session is issued by the reset, deliberately — so whoever used
+          // the link proves they have the new password by signing in with it.
+          // The token is stripped from the URL first: it is spent, and leaving
+          // it in the address bar puts it in history and in any screenshot.
+          setTimeout(() => {
+            window.history.replaceState({}, '', '/dashboard');
+            showAuthPanel(loginView);
+          }, 2000);
+        } catch (err) {
+          setAlert('resetError', 'resetNotice', err.message);
+          button.disabled = false;
+          button.textContent = 'Set new password';
+        }
+      });
     }
 
     const loginForm = document.getElementById('formMerchantLogin');
@@ -712,6 +840,15 @@ document.addEventListener('DOMContentLoaded', () => {
           showToast('danger', 'Claim failed', err.message);
         }
       });
+    }
+
+    if (resetToken) {
+      // Someone following a reset link may still hold a valid session — from
+      // another device, or because the reset was requested precautionarily.
+      // Dropping them onto the dashboard would silently discard the link they
+      // came to use, and it is single-use, so it would be spent for nothing.
+      showAuthPanel(resetView);
+      return;
     }
 
     if (!MerchantSession.get()) {
@@ -1630,6 +1767,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       await loadPayoutDetails();
+      await loadRazorpayAccount();
       await loadPlan();
     }
 
@@ -1661,6 +1799,76 @@ document.addEventListener('DOMContentLoaded', () => {
         // leave the form empty; saving still works
       }
     }
+
+    /**
+     * Whether this shop is set up for automatic settlement, and what to do
+     * about it.
+     *
+     * The endpoints behind this have existed since the Route work and nothing
+     * called them, so a shop owner had no way to see whether automatic payout
+     * applied to them. The panel is honest about the case that is actually
+     * true today: Route is not activated on the platform account, so there is
+     * nothing a shop can do from here yet, and saying so beats a button that
+     * fails.
+     */
+    async function loadRazorpayAccount() {
+      const panel = document.getElementById('razorpayAccountPanel');
+      const status = document.getElementById('razorpayAccountStatus');
+      const button = document.getElementById('btnLinkRazorpay');
+      if (!panel || !status) return;
+
+      try {
+        const res = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/razorpay-account`);
+        if (!res.ok) return; // staff get 403, which is correct
+        const data = await res.json();
+
+        panel.hidden = false;
+
+        if (data.accountId) {
+          const activated = data.status === 'activated';
+          status.textContent = activated
+            ? 'Set up. Your share of each order is settled to your own account automatically.'
+            : 'Razorpay still needs some details from you before automatic settlement starts. '
+              + 'Until then you are paid by transfer as usual.';
+          if (button) button.hidden = true;
+        } else if (data.routeEnabled === false) {
+          // The true state today, said plainly rather than hidden behind a
+          // button that would fail at the first Razorpay call.
+          status.textContent =
+            'Not available yet — PrintOk is still enabling automatic settlement with Razorpay. '
+            + 'You are paid by transfer to the details above, and nothing is waiting on you.';
+          if (button) button.hidden = true;
+        } else {
+          status.textContent =
+            'Get paid automatically into your own account instead of by transfer.';
+          if (button) button.hidden = false;
+        }
+      } catch {
+        // A settlement panel that cannot load must not take the money screen
+        // down with it.
+      }
+    }
+
+    document.getElementById('btnLinkRazorpay')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      button.textContent = 'Setting up…';
+      try {
+        const res = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/razorpay-account`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || 'Could not set up automatic settlement.');
+        showToast('success', 'Started', 'Razorpay will ask you for a few details to finish.');
+        loadRazorpayAccount();
+      } catch (err) {
+        showToast('danger', 'Not set up', err.message);
+        button.disabled = false;
+        button.textContent = 'Set up automatic settlement';
+      }
+    });
 
     const payoutForm = document.getElementById('payoutDetailsForm');
     if (payoutForm) {

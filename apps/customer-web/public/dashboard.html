@@ -98,12 +98,88 @@
           </form>
 
           <p class="meta-text" style="margin-top: 14px;">
+            <a href="#" id="linkForgotPassword">Forgotten your password?</a>
+          </p>
+          <p class="meta-text">
             No account yet? <a href="/register">List your shop</a>.
           </p>
           <p class="meta-text">
             Registered before accounts existed?
             <a href="#" id="linkClaimShop">Claim your shop</a>.
           </p>
+        </div>
+      </section>
+
+      <!--
+        Asking for a reset link.
+
+        The API for this has existed and been tested for days; nothing in the
+        browser could reach it, so a shop owner who forgot their password was
+        still locked out. Email delivery working is only half a recovery path.
+      -->
+      <section id="merchantForgotView" class="merchant-auth-view" hidden>
+        <div class="card card--elevated merchant-auth-card">
+          <div class="card-header" style="padding: 0 0 12px 0;">
+            <div>
+              <h1 class="card-title">Reset your password</h1>
+              <p class="meta-text">
+                We will email you a link. It works once and expires in 30 minutes.
+              </p>
+            </div>
+          </div>
+
+          <form id="formForgotPassword">
+            <div class="form-group">
+              <label class="form-label" for="forgotEmail">Email</label>
+              <input type="email" id="forgotEmail" class="form-input" required autocomplete="username">
+            </div>
+            <!-- Deliberately the same message whether or not the account
+                 exists, matching the API: this form must not become a way to
+                 ask which shops are registered. -->
+            <div id="forgotNotice" class="alert alert-success" hidden role="status"></div>
+            <div id="forgotError" class="alert alert-danger" hidden role="alert"></div>
+            <button type="submit" class="btn btn-primary btn-block" id="btnForgotPassword">
+              Email me a link
+            </button>
+          </form>
+
+          <p class="meta-text" style="margin-top: 14px;">
+            <a href="#" id="linkBackToLogin">Back to sign in</a>
+          </p>
+        </div>
+      </section>
+
+      <!--
+        Choosing a new password, reached from the emailed link, which arrives as
+        /dashboard?reset=<token>. Nothing read that parameter before, so the
+        link landed on the sign-in screen and appeared to do nothing at all.
+      -->
+      <section id="merchantResetView" class="merchant-auth-view" hidden>
+        <div class="card card--elevated merchant-auth-card">
+          <div class="card-header" style="padding: 0 0 12px 0;">
+            <div>
+              <h1 class="card-title">Choose a new password</h1>
+              <p class="meta-text">At least 12 characters.</p>
+            </div>
+          </div>
+
+          <form id="formResetPassword">
+            <div class="form-group">
+              <label class="form-label" for="resetPassword">New password</label>
+              <input type="password" id="resetPassword" class="form-input" required
+                     autocomplete="new-password" minlength="12">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="resetPasswordConfirm">Repeat it</label>
+              <input type="password" id="resetPasswordConfirm" class="form-input" required
+                     autocomplete="new-password" minlength="12">
+            </div>
+            <div id="resetNotice" class="alert alert-success" hidden role="status"></div>
+            <div id="resetError" class="alert alert-danger" hidden role="alert"></div>
+            <button type="submit" class="btn btn-primary btn-block" id="btnResetPassword">
+              Set new password
+            </button>
+          </form>
         </div>
       </section>
 
@@ -512,6 +588,23 @@
                   </button>
                 </div>
               </form>
+
+              <!--
+                Automatic settlement onboarding.
+
+                Deliberately stated as a status rather than a form that always
+                submits: Razorpay Route is not activated on the platform
+                account, so creating a linked account would fail at the first
+                call. The panel says which of those two things is true rather
+                than offering a button that cannot work.
+              -->
+              <div class="razorpay-account" id="razorpayAccountPanel" hidden>
+                <h5 style="margin: 0 0 6px 0;">Automatic settlement</h5>
+                <p class="meta-text" id="razorpayAccountStatus"></p>
+                <button type="button" class="btn btn-outline btn-sm" id="btnLinkRazorpay" hidden>
+                  Set up automatic settlement
+                </button>
+              </div>
             </div>
 
             <!-- Subscription tier, costed against this shop's own volume -->

@@ -192,6 +192,28 @@
         </div>
 
         <!--
+          What needs a person right now.
+
+          The endpoint behind this has existed and been tested since the
+          observability work; nothing displayed it, so the answer to "is
+          anything wrong" was still "read the logs".
+        -->
+        <div class="card card--elevated admin-panel">
+          <div class="card-header admin-panel-header">
+            <div>
+              <h2 class="card-title">Needs a Person</h2>
+              <p class="meta-text">Printers offline, jobs stuck, refunds not settling, mail not sending.</p>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-outline btn-sm" id="btnLoadOps" type="button">Load</button>
+              <button class="btn btn-outline btn-sm" id="btnReclaimJobs" type="button"
+                      title="Return jobs stuck in flight to the queue">Reclaim stuck jobs</button>
+            </div>
+          </div>
+          <div id="adminOpsSummary"><p class="meta-text">Not loaded.</p></div>
+        </div>
+
+        <!--
           Agent fleet and updates.
 
           Publishing a build decides what runs, as a service, on every shop's
