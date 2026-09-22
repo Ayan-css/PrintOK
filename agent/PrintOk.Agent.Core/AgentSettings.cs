@@ -23,6 +23,23 @@ public sealed class AgentSettings
     public string? PrinterName { get; init; }
 
     public int PollIntervalMs { get; init; }
+
+    /// <summary>
+    /// How often to poll while the WebSocket push channel is connected.
+    ///
+    /// The agent polled every 3 seconds unconditionally, while ALSO holding a
+    /// push channel that already triggers an immediate fetch the moment a job
+    /// is queued. That is ~864,000 requests a month per agent, each one a
+    /// database query, for information push had already delivered — enough to
+    /// consume roughly a sixth of a Supabase free tier's monthly egress with no
+    /// customers at all, and to exhaust it entirely at six shops.
+    ///
+    /// With push up, polling is only a safety net for a notification that was
+    /// missed, so it runs slowly. When push drops the agent reverts to the fast
+    /// interval immediately rather than waiting out the long delay — see the
+    /// wake signal in PrintAgentWorker.
+    /// </summary>
+    public int IdlePollIntervalMs { get; init; }
     public int HeartbeatIntervalMs { get; init; }
 
     /// <summary>One-time pairing code, supplied via --PairingCode=... on first run.</summary>
@@ -198,6 +215,7 @@ public sealed class AgentSettings
             PrinterId = ReadString(config, "PrinterId", "PrintOk:PrinterId"),
             PrinterName = ReadString(config, "PrinterName", "PrintOk:PrinterName"),
             PollIntervalMs = ReadInt(config, 3000, "PollIntervalMs", "PrintOk:PollIntervalMs"),
+            IdlePollIntervalMs = ReadInt(config, 60000, "IdlePollIntervalMs", "PrintOk:IdlePollIntervalMs"),
             HeartbeatIntervalMs = heartbeatSeconds * 1000,
             PairingCode = ReadString(config, "PairingCode", "PrintOk:PairingCode")
         };

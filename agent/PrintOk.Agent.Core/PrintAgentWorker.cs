@@ -15,6 +15,23 @@ public class PrintAgentWorker : BackgroundService
     private readonly AgentSettings _settings;
     private readonly string _apiKey;
     private readonly int _pollIntervalMs;
+    private readonly int _idlePollIntervalMs;
+
+    /// <summary>
+    /// Whether the push channel is currently up. Written from the WebSocket
+    /// task and read by the polling loop, hence volatile.
+    /// </summary>
+    private volatile bool _pushConnected;
+
+    /// <summary>
+    /// Cuts the idle wait short.
+    ///
+    /// Without it, a push channel dropping mid-wait would leave the agent
+    /// sitting out the remainder of a 60-second sleep before returning to fast
+    /// polling — and a customer standing at a counter would wait it out too.
+    /// Released when push disconnects, so the loop resumes immediately.
+    /// </summary>
+    private readonly SemaphoreSlim _pollWake = new(0, 1);
 
     /// <summary>
     /// Shared status, so a host with a window can show what this loop is doing.
@@ -35,6 +52,7 @@ public class PrintAgentWorker : BackgroundService
         _settings = settings;
         _apiKey = settings.ApiKey;
         _pollIntervalMs = settings.PollIntervalMs;
+        _idlePollIntervalMs = settings.IdlePollIntervalMs;
         _status = status;
     }
 
@@ -74,7 +92,43 @@ public class PrintAgentWorker : BackgroundService
                 _logger.LogError(ex, "Unexpected error in Print Agent loop.");
             }
 
-            await Task.Delay(_pollIntervalMs, stoppingToken);
+            // Push already fetches the moment a job is queued, so while it is
+            // connected this loop is only a backstop for a missed notification.
+            int delayMs = PollDelayMs(_pushConnected, _pollIntervalMs, _idlePollIntervalMs);
+
+            // Waits, but returns early if push drops — see _pollWake.
+            await _pollWake.WaitAsync(delayMs, stoppingToken);
+        }
+    }
+
+    /// <summary>
+    /// How long to wait before the next poll.
+    ///
+    /// Pure and public so the choice can be tested without standing up a
+    /// worker, an HTTP client and a spooler. Falls back to the fast interval
+    /// whenever the idle one is not a sensible larger number, so a bad config
+    /// value degrades to the old behaviour rather than to a stalled agent.
+    /// </summary>
+    public static int PollDelayMs(bool pushConnected, int fastMs, int idleMs)
+    {
+        if (!pushConnected) return fastMs;
+        return idleMs > fastMs ? idleMs : fastMs;
+    }
+
+    /// <summary>
+    /// Records whether push is up, and wakes the polling loop when it goes
+    /// down so the agent does not stay in slow mode while blind.
+    /// </summary>
+    private void SetPushConnected(bool connected)
+    {
+        bool was = _pushConnected;
+        _pushConnected = connected;
+
+        if (was && !connected)
+        {
+            // Release is capped at one; a second drop before the loop wakes is
+            // already covered by the first.
+            try { _pollWake.Release(); } catch (SemaphoreFullException) { }
         }
     }
 
@@ -187,6 +241,9 @@ public class PrintAgentWorker : BackgroundService
                 await ws.ConnectAsync(wsUri, cancellationToken);
                 _logger.LogInformation("WebSocket push channel connected.");
                 _status?.RecordPush(true);
+                // Push now delivers jobs the moment they are queued, so the
+                // polling loop drops to its slow backstop interval.
+                SetPushConnected(true);
                 backoffMs = 1000; // Reset backoff on successful connection
 
                 var buffer = new byte[4096];
@@ -213,9 +270,16 @@ public class PrintAgentWorker : BackgroundService
                         }
                     }
                 }
+
+                // Left the receive loop without throwing — the server closed the
+                // channel. Just as blind as an error, and it must not leave the
+                // agent polling slowly.
+                SetPushConnected(false);
+                _status?.RecordPush(false);
             }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
+                SetPushConnected(false);
                 _status?.RecordPush(false);
                 _logger.LogWarning("WebSocket push connection lost ({Message}). Reconnecting in {Backoff}ms...", ex.Message, backoffMs);
                 await Task.Delay(backoffMs, cancellationToken);

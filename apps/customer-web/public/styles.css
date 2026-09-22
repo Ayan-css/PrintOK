@@ -4913,3 +4913,16 @@ body::before {
   align-items: center;
   gap: 8px;
 }
+
+/* Plan switch button. Sits at the foot of each pricing card, full width so the
+   action is unmissable — the previous screen recommended a plan and gave no way
+   to act on it, which read as broken rather than unfinished. */
+.plan-switch-btn {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.plan-switch-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}

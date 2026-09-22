@@ -4184,8 +4184,12 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     // And it is honest that the change is not self-service yet, because
     // subscription billing does not exist — a free tier change would hand away
     // the commission.
-    assert.strictEqual(plan.changeable, false);
-    assert.match(plan.howToChange, /billing is not live/i);
+    // Two facts rather than one flag: an owner can move down on their own, and
+    // cannot move up, because nothing can charge for a paid tier yet. Reporting
+    // a single "changeable: false" disabled the half that works.
+    assert.strictEqual(plan.canDowngrade, true);
+    assert.strictEqual(plan.canUpgrade, false);
+    assert.match(plan.howToChange, /cheaper plan yourself/i);
 
     // Staff cannot read the shop's commercial terms.
     const added = await fetch(`${baseUrl}/api/shops/${shop.shopId}/staff`, {
@@ -5244,6 +5248,92 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     } finally {
       restore();
     }
+  });
+
+  await t.test('110. An owner can change their own plan, in the direction that is honest', async () => {
+    // The only route that could write a plan was the admin one, so an owner saw
+    // a screen recommending a cheaper tier with no way to act on it. That reads
+    // as broken rather than unfinished, and it was.
+    const shop = await shopWithAuth('Switch Co', 'switch@example.com', 'SwitchPass12345', 'business');
+
+    const change = (tier: string) => fetch(`${baseUrl}/api/shops/${shop.shopId}/plan`, {
+      method: 'POST', headers: shop.auth, body: JSON.stringify({ tier }),
+    });
+    const readPlan = async () =>
+      (await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/plan`, { headers: shop.auth })).json()) as any;
+
+    assert.strictEqual((await readPlan()).current.tier, 'business');
+
+    // --- Down: applied immediately, nothing removed ------------------------
+    const down = await change('starter');
+    assert.strictEqual(down.status, 200, await down.clone().text());
+    const downBody = (await down.json()) as any;
+    assert.strictEqual(downBody.applied, true);
+    assert.strictEqual(downBody.tier, 'starter');
+
+    const after = await readPlan();
+    assert.strictEqual(after.current.tier, 'starter');
+    assert.strictEqual(after.current.platformFeeBps, 100, 'the fee moves with the plan');
+    assert.strictEqual(after.usage.staff.limit, 3, 'and so do the limits');
+
+    // --- Up: recorded, never silently granted ------------------------------
+    // Nothing can charge for a paid tier, so handing one over would be giving
+    // it away. 202: accepted, not applied.
+    const up = await change('pro');
+    assert.strictEqual(up.status, 202, await up.clone().text());
+    const upBody = (await up.json()) as any;
+    assert.strictEqual(upBody.applied, false, 'an upgrade must never apply itself');
+    assert.strictEqual(upBody.requested, 'pro');
+
+    assert.strictEqual((await readPlan()).current.tier, 'starter',
+      'the shop stays where it was until someone takes payment');
+
+    // --- Refusals ----------------------------------------------------------
+    assert.strictEqual((await change('starter')).status, 400, 'already on it');
+    assert.strictEqual((await change('enormous')).status, 400, 'no such plan');
+
+    // Staff cannot change what the shop pays.
+    const staffAdd = await fetch(`${baseUrl}/api/shops/${shop.shopId}/staff`, {
+      method: 'POST', headers: shop.auth,
+      body: JSON.stringify({ email: 'switch-staff@example.com', password: 'SwitchStaff1234' }),
+    });
+    assert.strictEqual(staffAdd.status, 201);
+    const staffLogin = await (await fetch(`${baseUrl}/api/merchant/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'switch-staff@example.com', password: 'SwitchStaff1234' }),
+    })).json() as any;
+    assert.strictEqual((await fetch(`${baseUrl}/api/shops/${shop.shopId}/plan`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${staffLogin.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tier: 'free' }),
+    })).status, 403, 'only an owner decides what the shop pays');
+
+    // Nor can a stranger.
+    assert.strictEqual((await fetch(`${baseUrl}/api/shops/${shop.shopId}/plan`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tier: 'free' }),
+    })).status, 401);
+
+    // --- Downgrading below what the shop is using --------------------------
+    // Owner + one staff = 2 accounts, and Free covers 1. The move is allowed
+    // and nothing is deleted: three people signing in to a shop that drops to
+    // Free keep signing in. They simply cannot add a fourth.
+    const toFree = await change('free');
+    assert.strictEqual(toFree.status, 200);
+    const freeBody = (await toFree.json()) as any;
+    assert.ok(Array.isArray(freeBody.overLimit), 'the shop is told it is over');
+    assert.match(freeBody.warning, /Nothing has been removed/i);
+
+    const staffStill = await (await fetch(
+      `${baseUrl}/api/shops/${shop.shopId}/staff`, { headers: shop.auth })).json() as any;
+    assert.strictEqual(staffStill.staff.filter((u: any) => u.status === 'active').length, 2,
+      'a downgrade removes nobody');
+
+    const onFree = await readPlan();
+    assert.strictEqual(onFree.current.tier, 'free');
+    assert.strictEqual(onFree.usage.staff.over, true);
+    assert.strictEqual(onFree.canDowngrade, true);
+    assert.strictEqual(onFree.canUpgrade, false, 'honest: nothing can charge for an upgrade yet');
   });
 
   await t.test('109. A build can be pushed to the fleet, and only a real one', async () => {

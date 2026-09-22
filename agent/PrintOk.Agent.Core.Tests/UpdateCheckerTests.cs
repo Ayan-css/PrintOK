@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using PrintOk.Agent.Core;
+using PrintOk.WindowsPrintAgent.Services;
 using Xunit;
 
 namespace PrintOk.Agent.Core.Tests;
@@ -164,5 +165,61 @@ public class UpdateCheckerTests
 
         Assert.False(result.Ok);
         Assert.NotNull(result.Error);
+    }
+}
+
+/// <summary>
+/// The polling interval decision.
+///
+/// The agent polled every 3 seconds unconditionally while also holding a push
+/// channel that already fetches the moment a job is queued — roughly 864,000
+/// requests a month per agent, each one a database query, for news push had
+/// already delivered. That consumed about a sixth of a Supabase free tier's
+/// monthly egress with no customers at all.
+/// </summary>
+public class PollBackoffTests
+{
+    private const int Fast = 3_000;
+    private const int Idle = 60_000;
+
+    [Fact]
+    public void Polls_slowly_while_push_is_connected()
+    {
+        // 20x fewer requests, with no loss of responsiveness: push delivers the
+        // job, and this is only the backstop for a notification that was missed.
+        Assert.Equal(Idle, PrintAgentWorker.PollDelayMs(true, Fast, Idle));
+    }
+
+    [Fact]
+    public void Polls_fast_the_moment_push_is_down()
+    {
+        // With push blind, the poll IS the delivery mechanism. A shop whose
+        // channel dropped must not wait a minute for a customer's job.
+        Assert.Equal(Fast, PrintAgentWorker.PollDelayMs(false, Fast, Idle));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(500)]   // configured smaller than the fast interval
+    [InlineData(3_000)] // equal to it
+    public void A_nonsensical_idle_interval_degrades_to_the_old_behaviour(int idle)
+    {
+        // A bad config value should cost efficiency, never correctness: the
+        // failure mode to avoid is an agent that stops fetching jobs promptly
+        // because someone typed a zero.
+        Assert.Equal(Fast, PrintAgentWorker.PollDelayMs(true, Fast, idle));
+    }
+
+    [Fact]
+    public void The_saving_is_the_point()
+    {
+        // Stated as arithmetic so the reason this exists survives the next
+        // person wondering why the interval is not simply 3 seconds.
+        double before = TimeSpan.FromDays(30).TotalMilliseconds / Fast;
+        double after = TimeSpan.FromDays(30).TotalMilliseconds / Idle;
+
+        Assert.True(before > 800_000, "the old loop really did make ~864k requests a month");
+        Assert.True(before / after >= 20, "and the new one makes at least 20x fewer");
     }
 }

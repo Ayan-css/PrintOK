@@ -1780,7 +1780,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const options = document.getElementById('planOptions');
         if (options) {
-          options.innerHTML = plan.options.map((o) => `
+          const currentPrice = plan.current.monthlyPriceCents ?? 0;
+
+          options.innerHTML = plan.options.map((o) => {
+            // Two directions, two behaviours. Down is applied immediately;
+            // up is a request, because nothing can charge for a paid tier yet
+            // and quietly granting one would be giving it away. The button says
+            // which it is, so nobody presses "Upgrade" expecting it to happen.
+            const isUp = o.monthlyPriceCents > currentPrice;
+            const label = o.isCurrent
+              ? 'Current plan'
+              : isUp ? `Ask about ${escapeHtml(o.name)}` : `Switch to ${escapeHtml(o.name)}`;
+
+            return `
             <div class="pricing-mini-card"${o.isCurrent ? ' style="border: 2px solid var(--color-primary);"' : ''}>
               <div class="pricing-type">${escapeHtml(o.name)}${o.isCurrent ? ' · current' : ''}</div>
               <div class="pricing-rate">${formatRupees(o.monthlyPriceCents)} <span>/ month</span></div>
@@ -1793,7 +1805,65 @@ document.addEventListener('DOMContentLoaded', () => {
               <div class="pricing-meta" style="font-weight: 600;">
                 At your volume: ${formatRupees(o.wouldCostCents)}/month
               </div>
-            </div>`).join('');
+              <button type="button"
+                      class="btn btn-sm ${isUp ? 'btn-outline' : 'btn-primary'} plan-switch-btn"
+                      data-plan-tier="${escapeHtml(o.tier)}"
+                      data-plan-name="${escapeHtml(o.name)}"
+                      data-plan-up="${isUp ? '1' : ''}"
+                      ${o.isCurrent ? 'disabled' : ''}>${label}</button>
+            </div>`;
+          }).join('');
+
+          // Delegated, because the cards are rebuilt on every load and
+          // per-button listeners would accumulate one set per refresh.
+          options.onclick = async (event) => {
+            const button = event.target.closest('.plan-switch-btn');
+            if (!button || button.disabled) return;
+
+            const tier = button.getAttribute('data-plan-tier');
+            const name = button.getAttribute('data-plan-name');
+            const isUp = button.getAttribute('data-plan-up') === '1';
+
+            // A downgrade takes effect immediately and can leave the shop over
+            // its new limits, so it is worth one confirmation. An upgrade
+            // request changes nothing and needs none.
+            if (!isUp && !window.confirm(
+              `Move this shop to ${name}? It applies straight away. Nothing is deleted — `
+              + 'if you end up over the new limits you keep what you have, but cannot add more.'
+            )) return;
+
+            const original = button.textContent;
+            button.disabled = true;
+            button.textContent = isUp ? 'Sending…' : 'Switching…';
+
+            try {
+              const res = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/plan`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tier }),
+              });
+              const body = await res.json();
+
+              if (!res.ok && res.status !== 202) {
+                throw new Error(body.error || 'The plan could not be changed.');
+              }
+
+              showToast(
+                body.applied ? 'success' : 'info',
+                body.applied ? `Now on ${name}` : 'Request sent',
+                body.message
+              );
+              // The warning is the part that is easy to miss in a toast, so it
+              // gets its own.
+              if (body.warning) showToast('warning', 'Over your new plan', body.warning);
+
+              loadPlan();
+            } catch (err) {
+              showToast('danger', 'Plan not changed', err.message);
+              button.disabled = false;
+              button.textContent = original;
+            }
+          };
         }
 
         const how = document.getElementById('planHowToChange');

@@ -4457,11 +4457,152 @@ export function createApp(
           wouldCostCents:
             p.monthlyPriceCents + platformFeeFor(grossCents, p.platformFeeBps),
         })),
-        changeable: false,
+        // Downgrades are self-serve; upgrades need a person, because nothing
+        // can charge for them yet. Stated as two facts rather than one flag,
+        // so the dashboard can offer the half that works instead of disabling
+        // the whole screen.
+        canDowngrade: true,
+        canUpgrade: false,
         howToChange:
-          'Plan changes are made by PrintOk support at the moment. Subscription billing is ' +
-          'not live yet, so a plan cannot be charged for automatically. Contact support and ' +
-          'the change is applied to your shop the same day.',
+          'You can move to a cheaper plan yourself, straight away. Moving up needs us to set ' +
+          'up billing first — ask from here and we will get back to you the same day. Nothing ' +
+          'is charged automatically either way.',
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * A shop owner changing their own plan.
+   *
+   * Until now the only route that could write a plan was the admin one, so an
+   * owner saw a screen recommending a cheaper tier and had no way to act on it.
+   * That reads as broken rather than as unfinished, and it was.
+   *
+   * The two directions are genuinely different, and pretending otherwise is
+   * what made this hard to ship:
+   *
+   *   Down  — costs the shop less and us nothing to honour, needs no payment,
+   *           and is applied immediately.
+   *   Up    — cannot be charged for, because Razorpay Subscriptions do not
+   *           exist on this account. Granting it anyway would hand out paid
+   *           tiers for free; refusing silently is what we had. So it records
+   *           a request and emails an operator, who applies it.
+   *
+   * Nothing here fabricates a payment or a subscription.
+   */
+  app.post('/api/shops/:shopId/plan', async (req: Request, res: Response) => {
+    const merchant = await authenticateMerchant(req, res, { requireOwner: true });
+    if (!merchant) return;
+
+    try {
+      const { shopId } = req.params;
+      const requested = String((req.body || {}).tier || '').trim();
+
+      const target = getPlan(requested);
+      if (!target) {
+        return res.status(400).json({
+          error: `Unknown plan '${requested}'. Choose one of: ${PLAN_TIERS.join(', ')}.`,
+        });
+      }
+
+      const plan = await storage.getShopPlan(shopId);
+      const currentTier = plan?.planTier ?? DEFAULT_PLAN_TIER;
+      const current = getPlan(currentTier);
+
+      if (target.tier === current?.tier) {
+        return res.status(400).json({ error: `This shop is already on ${target.name}.` });
+      }
+
+      const isUpgrade = target.monthlyPriceCents > (current?.monthlyPriceCents ?? 0);
+
+      // ---- Upgrades: recorded, not applied ---------------------------------
+      if (isUpgrade) {
+        const shop = await storage.getShop(shopId);
+
+        const notice = await emailService.send({
+          to: emailService.operatorAddress,
+          subject: `Plan upgrade requested: ${shop?.name || shopId} wants ${target.name}`,
+          text:
+            `${shop?.name || shopId} has asked to move from ${current?.name ?? currentTier} to ` +
+            `${target.name} (₹${Math.round(target.monthlyPriceCents / 100)}/month, ` +
+            `${(target.platformFeeBps / 100).toFixed(2)}% platform fee).\n\n` +
+            `Shop id: ${shopId}\n` +
+            `Requested by: ${merchant.email}\n\n` +
+            'Subscription billing is not live, so this has NOT been applied. Take payment, then ' +
+            'set the tier from the admin console.',
+        });
+
+        if (!notice.ok) {
+          // Logged, not hidden: an upgrade request that reached nobody is the
+          // same failure as having no button at all.
+          logOps('error', 'email.failed', {
+            reason: 'plan upgrade request', shopId, provider: notice.provider,
+          });
+        }
+
+        logOps('info', 'plan.limit_reached', {
+          shopId, from: currentTier, to: target.tier, action: 'upgrade_requested',
+          delivered: notice.ok,
+        });
+
+        return res.status(202).json({
+          applied: false,
+          requested: target.tier,
+          message: notice.ok
+            ? `Thanks — we have your request for ${target.name} and will set it up and get back ` +
+              'to you. Your current plan is unchanged until then, and nothing has been charged.'
+            : `Your request for ${target.name} is recorded. Please also contact support directly, ` +
+              'because we could not send the notification email.',
+        });
+      }
+
+      // ---- Downgrades: applied now ----------------------------------------
+      // Deliberately does NOT remove anything. A shop dropping to a smaller
+      // plan keeps its printers, staff and orders; it simply cannot add more,
+      // and is told where it stands. Silently disabling staff accounts because
+      // a plan shrank would lock real people out of a till mid-shift.
+      const updated = await storage.updateShopPlan(shopId, {
+        planTier: target.tier,
+        commissionBps: target.platformFeeBps,
+        planStatus: 'active',
+      });
+
+      if (!updated) return res.status(404).json({ error: 'That shop no longer exists.' });
+
+      const usage = await storage.countShopUsage(shopId);
+      const over: string[] = [];
+      if (usage.printers > target.maxPrinters) {
+        over.push(`${usage.printers} printers against ${target.maxPrinters}`);
+      }
+      if (usage.staff > target.maxStaff) {
+        over.push(`${usage.staff} staff accounts against ${target.maxStaff}`);
+      }
+
+      logOps('info', 'plan.limit_reached', {
+        shopId, from: currentTier, to: target.tier, action: 'downgraded', over: over.length,
+      });
+
+      return res.json({
+        applied: true,
+        tier: target.tier,
+        name: target.name,
+        platformFeeBps: target.platformFeeBps,
+        message:
+          `You are now on ${target.name}: ₹${Math.round(target.monthlyPriceCents / 100)}/month and ` +
+          `a ${(target.platformFeeBps / 100).toFixed(2)}% platform fee. This applies to orders from now on — ` +
+          'orders already placed keep the rate they were charged at.',
+        // Said plainly rather than left to be discovered: nothing was removed,
+        // and the shop is over on some limit until it reduces or moves back up.
+        ...(over.length
+          ? {
+              overLimit: over,
+              warning:
+                `Nothing has been removed — you still have ${over.join(' and ')}. ` +
+                'You cannot add more until you are back within the plan.',
+            }
+          : {}),
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
