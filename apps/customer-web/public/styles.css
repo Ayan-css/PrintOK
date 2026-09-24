@@ -378,21 +378,12 @@ a { color: inherit; }
   gap: var(--space-3);
 }
 
+/* The logo is /favicon.svg, so the tab icon and the header are one file. */
 .brand-mark {
   width: 36px;
   height: 36px;
-  background: var(--color-primary);
-  border: 2px solid rgba(255,255,255,0.25);
-  border-radius: var(--radius-sm);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: block;
   flex-shrink: 0;
-}
-
-.brand-mark svg {
-  width: 18px;
-  height: 18px;
 }
 
 .brand-text {}
@@ -2760,6 +2751,9 @@ body::before {
 }
 
 .landing-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-weight: 900;
   font-size: 1.15rem;
   text-decoration: none;

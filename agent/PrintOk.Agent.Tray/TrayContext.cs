@@ -195,15 +195,15 @@ public sealed class TrayContext : ApplicationContext
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
 
-            // A sheet of paper, in the brand ink colour.
-            using var paper = new SolidBrush(Theme.Primary);
-            g.FillRectangle(paper, 7, 4, 18, 22);
-
-            // Lines of text on it.
-            using var line = new Pen(Color.FromArgb(150, Color.White), 2f);
-            g.DrawLine(line, 10, 10, 22, 10);
-            g.DrawLine(line, 10, 15, 22, 15);
-            g.DrawLine(line, 10, 20, 18, 20);
+            // The PrintOk mark (favicon.svg): ink square, white sheet, ochre tick.
+            using var ink = new SolidBrush(Theme.Primary);
+            g.FillRectangle(ink, 0, 0, 32, 32);
+            using var paper = new SolidBrush(Color.FromArgb(0xfb, 0xfa, 0xf7));
+            g.FillPolygon(paper, new[] { new Point(8, 5), new Point(19, 5), new Point(25, 11), new Point(25, 28), new Point(8, 28) });
+            using var fold = new SolidBrush(Color.FromArgb(0x9c, 0xc7, 0xcf));
+            g.FillPolygon(fold, new[] { new Point(19, 5), new Point(19, 11), new Point(25, 11) });
+            using var tick = new Pen(Color.FromArgb(0xd9, 0x9a, 0x1e), 3f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+            g.DrawLines(tick, new[] { new Point(11, 18), new Point(15, 22), new Point(21, 15) });
 
             // Status dot, bottom-right, which is the part that actually changes.
             using var dot = new SolidBrush(accent);

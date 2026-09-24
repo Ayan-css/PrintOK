@@ -65,9 +65,10 @@
 
   <!-- Brand band -->
   <rect x="0" y="0" width="${W}" height="150" fill="${BRAND}"/>
-  <g transform="translate(70 46)">
-    <rect x="0" y="4" width="52" height="40" rx="4" fill="none" stroke="#ffffff" stroke-width="7"/>
-    <rect x="12" y="44" width="28" height="15" rx="2" fill="none" stroke="#ffffff" stroke-width="5"/>
+  <g transform="translate(58 27) scale(3)">
+    <path d="M9.5 5.5h9.2l5.8 5.8v14.7a1.5 1.5 0 0 1-1.5 1.5H9.5A1.5 1.5 0 0 1 8 26V7a1.5 1.5 0 0 1 1.5-1.5z" fill="#fbfaf7"/>
+    <path d="M18.7 5.5v4.3a1.5 1.5 0 0 0 1.5 1.5h4.3z" fill="#9cc7cf"/>
+    <path d="M11.6 18.4l3.3 3.3 6.4-7.1" fill="none" stroke="#d99a1e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
   </g>
   <text x="150" y="98" font-family="${LATIN}" font-size="56" font-weight="700" fill="#ffffff">PrintOk</text>
 

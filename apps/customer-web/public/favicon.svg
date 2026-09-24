@@ -1,13 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#0e5e6f"/>
-  <!-- Printer body -->
-  <rect x="6" y="8" width="20" height="14" rx="2" fill="none" stroke="white" stroke-width="2.5"/>
-  <!-- Paper in tray -->
-  <rect x="10" y="18" width="12" height="7" rx="1" fill="none" stroke="white" stroke-width="2"/>
-  <!-- Slot line -->
-  <line x1="10" y1="13" x2="22" y2="13" stroke="white" stroke-width="2" stroke-linecap="round"/>
-  <!-- Registration dot (print motif) -->
-  <circle cx="26" cy="7" r="2.5" fill="none" stroke="white" stroke-width="1.5"/>
-  <line x1="26" y1="4" x2="26" y2="10" stroke="white" stroke-width="1" stroke-linecap="round"/>
-  <line x1="23" y1="7" x2="29" y2="7" stroke="white" stroke-width="1" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="PrintOk">
+  <!-- PrintOk mark: a printed sheet, folded corner, and a tick for "Ok". -->
+  <rect width="32" height="32" rx="7" fill="#0e5e6f"/>
+  <path d="M9.5 5.5h9.2l5.8 5.8v14.7a1.5 1.5 0 0 1-1.5 1.5H9.5A1.5 1.5 0 0 1 8 26V7a1.5 1.5 0 0 1 1.5-1.5z" fill="#fbfaf7"/>
+  <path d="M18.7 5.5v4.3a1.5 1.5 0 0 0 1.5 1.5h4.3z" fill="#9cc7cf"/>
+  <path d="M11.6 18.4l3.3 3.3 6.4-7.1" fill="none" stroke="#d99a1e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
