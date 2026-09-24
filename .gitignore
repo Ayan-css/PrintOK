@@ -32,6 +32,9 @@ downloads/
 *.jpg
 *.jpeg
 *.png
+# ...except the brand kit and the images the site publishes (not customer files).
+!brand/**/*.png
+!apps/customer-web/public/*.png
 
 # Database & Storage
 *.sqlite
