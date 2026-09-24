@@ -50,7 +50,7 @@
       const dark = theme === 'dark';
 
       // The button offers the theme you would switch *to*.
-      if (icon) icon.textContent = dark ? '☀️' : '🌙';
+      if (icon) icon.innerHTML = `<svg class="icon" aria-hidden="true"><use href="/icons.svg#${dark ? 'sun' : 'moon'}"/></svg>`;
       if (label) label.textContent = dark ? 'Light' : 'Dark';
       if (btn) {
         btn.setAttribute('aria-pressed', String(dark));

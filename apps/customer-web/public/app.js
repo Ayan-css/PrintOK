@@ -289,6 +289,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // loading anything, so the check above would never run.
   if (isDashboardPage) window.addEventListener('pageshow', (e) => { if (e.persisted) window.location.reload(); });
 
+  /** A line icon from /icons.svg (Lucide), sized and coloured by its text. */
+  const icon = (name) => `<svg class="icon" aria-hidden="true"><use href="/icons.svg#${name}"/></svg>`;
+  window.PrintOkIcon = icon;
+
   const ShopContext = {
     read() {
       let stored = { shopId: null, printerId: null };
@@ -656,7 +660,7 @@ document.addEventListener('DOMContentLoaded', () => {
               };
             }
 
-            showToast('success', '🎉 Your shop is live', `Printer ID: ${data.printer.id}`);
+            showToast('success', 'Your shop is live', `Printer ID: ${data.printer.id}`);
           } else {
             showToast('danger', 'Error', data.error || 'Could not register shop.');
             btnSubmitRegister.disabled = false;
@@ -1638,12 +1642,12 @@ document.addEventListener('DOMContentLoaded', () => {
           };
           beat();
           simTimer = setInterval(beat, 15000);
-          btnToggleSimulatedAgent.textContent = '⏹️ Stop Test Agent';
+          btnToggleSimulatedAgent.innerHTML = `${icon('square')} Stop Test Agent`;
           if (statusEl) statusEl.textContent = 'Agent Status: Simulated heartbeat running in this tab';
           showToast('info', 'Browser Test Agent Started', 'Sending heartbeats every 15s. It cannot actually print.');
         } else {
           clearInterval(simTimer);
-          btnToggleSimulatedAgent.textContent = '▶️ Test In Browser';
+          btnToggleSimulatedAgent.innerHTML = `${icon('play')} Test In Browser`;
           if (statusEl) statusEl.textContent = 'Agent Status: Test agent stopped';
           showToast('info', 'Browser Test Agent Stopped', null);
         }
@@ -1666,7 +1670,7 @@ document.addEventListener('DOMContentLoaded', () => {
           const res = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/withdraw`, { method: 'POST' });
           const data = await res.json();
           if (res.ok && data.success) {
-            showToast('success', '⚡ Instant Payout Triggered!', `${formatRupees(data.payout.netTransferredCents)} transferred to ${data.payout.payoutUpiId}.`);
+            showToast('success', 'Instant Payout Triggered!', `${formatRupees(data.payout.netTransferredCents)} transferred to ${data.payout.payoutUpiId}.`);
             loadDashboard();
           } else {
             showToast('info', 'Payout Info', data.error || 'No available balance to withdraw.');
@@ -1685,10 +1689,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (list) {
         list.innerHTML = `
           <div class="empty-state">
-            <div class="empty-icon">🏬</div>
+            <div class="empty-icon">${icon('store')}</div>
             <div class="empty-title">No Shop Connected</div>
             <div class="empty-sub">Register a shop to see its live queue here, or open this dashboard with <code>?shop=&lt;shopId&gt;</code>.</div>
-            <div style="margin-top:14px;"><a href="/register" class="btn btn-primary btn-sm" style="text-decoration:none;">🏬 Register a Shop</a></div>
+            <div style="margin-top:14px;"><a href="/register" class="btn btn-primary btn-sm" style="text-decoration:none;">${icon('store')} Register a Shop</a></div>
           </div>`;
       }
       const statusText = document.getElementById('dashAgentStatusText');
@@ -2247,7 +2251,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (visible.length === 0) {
         list.innerHTML = `
           <div class="empty-state">
-            <div class="empty-icon">📭</div>
+            <div class="empty-icon">${icon('inbox')}</div>
             <div class="empty-title">${(queueSearch || queueMonth || queueFilter !== 'all')
               ? 'Nothing matches' : 'No Print Jobs Yet'}</div>
             <div class="empty-sub">${jobs.length === 0
@@ -2282,9 +2286,9 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="queue-row-actions">
               <span class="queue-amount">${formatRupees(job.totalPriceInCents)}</span>
               <span class="badge ${badgeClass}">${escapeHtml(label)}</span>
-              ${needsCash ? `<button type="button" class="btn btn-primary btn-sm" data-approve="${escapeHtml(job.id)}">✅ Cash Received</button>` : ''}
-              ${job.printState === 'HeldForRelease' ? `<button type="button" class="btn btn-primary btn-sm" data-release="${escapeHtml(job.id)}">🖨️ Print now</button>` : ''}
-              ${canDecline(job) ? `<button type="button" class="btn btn-outline btn-sm btn-decline" data-decline="${escapeHtml(job.id)}" data-paid="${job.paymentState === 'Paid' ? '1' : ''}">✖ Decline</button>` : ''}
+              ${needsCash ? `<button type="button" class="btn btn-primary btn-sm" data-approve="${escapeHtml(job.id)}">${icon('circle-check')} Cash Received</button>` : ''}
+              ${job.printState === 'HeldForRelease' ? `<button type="button" class="btn btn-primary btn-sm" data-release="${escapeHtml(job.id)}">${icon('printer')} Print now</button>` : ''}
+              ${canDecline(job) ? `<button type="button" class="btn btn-outline btn-sm btn-decline" data-decline="${escapeHtml(job.id)}" data-paid="${job.paymentState === 'Paid' ? '1' : ''}">${icon('x')} Decline</button>` : ''}
             </div>
           </div>`;
       }).join('');
@@ -2382,12 +2386,12 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
           showToast('danger', 'Approval Failed', data.error || 'Could not queue this job.');
           btn.disabled = false;
-          btn.textContent = '✅ Cash Received';
+          btn.innerHTML = `${icon('circle-check')} Cash Received`;
         }
       } catch {
         showToast('danger', 'Network Error', 'Could not reach the API server.');
         btn.disabled = false;
-        btn.textContent = '✅ Cash Received';
+        btn.innerHTML = `${icon('circle-check')} Cash Received`;
       }
     }
 
@@ -3820,7 +3824,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const text = last.querySelector('.p-text');
         const icon = last.querySelector('.p-icon');
         if (text) text.textContent = job.printState === 'Cancelled' ? 'Cancelled' : 'Print Failed';
-        if (icon) icon.textContent = '⚠️';
+        if (icon) icon.innerHTML = window.PrintOkIcon('triangle-alert');
       }
     }
   }
@@ -3871,7 +3875,7 @@ document.addEventListener('DOMContentLoaded', () => {
             stop();
 
             if (job.printState === 'Completed') {
-              showToast('success', '🎉 Printing Completed!', 'Your document has been printed at the counter.');
+              showToast('success', 'Printing Completed!', 'Your document has been printed at the counter.');
             } else if (job.printState === 'Failed') {
               showToast('danger', 'Print Failed', job.errorMessage || 'Please speak to the shop counter staff.', 9000);
             } else {

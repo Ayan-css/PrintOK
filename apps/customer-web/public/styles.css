@@ -306,6 +306,21 @@ a { color: inherit; }
   display: none;
 }
 
+/* Line icons from /icons.svg (Lucide, ISC). Sized and coloured by the text
+   around them, so an icon in a button, a heading or an empty state needs no
+   rule of its own. */
+.icon {
+  width: 1.1em;
+  height: 1.1em;
+  vertical-align: -0.2em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+}
+
 /* Paper is white whatever the theme; its shape is set from app.js. */
 .preview-sheet {
   background: #fff;

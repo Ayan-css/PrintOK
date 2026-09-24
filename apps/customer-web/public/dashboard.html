@@ -60,7 +60,7 @@
 
         <div style="display: flex; gap: 8px;">
           <button id="btnRefreshQueue" class="btn btn-outline btn-sm" type="button" title="Refresh Live Queue">
-            🔄 Refresh
+            <svg class="icon" aria-hidden="true"><use href="/icons.svg#refresh-cw"/></svg> Refresh
           </button>
           <a href="/register" class="btn btn-secondary btn-sm" style="text-decoration: none; font-size: 11px;">+ New Shop</a>
         </div>
@@ -180,8 +180,8 @@
       <div id="dashboardView" hidden>
       <!-- GLOBAL TOP NAVIGATION BAR -->
       <nav class="global-nav-bar" aria-label="Merchant Navigation">
-        <a href="/dashboard" class="nav-pill active" aria-current="page">⚡ Merchant Dashboard</a>
-        <a href="/register" class="nav-pill">🏬 Register Shop</a>
+        <a href="/dashboard" class="nav-pill active" aria-current="page"><svg class="icon" aria-hidden="true"><use href="/icons.svg#zap"/></svg> Merchant Dashboard</a>
+        <a href="/register" class="nav-pill"><svg class="icon" aria-hidden="true"><use href="/icons.svg#store"/></svg> Register Shop</a>
       </nav>
 
       <!-- Main Dashboard Grid -->
@@ -198,15 +198,15 @@
             <!-- The wizard is a page of its own rather than a seventh tab here:
                  six nested tabs inside a tab is not navigation anyone follows. -->
             <a id="btnBusinessSetup" href="/setup" class="btn btn-outline btn-sm" style="text-decoration: none;">
-              ⚙️ Business Setup
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#settings"/></svg> Business Setup
             </a>
             <button type="button" id="btnThemeToggle" class="btn btn-outline btn-sm"
                     aria-pressed="false" title="Switch between light and dark">
-              <span id="themeToggleIcon" aria-hidden="true">🌙</span>
+              <span id="themeToggleIcon" aria-hidden="true"><svg class="icon" aria-hidden="true"><use href="/icons.svg#moon"/></svg></span>
               <span id="themeToggleLabel">Dark</span>
             </button>
             <a id="btnCustomerLink" href="/" target="_blank" rel="noopener" class="btn btn-outline btn-sm" style="text-decoration: none;">
-              📱 Open Customer View
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#smartphone"/></svg> Open Customer View
             </a>
             <button type="button" id="btnSignOut" class="btn btn-outline btn-sm"
                     title="Sign out of this shop on this PC">
@@ -218,7 +218,7 @@
         <!-- KPI Metrics Grid -->
         <div class="kpi-grid">
           <div class="kpi-card">
-            <div class="kpi-icon">💰</div>
+            <div class="kpi-icon"><svg class="icon" aria-hidden="true"><use href="/icons.svg#wallet"/></svg></div>
             <div class="kpi-body">
               <div class="kpi-label">Today's Revenue</div>
               <div class="kpi-value" id="statTodayRevenue">₹0.00</div>
@@ -227,7 +227,7 @@
           </div>
 
           <div class="kpi-card">
-            <div class="kpi-icon">⚡</div>
+            <div class="kpi-icon"><svg class="icon" aria-hidden="true"><use href="/icons.svg#zap"/></svg></div>
             <div class="kpi-body">
               <div class="kpi-label">Queued Jobs</div>
               <div class="kpi-value" id="statQueuedCount">0</div>
@@ -236,7 +236,7 @@
           </div>
 
           <div class="kpi-card">
-            <div class="kpi-icon">📄</div>
+            <div class="kpi-icon"><svg class="icon" aria-hidden="true"><use href="/icons.svg#file-text"/></svg></div>
             <div class="kpi-body">
               <div class="kpi-label">Printed Pages</div>
               <div class="kpi-value" id="statPrintedPages">0</div>
@@ -245,7 +245,7 @@
           </div>
 
           <div class="kpi-card">
-            <div class="kpi-icon">🖨️</div>
+            <div class="kpi-icon"><svg class="icon" aria-hidden="true"><use href="/icons.svg#printer"/></svg></div>
             <div class="kpi-body">
               <div class="kpi-label">Agent Latency</div>
               <div class="kpi-value" id="statAgentLatency">-- ms</div>
@@ -260,23 +260,23 @@
             <div class="dash-tabs-group" role="tablist" aria-label="Dashboard sections">
             <button class="dash-tab-btn active" id="tabBtnQueue" data-tab="tabQueue" type="button"
                     role="tab" aria-selected="true" aria-controls="tabQueue">
-              ⚡ Live Print Queue
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#zap"/></svg> Live Print Queue
             </button>
             <button class="dash-tab-btn" id="tabBtnQr" data-tab="tabQr" type="button"
                     role="tab" aria-selected="false" aria-controls="tabQr" tabindex="-1">
-              🖨️ QR Poster &amp; Agent
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#printer"/></svg> QR Poster &amp; Agent
             </button>
             <button class="dash-tab-btn" id="tabBtnMoney" data-tab="tabMoney" type="button"
                     role="tab" aria-selected="false" aria-controls="tabMoney" tabindex="-1">
-              💰 Earnings
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#wallet"/></svg> Earnings
             </button>
             <button class="dash-tab-btn" id="tabBtnStats" data-tab="tabStats" type="button"
                     role="tab" aria-selected="false" aria-controls="tabStats" tabindex="-1">
-              📊 Revenue Analytics
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#chart-column"/></svg> Revenue Analytics
             </button>
             <button class="dash-tab-btn" id="tabBtnRates" data-tab="tabRatesFrame" type="button"
                     role="tab" aria-selected="false" aria-controls="tabRatesFrame" tabindex="-1">
-              💷 Rates &amp; discounts
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#tag"/></svg> Rates &amp; discounts
             </button>
             </div>
 
@@ -313,7 +313,7 @@
             <!-- Queue Feed Container -->
             <div id="liveQueueList" class="queue-list" aria-live="polite" aria-busy="false">
               <div class="empty-state">
-                <div class="empty-icon">📭</div>
+                <div class="empty-icon"><svg class="icon" aria-hidden="true"><use href="/icons.svg#inbox"/></svg></div>
                 <div class="empty-title">No Print Jobs Yet</div>
                 <div class="empty-sub">Customer print requests will appear here in real-time as they scan your shop QR code.</div>
               </div>
@@ -398,10 +398,10 @@
 
                 <div class="grid-2" style="margin-top: 12px;">
                   <button type="button" id="btnDownloadQr" class="btn btn-secondary btn-sm">
-                    📥 Download Counter Poster (A4)
+                    <svg class="icon" aria-hidden="true"><use href="/icons.svg#download"/></svg> Download Counter Poster (A4)
                   </button>
                   <button type="button" id="btnOpenCustomerView" class="btn btn-outline btn-sm">
-                    📱 Test Customer Flow
+                    <svg class="icon" aria-hidden="true"><use href="/icons.svg#smartphone"/></svg> Test Customer Flow
                   </button>
                 </div>
               </div>
@@ -409,7 +409,7 @@
               <!-- Windows Agent Pairing Box -->
               <div class="card card--accent">
                 <div class="card-header">
-                  <h4 class="card-title">🖨️ Windows Agent Configuration</h4>
+                  <h4 class="card-title"><svg class="icon" aria-hidden="true"><use href="/icons.svg#printer"/></svg> Windows Agent Configuration</h4>
                   <span class="badge badge-queued">Shop PC Setup</span>
                 </div>
 
@@ -430,10 +430,10 @@
 
                 <div class="grid-2" style="margin-top: 12px;">
                   <a id="btnDownloadAgentExe" href="#" target="_blank" rel="noopener" class="btn btn-primary btn-sm" style="text-decoration: none; text-align: center;">
-                    ⬇️ Download Agent for Windows
+                    <svg class="icon" aria-hidden="true"><use href="/icons.svg#download"/></svg> Download Agent for Windows
                   </a>
                   <a id="btnDownloadAgentConfigFile" href="#" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration: none; text-align: center;">
-                    ⚙️ Auto-Config (.json)
+                    <svg class="icon" aria-hidden="true"><use href="/icons.svg#settings"/></svg> Auto-Config (.json)
                   </a>
                 </div>
 
@@ -452,10 +452,10 @@
 
                 <div class="grid-2" style="margin-top: 8px;">
                   <button class="btn btn-outline btn-sm" id="btnCopyAgentConfig" type="button">
-                    📋 Copy Settings JSON
+                    <svg class="icon" aria-hidden="true"><use href="/icons.svg#clipboard-copy"/></svg> Copy Settings JSON
                   </button>
                   <button class="btn btn-outline btn-sm" id="btnToggleSimulatedAgent" type="button">
-                    ▶️ Test In Browser
+                    <svg class="icon" aria-hidden="true"><use href="/icons.svg#play"/></svg> Test In Browser
                   </button>
                 </div>
 
@@ -466,7 +466,7 @@
                       <div class="label-text">Paired Shop PCs</div>
                       <div class="meta-text">Each PC gets its own key, so you can remove one without affecting the others.</div>
                     </div>
-                    <button class="btn btn-primary btn-sm" id="btnPairAgent" type="button">🔗 Pair New PC</button>
+                    <button class="btn btn-primary btn-sm" id="btnPairAgent" type="button"><svg class="icon" aria-hidden="true"><use href="/icons.svg#link"/></svg> Pair New PC</button>
                   </div>
 
                   <!--
@@ -485,7 +485,7 @@
                     <div class="pairing-code-row">
                       <code class="pairing-code-value" id="pairingCodeValue">--</code>
                       <button type="button" class="btn btn-outline btn-sm" id="btnCopyPairingCode"
-                              title="Copy just the code">📋 Copy</button>
+                              title="Copy just the code"><svg class="icon" aria-hidden="true"><use href="/icons.svg#clipboard-copy"/></svg> Copy</button>
                     </div>
                     <div class="pairing-expiry meta-text" id="pairingExpiry">Expires in 15:00</div>
                     <details class="pairing-advanced">

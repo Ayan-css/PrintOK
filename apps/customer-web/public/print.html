@@ -61,7 +61,7 @@
 
       <!-- Offline Printer Warning Banner -->
       <div id="agentOfflineWarning" class="agent-offline-banner" hidden>
-        ⚠️ <strong>Printer Offline</strong>: Shop's printer agent is currently disconnected. Jobs will be queued until agent reconnects.
+        <svg class="icon" aria-hidden="true"><use href="/icons.svg#triangle-alert"/></svg> <strong>Printer Offline</strong>: Shop's printer agent is currently disconnected. Jobs will be queued until agent reconnects.
       </div>
 
       <!-- ==============================================
@@ -69,7 +69,7 @@
       ================================================== -->
       <main id="screenLanding" class="main-content" hidden>
         <div class="landing-hero">
-          <div class="landing-badge">✨ Hardware-Free Stationery Printing</div>
+          <div class="landing-badge"><svg class="icon" aria-hidden="true"><use href="/icons.svg#sparkles"/></svg> Hardware-Free Stationery Printing</div>
           <h1 class="landing-title">Scan. Upload.<br><em>Print.</em></h1>
           <p class="landing-desc">
             No WhatsApp sending, no USB pen drives. Scan the shop QR code, select your print configuration, pay via UPI, and your document prints automatically at the counter!
@@ -115,7 +115,7 @@
           <!-- Demo Printer Launcher Button -->
           <div style="margin-top: 16px; text-align: center;">
             <a id="btnDemoPrinter" href="/?printer=prn_test" class="btn btn-secondary btn-full" style="text-decoration: none;">
-              📱 Try Customer Printing Demo Mode
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#smartphone"/></svg> Try Customer Printing Demo Mode
             </a>
           </div>
         </div>
@@ -145,20 +145,20 @@
             -->
             <input type="file" id="fileInput" class="sr-only"
                    accept=".pdf,.png,.jpg,.jpeg,.webp">
-            <div class="drop-zone-icon" aria-hidden="true">📄</div>
+            <div class="drop-zone-icon" aria-hidden="true"><svg class="icon" aria-hidden="true"><use href="/icons.svg#file-text"/></svg></div>
             <div class="drop-zone-text">Tap or Drop Document Here</div>
             <div class="drop-zone-sub">PDF &amp; Images (Max 25MB) — export Word or Excel as PDF first</div>
           </div>
 
           <!-- Paper in hand, no file: the phone camera takes the page. -->
           <label class="btn btn-outline btn-full" style="margin-top: 10px;">
-            📷 Scan a page with your camera
+            <svg class="icon" aria-hidden="true"><use href="/icons.svg#camera"/></svg> Scan a page with your camera
             <input type="file" id="scanInput" class="sr-only" accept="image/*" capture="environment">
           </label>
 
           <!-- Both sides of an ID card on one side of one sheet, at real size. -->
           <details class="id-card-tool" style="margin-top: 10px;">
-            <summary class="btn btn-outline btn-full">🪪 ID card: front and back on one page</summary>
+            <summary class="btn btn-outline btn-full"><svg class="icon" aria-hidden="true"><use href="/icons.svg#id-card"/></svg> ID card: front and back on one page</summary>
             <div class="grid-2" style="margin-top: 10px;">
               <div class="form-group">
                 <label class="form-label" for="idFront">Front side</label>
@@ -184,19 +184,19 @@
           <!-- Uploaded File Details Pill -->
           <div id="fileInfoBox" class="file-info-pill" hidden>
             <div class="file-info-left">
-              <span class="file-icon">📄</span>
+              <span class="file-icon"><svg class="icon" aria-hidden="true"><use href="/icons.svg#file-text"/></svg></span>
               <div>
                 <div class="file-name" id="infoFileName">document.pdf</div>
                 <div class="file-meta" id="infoFileMeta">Auto-detecting pages...</div>
               </div>
             </div>
-            <button id="btnRemoveFile" type="button" class="btn-icon" title="Remove File" aria-label="Remove selected file">✕</button>
+            <button id="btnRemoveFile" type="button" class="btn-icon" title="Remove File" aria-label="Remove selected file"><svg class="icon" aria-hidden="true"><use href="/icons.svg#x"/></svg></button>
           </div>
 
           <!-- Document Visual Preview Box -->
           <div id="documentPreviewBox" class="document-preview-box" hidden>
             <div class="preview-header">
-              <span class="preview-title">🔍 Visual Document Preview</span>
+              <span class="preview-title"><svg class="icon" aria-hidden="true"><use href="/icons.svg#search"/></svg> Visual Document Preview</span>
               <span id="previewPageBadge" class="badge badge-neutral">Page 1</span>
             </div>
             <div class="preview-viewport">
@@ -206,7 +206,7 @@
                 <canvas id="previewCanvas" hidden></canvas>
               </div>
               <div id="previewFallback" class="preview-fallback">
-                <div class="fallback-icon">📄</div>
+                <div class="fallback-icon"><svg class="icon" aria-hidden="true"><use href="/icons.svg#file-text"/></svg></div>
                 <div id="previewFallbackText">Loading preview…</div>
               </div>
             </div>
@@ -266,11 +266,11 @@
             <div class="option-pill-group">
               <label class="option-pill active" id="pillPagesAll">
                 <input type="radio" name="pageRangeMode" value="all" class="sr-only" checked>
-                <span>📖 All Pages (<span id="allPagesCountBadge">1</span>)</span>
+                <span><svg class="icon" aria-hidden="true"><use href="/icons.svg#book-open"/></svg> All Pages (<span id="allPagesCountBadge">1</span>)</span>
               </label>
               <label class="option-pill" id="pillPagesCustom">
                 <input type="radio" name="pageRangeMode" value="custom" class="sr-only">
-                <span>✏️ Custom Range</span>
+                <span><svg class="icon" aria-hidden="true"><use href="/icons.svg#pencil"/></svg> Custom Range</span>
               </label>
             </div>
             <div id="customPageRangeBox" style="margin-top: 8px;" hidden>
@@ -288,11 +288,11 @@
             <div class="option-pill-group">
               <label class="option-pill active" id="pillBw">
                 <input type="radio" name="colorMode" value="bw" class="sr-only" checked>
-                <span>📄 Black &amp; White</span>
+                <span><svg class="icon" aria-hidden="true"><use href="/icons.svg#file-text"/></svg> Black &amp; White</span>
               </label>
               <label class="option-pill" id="pillColor">
                 <input type="radio" name="colorMode" value="color" class="sr-only">
-                <span>🎨 Full Color</span>
+                <span><svg class="icon" aria-hidden="true"><use href="/icons.svg#palette"/></svg> Full Color</span>
               </label>
             </div>
           </div>
@@ -303,11 +303,11 @@
             <div class="option-pill-group">
               <label class="option-pill active" id="pillSingle">
                 <input type="radio" name="duplexMode" value="single" class="sr-only" checked>
-                <span>📄 Single-Sided</span>
+                <span><svg class="icon" aria-hidden="true"><use href="/icons.svg#file-text"/></svg> Single-Sided</span>
               </label>
               <label class="option-pill" id="pillDuplex">
                 <input type="radio" name="duplexMode" value="duplex" class="sr-only">
-                <span>🔄 Back-to-Back (Duplex)</span>
+                <span><svg class="icon" aria-hidden="true"><use href="/icons.svg#copy"/></svg> Back-to-Back (Duplex)</span>
               </label>
             </div>
           </div>
@@ -323,15 +323,15 @@
             <div class="option-pill-group">
               <label class="option-pill active" id="pillOrientAuto">
                 <input type="radio" name="orientation" value="auto" class="sr-only" checked>
-                <span>🔎 Auto</span>
+                <span><svg class="icon" aria-hidden="true"><use href="/icons.svg#sparkles"/></svg> Auto</span>
               </label>
               <label class="option-pill" id="pillOrientPortrait">
                 <input type="radio" name="orientation" value="portrait" class="sr-only">
-                <span>📄 Portrait</span>
+                <span><svg class="icon" aria-hidden="true"><use href="/icons.svg#file-text"/></svg> Portrait</span>
               </label>
               <label class="option-pill" id="pillOrientLandscape">
                 <input type="radio" name="orientation" value="landscape" class="sr-only">
-                <span>📃 Landscape</span>
+                <span><svg class="icon" aria-hidden="true"><use href="/icons.svg#rectangle-horizontal"/></svg> Landscape</span>
               </label>
             </div>
             <div class="form-help" id="orientationHelp">
@@ -372,10 +372,10 @@
           <!-- Checkout Actions -->
           <div class="grid-2" style="margin-top: 14px;">
             <button id="btnPayRazorpay" class="btn btn-primary btn-full">
-              💳 Pay via Razorpay / UPI
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#credit-card"/></svg> Pay via Razorpay / UPI
             </button>
             <button id="btnPayCash" class="btn btn-secondary btn-full">
-              💵 Pay Cash at Counter
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#banknote"/></svg> Pay Cash at Counter
             </button>
           </div>
         </div>
@@ -394,7 +394,7 @@
           <div class="token-sub">Show Token Number at Shop Counter</div>
           
           <button id="btnCopyToken" type="button" class="btn btn-outline btn-sm" style="margin-top: 10px; border-color: #fff; color: #fff;">
-            📋 Copy Token Number
+            <svg class="icon" aria-hidden="true"><use href="/icons.svg#clipboard-copy"/></svg> Copy Token Number
           </button>
         </div>
 
@@ -408,19 +408,19 @@
           <!-- Progress Stepper Track -->
           <div class="progress-track">
             <div class="progress-step completed" id="pStep1">
-              <div class="p-icon">✓</div>
+              <div class="p-icon"><svg class="icon" aria-hidden="true"><use href="/icons.svg#check"/></svg></div>
               <div class="p-text">Job Created</div>
             </div>
             <div class="progress-step active" id="pStep2">
-              <div class="p-icon">💳</div>
+              <div class="p-icon"><svg class="icon" aria-hidden="true"><use href="/icons.svg#credit-card"/></svg></div>
               <div class="p-text">Payment Verified</div>
             </div>
             <div class="progress-step" id="pStep3">
-              <div class="p-icon">⬇️</div>
+              <div class="p-icon"><svg class="icon" aria-hidden="true"><use href="/icons.svg#download"/></svg></div>
               <div class="p-text">Sent to Printer</div>
             </div>
             <div class="progress-step" id="pStep4">
-              <div class="p-icon">🖨️</div>
+              <div class="p-icon"><svg class="icon" aria-hidden="true"><use href="/icons.svg#printer"/></svg></div>
               <div class="p-text">Print Complete</div>
             </div>
           </div>
@@ -443,7 +443,7 @@
 
           <div style="margin-top: 16px;">
             <button id="btnNewPrintJob" class="btn btn-primary btn-full">
-              📄 Print Another Document
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#file-text"/></svg> Print Another Document
             </button>
           </div>
         </div>

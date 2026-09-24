@@ -38,11 +38,19 @@
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
   /** One of the three ways a customer can scan, drawn as a small labelled tile. */
+  // Lucide (ISC), inlined: a poster rendered to PNG cannot load /icons.svg.
+  const ICONS = {
+    'camera': '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" /> <circle cx="12" cy="13" r="3" />',
+    'search': '<circle cx="11" cy="11" r="8" /> <path d="m21 21-4.3-4.3" />',
+    'smartphone': '<rect width="14" height="20" x="5" y="2" rx="2" ry="2" /> <path d="M12 18h.01" />',
+  };
+
   function scanRoute(x, y, glyph, hindi, english) {
     return `
       <g transform="translate(${x} ${y})">
         <rect x="-70" y="0" width="140" height="140" rx="18" fill="#ffffff" stroke="${INK}" stroke-width="3"/>
-        <text x="0" y="86" font-family="${LATIN}" font-size="54" text-anchor="middle">${glyph}</text>
+        <g transform="translate(-30 40) scale(2.5)" fill="none" stroke="${INK}" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">${ICONS[glyph]}</g>
         <text x="0" y="176" font-family="${DEVANAGARI}" font-size="26" fill="${INK}" text-anchor="middle">${esc(hindi)}</text>
         <text x="0" y="208" font-family="${LATIN}" font-size="22" fill="#55554e" text-anchor="middle">${esc(english)}</text>
       </g>`;
@@ -80,9 +88,9 @@
   </text>
 
   <!-- How to scan it -->
-  ${scanRoute(W / 2 - 260, 430, '📷', 'कैमरा', 'Camera')}
-  ${scanRoute(W / 2, 430, '🔍', 'गूगल लेंस', 'Google Lens')}
-  ${scanRoute(W / 2 + 260, 430, '📱', 'कोई QR ऐप', 'Any QR app')}
+  ${scanRoute(W / 2 - 260, 430, 'camera', 'कैमरा', 'Camera')}
+  ${scanRoute(W / 2, 430, 'search', 'गूगल लेंस', 'Google Lens')}
+  ${scanRoute(W / 2 + 260, 430, 'smartphone', 'कोई QR ऐप', 'Any QR app')}
 
   <!-- The code itself, on white so a phone reads it off coloured paper too -->
   <rect x="${W / 2 - 320}" y="700" width="640" height="640" rx="28"

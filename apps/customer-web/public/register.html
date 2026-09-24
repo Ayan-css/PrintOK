@@ -50,17 +50,17 @@
         <div style="display: flex; gap: 8px;">
           <button type="button" id="btnThemeToggle" class="btn btn-outline btn-sm"
                   aria-pressed="false" title="Switch between light and dark">
-            <span id="themeToggleIcon" aria-hidden="true">🌙</span>
+            <span id="themeToggleIcon" aria-hidden="true"><svg class="icon" aria-hidden="true"><use href="/icons.svg#moon"/></svg></span>
             <span id="themeToggleLabel">Dark</span>
           </button>
-          <a href="/dashboard" class="btn btn-outline btn-sm" style="text-decoration: none; font-size: 11px;">🏬 Merchant Dashboard</a>
+          <a href="/dashboard" class="btn btn-outline btn-sm" style="text-decoration: none; font-size: 11px;"><svg class="icon" aria-hidden="true"><use href="/icons.svg#store"/></svg> Merchant Dashboard</a>
         </div>
       </header>
 
       <!-- Global Top Navigation Bar -->
       <nav class="global-nav-bar" aria-label="Merchant Navigation">
-        <a href="/register" class="nav-pill active" aria-current="page">🏬 Register Shop</a>
-        <a href="/dashboard" class="nav-pill">⚡ Merchant Dashboard</a>
+        <a href="/register" class="nav-pill active" aria-current="page"><svg class="icon" aria-hidden="true"><use href="/icons.svg#store"/></svg> Register Shop</a>
+        <a href="/dashboard" class="nav-pill"><svg class="icon" aria-hidden="true"><use href="/icons.svg#zap"/></svg> Merchant Dashboard</a>
       </nav>
 
       <!-- Main Registration View -->
@@ -130,7 +130,7 @@
             </div>
 
             <button type="button" id="btnNextStep1" class="btn btn-primary btn-full" style="margin-top: 10px;">
-              Next: Set Rates &amp; UPI Payout ➔
+              Next: Set Rates &amp; UPI Payout <svg class="icon" aria-hidden="true"><use href="/icons.svg#arrow-right"/></svg>
             </button>
           </form>
 
@@ -216,10 +216,10 @@
 
             <div class="grid-2" style="margin-top: 10px;">
               <button type="button" id="btnPrevStep2" class="btn btn-outline">
-                ⬅️ Back
+                <svg class="icon" aria-hidden="true"><use href="/icons.svg#arrow-left"/></svg> Back
               </button>
               <button type="button" id="btnNextStep2" class="btn btn-primary">
-                Next: Choose a plan ➔
+                Next: Choose a plan <svg class="icon" aria-hidden="true"><use href="/icons.svg#arrow-right"/></svg>
               </button>
             </div>
           </form>
@@ -234,28 +234,28 @@
             <div class="grid-2" role="group" aria-label="Subscription plan">
               <label class="option-pill active" id="planPillFree" style="text-align: left; padding: 12px;">
                 <input type="radio" name="regPlanSelect" value="free" class="sr-only" checked>
-                <div style="font-weight: 800; font-size: 14px;">🆓 Free</div>
+                <div style="font-weight: 800; font-size: 14px;"><svg class="icon" aria-hidden="true"><use href="/icons.svg#gift"/></svg> Free</div>
                 <div style="font-size: 16px; font-weight: 800; color: var(--color-primary);">₹0 <span>/ month</span></div>
                 <div class="meta-text" style="font-size: 10px; margin-top: 4px;">2% platform fee • 1 printer • 1 staff • 100 orders/month</div>
               </label>
 
               <label class="option-pill" id="planPillStarter" style="text-align: left; padding: 12px;">
                 <input type="radio" name="regPlanSelect" value="starter" class="sr-only">
-                <div style="font-weight: 800; font-size: 14px;">🚀 Starter</div>
+                <div style="font-weight: 800; font-size: 14px;"><svg class="icon" aria-hidden="true"><use href="/icons.svg#rocket"/></svg> Starter</div>
                 <div style="font-size: 16px; font-weight: 800; color: var(--color-primary);">₹149 <span>/ month</span></div>
                 <div class="meta-text" style="font-size: 10px; margin-top: 4px;">1% platform fee • 2 printers • 3 staff • 1,000 orders/month</div>
               </label>
 
               <label class="option-pill" id="planPillBusiness" style="text-align: left; padding: 12px;">
                 <input type="radio" name="regPlanSelect" value="business" class="sr-only">
-                <div style="font-weight: 800; font-size: 14px;">⚡ Business</div>
+                <div style="font-weight: 800; font-size: 14px;"><svg class="icon" aria-hidden="true"><use href="/icons.svg#zap"/></svg> Business</div>
                 <div style="font-size: 16px; font-weight: 800; color: var(--color-primary);">₹349 <span>/ month</span></div>
                 <div class="meta-text" style="font-size: 10px; margin-top: 4px;">0.5% platform fee • 5 printers • 8 staff • 4,000 orders/month</div>
               </label>
 
               <label class="option-pill" id="planPillPro" style="text-align: left; padding: 12px;">
                 <input type="radio" name="regPlanSelect" value="pro" class="sr-only">
-                <div style="font-weight: 800; font-size: 14px;">👑 Pro</div>
+                <div style="font-weight: 800; font-size: 14px;"><svg class="icon" aria-hidden="true"><use href="/icons.svg#crown"/></svg> Pro</div>
                 <div style="font-size: 16px; font-weight: 800; color: var(--color-primary);">₹699 <span>/ month</span></div>
                 <div class="meta-text" style="font-size: 10px; margin-top: 4px;">No platform fee • 10 printers • 15 staff • 10,000 orders/month</div>
               </label>
@@ -269,7 +269,7 @@
 
             <div class="grid-2" style="margin-top: 14px;">
               <button type="button" id="btnPrevStep3" class="btn btn-outline">
-                ⬅️ Back
+                <svg class="icon" aria-hidden="true"><use href="/icons.svg#arrow-left"/></svg> Back
               </button>
               <button type="button" id="btnSubmitRegister" class="btn btn-primary">
                 Create my shop
@@ -280,7 +280,7 @@
           <!-- STEP 4 RESULT: QR Code & Agent Downloads -->
           <div id="formStep4" class="wizard-pane" hidden>
             <div class="registration-success-banner">
-              <div class="success-icon">🎉</div>
+              <div class="success-icon"><svg class="icon" aria-hidden="true"><use href="/icons.svg#party-popper"/></svg></div>
               <h3>Shop &amp; Plan Activated Successfully!</h3>
               <p>Your shop is live on PrintOk. Place your QR poster on your shop counter and download the Windows Agent.</p>
             </div>
@@ -298,10 +298,10 @@
               
               <div class="grid-2" style="margin-top: 12px;">
                 <button type="button" id="btnDownloadPosterPng" class="btn btn-secondary btn-sm">
-                  📥 Download QR Poster (PNG)
+                  <svg class="icon" aria-hidden="true"><use href="/icons.svg#download"/></svg> Download QR Poster (PNG)
                 </button>
                 <a id="btnGoToDashboard" href="/dashboard" class="btn btn-primary btn-sm" style="text-decoration: none; text-align: center;">
-                  ⚡ Open Control Dashboard
+                  <svg class="icon" aria-hidden="true"><use href="/icons.svg#zap"/></svg> Open Control Dashboard
                 </a>
               </div>
             </div>
@@ -309,7 +309,7 @@
             <!-- Agent Pairing Box -->
             <div class="card card--accent" style="margin-top: 16px;">
               <div class="card-header">
-                <h4 class="card-title">🖨️ Windows Agent Installation</h4>
+                <h4 class="card-title"><svg class="icon" aria-hidden="true"><use href="/icons.svg#printer"/></svg> Windows Agent Installation</h4>
                 <span class="badge badge-queued">Shop PC Setup</span>
               </div>
 
@@ -330,10 +330,10 @@
 
               <div class="grid-2" style="margin-top: 12px;">
                 <a id="btnDownloadAgentExe" href="#" target="_blank" rel="noopener" class="btn btn-primary btn-sm" style="text-decoration: none; text-align: center;">
-                  ⬇️ Download PrintAgent.exe
+                  <svg class="icon" aria-hidden="true"><use href="/icons.svg#download"/></svg> Download PrintAgent.exe
                 </a>
                 <a id="btnDownloadAgentConfig" href="#" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" style="text-decoration: none; text-align: center;">
-                  ⚙️ Auto-Config (.json)
+                  <svg class="icon" aria-hidden="true"><use href="/icons.svg#settings"/></svg> Auto-Config (.json)
                 </a>
               </div>
             </div>
