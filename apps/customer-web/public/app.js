@@ -441,16 +441,25 @@ document.addEventListener('DOMContentLoaded', () => {
       if (radio) radio.addEventListener('change', () => selectPlan(p.id, p.val));
     });
 
+    /**
+     * The browser's own validation: required, type=email, minlength and
+     * pattern, with the first bad field focused and explained. Text is trimmed
+     * first, because `required` is satisfied by a field of spaces.
+     */
+    function stepIsValid(form) {
+      form.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"]')
+        .forEach((input) => { input.value = input.value.trim(); });
+      return form.reportValidity();
+    }
+
+    // Enter in a field submits the form, which reloads the page and loses
+    // everything typed. Treat it as pressing Next instead.
+    [[formStep1, () => btnNextStep1?.click()], [formStep2, () => btnNextStep2?.click()]]
+      .forEach(([form, next]) => form?.addEventListener('submit', (e) => { e.preventDefault(); next(); }));
+
     if (btnNextStep1) {
       btnNextStep1.addEventListener('click', () => {
-        const shopName = document.getElementById('regShopName').value.trim();
-        const ownerEmail = document.getElementById('regOwnerEmail').value.trim();
-        const printerName = document.getElementById('regPrinterName').value.trim();
-
-        if (!shopName || !ownerEmail || !printerName) {
-          showToast('warning', 'Missing Details', 'Please fill in Shop Name, Email, and Printer Model.');
-          return;
-        }
+        if (!stepIsValid(formStep1)) return;
 
         formStep1.hidden = true;
         formStep2.hidden = false;
@@ -470,35 +479,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (btnNextStep2) {
       btnNextStep2.addEventListener('click', () => {
-        const upiId = document.getElementById('regUpiId').value.trim();
-        if (!/^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/.test(upiId)) {
-          showToast('warning', 'UPI ID needed', 'Enter the UPI ID your payouts should go to, like ramesh@oksbi.');
-          return;
-        }
-        const account = document.getElementById('regBankAccount').value.replace(/\s+/g, '');
-        const ifsc = document.getElementById('regBankIfsc').value.replace(/\s+/g, '').toUpperCase();
-        if ((account || ifsc) && !(/^[0-9]{9,18}$/.test(account) && /^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc))) {
+        // Formats and required fields are the form's own (see stepIsValid);
+        // only the rules HTML cannot express are checked here.
+        if (!stepIsValid(formStep2)) return;
+        const account = document.getElementById('regBankAccount');
+        const ifsc = document.getElementById('regBankIfsc');
+        if (Boolean(account.value) !== Boolean(ifsc.value)) {
+          (account.value ? ifsc : account).focus();
           showToast('warning', 'Bank details incomplete',
-            'Enter both a 9–18 digit account number and an 11-character IFSC, or leave both empty.');
+            'Enter both the account number and the IFSC, or leave both empty.');
           return;
         }
         if (!document.querySelector('#regRateGrid .rate-on:checked')) {
           showToast('warning', 'Nothing to print', 'Tick at least one kind of print you offer.');
-          return;
-        }
-
-        const missing = [
-          ['regContactPhone', 'Contact phone'],
-          ['regAddressStreet1', 'Street address'],
-          ['regAddressCity', 'City'],
-          ['regAddressState', 'State'],
-          ['regAddressPostalCode', 'PIN code'],
-        ].filter(([id]) => !(document.getElementById(id) || {}).value?.trim())
-         .map(([, label]) => label);
-
-        if (missing.length) {
-          showToast('warning', 'Business details needed',
-            `${missing.join(', ')} — Razorpay cannot settle payments to you without these.`);
           return;
         }
 
