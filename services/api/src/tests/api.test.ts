@@ -2476,9 +2476,10 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(data.totals.grossCents, row.grossCents);
     assert.strictEqual(data.totals.netCents, row.netCents);
 
-    // The estimate is labelled as one, because it will not match the
-    // settlement statement to the paisa.
-    assert.strictEqual(data.feesAreEstimated, true);
+    // A cash order's fees are exact: Razorpay took nothing and the rate was
+    // fixed when the cash was accepted. Only online orders without Razorpay's
+    // reported fee are estimates.
+    assert.strictEqual(data.feesAreEstimated, false);
     assert.strictEqual(data.settlement, 'pending-route', 'this shop is not connected to Razorpay yet');
 
     // A window with nothing in it reports zero rather than everything.
@@ -4094,7 +4095,15 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     })).json() as any;
     assert.strictEqual(payout.grossCents, earnings.totals.grossCents, 'the two screens agree on gross');
     assert.strictEqual(payout.razorpayFeeCents, earnings.totals.razorpayFeeCents, '…and on fees');
-    assert.strictEqual(payout.netAvailableCents, earnings.totals.netCents, '…and on net');
+    // What PrintOk transfers: the online order's net, less the fee on the cash
+    // order, whose money the shop already holds.
+    assert.strictEqual(earnings.totals.cashFeesCents, cashRow.platformCommissionCents);
+    assert.strictEqual(
+      earnings.totals.settlementCents,
+      onlineRow.netCents - cashRow.platformCommissionCents,
+      'cash fees come out of the settlement'
+    );
+    assert.strictEqual(payout.netAvailableCents, earnings.totals.settlementCents, '…and on what is transferred');
   });
 
   await t.test('93. A shop can set where its money goes, and is told how it gets there', async () => {

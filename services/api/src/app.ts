@@ -415,6 +415,14 @@ function summariseShopEarnings(jobs: PrintJob[], commissionBps: number) {
       netCents: sum((r) => r.netCents),
       cashOrders: rows.filter((r) => r.paymentMethod === 'cash').length,
       onlineOrders: rows.filter((r) => r.paymentMethod === 'online').length,
+      // What PrintOk transfers to the shop. Online money passed through
+      // PrintOk, so the shop is owed its net; cash never did, so the shop
+      // already holds it and PrintOk's fee on it comes out of the transfer.
+      // Negative means the shop owes PrintOk.
+      cashFeesCents: sum((r) => (r.paymentMethod === 'cash' ? r.platformCommissionCents : 0)),
+      settlementCents:
+        sum((r) => (r.paymentMethod === 'online' ? r.netCents : 0)) -
+        sum((r) => (r.paymentMethod === 'cash' ? r.platformCommissionCents : 0)),
       /** How many rows carry figures Razorpay reported rather than estimates. */
       ordersWithActualFees: rows.filter((r) => r.feesAreActual).length,
     },
@@ -3695,6 +3703,7 @@ export function createApp(
         return res.status(status).json({ error: result.reason });
       }
       const job = result.job;
+      await freezeCashLedger(job);
 
       if (wsServer) {
         wsServer.notifyJobQueued(job);
@@ -4216,6 +4225,12 @@ export function createApp(
   /**
    * Windows Print Agent Polling Endpoint
    */
+  /** A cash order's fee, fixed at the shop's rate today. Razorpay took nothing. */
+  async function freezeCashLedger(job: PrintJob) {
+    const plan = await storage.getShopPlan(job.shopId);
+    await freezeFeeLedger(storage, job, plan?.commissionBps ?? DEFAULT_PLATFORM_FEE_BPS, { feeCents: 0, taxCents: 0 });
+  }
+
   /**
    * Cash orders waiting at this printer's counter, for the desktop agent's
    * approve/reject prompt. A cash order is one awaiting payment that never
@@ -4256,7 +4271,10 @@ export function createApp(
         : await storage.declineJob(req.params.id, 'Declined at the counter.', { actor });
       if (!result.ok) return res.status(409).json({ error: result.reason });
 
-      if (req.params.decision === 'approve' && wsServer) wsServer.notifyJobQueued(result.job);
+      if (req.params.decision === 'approve') {
+        await freezeCashLedger(result.job);
+        if (wsServer) wsServer.notifyJobQueued(result.job);
+      }
       return res.json({ success: true, job: result.job });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -4768,7 +4786,10 @@ export function createApp(
         commissionBps,
         razorpayFeeCents: totals.razorpayFeeCents,
         platformCommissionCents: totals.platformCommissionCents,
-        netAvailableCents: totals.netCents,
+        // What PrintOk transfers: online earnings less the fees on cash
+        // orders, whose money the shop already holds.
+        netAvailableCents: totals.settlementCents,
+        cashFeesCents: totals.cashFeesCents,
         // So the screen can say why a cash order carries no gateway deduction.
         cashOrders: totals.cashOrders,
         onlineOrders: totals.onlineOrders,

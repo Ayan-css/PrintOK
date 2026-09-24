@@ -1412,6 +1412,12 @@ document.addEventListener('DOMContentLoaded', () => {
           ),
           tile('PrintOk commission', t.platformCommissionCents, `${(data.commissionBps / 100).toFixed(2)}% of each order`),
           tile('You keep', t.netCents, 'after both'),
+          // Cash is already in the till, so its fee comes out of what PrintOk
+          // sends: the transfer is online earnings less the cash fees.
+          t.settlementCents < 0
+            ? tile('You owe PrintOk', -t.settlementCents, `fees on ${t.cashOrders} cash order${t.cashOrders === 1 ? '' : 's'}`)
+            : tile('PrintOk pays you', t.settlementCents ?? t.netCents,
+              t.cashFeesCents ? `online earnings less ${formatRupees(t.cashFeesCents)} fees on cash orders` : 'your online earnings'),
         ].join('');
       }
 
@@ -2479,78 +2485,19 @@ document.addEventListener('DOMContentLoaded', () => {
       fileInput.addEventListener('change', (e) => {
         if (e.target.files.length > 0) handleCustomerFile(e.target.files[0]);
       });
-      document.getElementById('scanInput')?.addEventListener('change', (e) => {
-        if (e.target.files.length > 0) handleCustomerFile(e.target.files[0]);
-        e.target.value = '';
+      // Scanning (in-page camera, perspective crop) and the ID card page live in scan.js.
+      document.getElementById('btnScanDocument')?.addEventListener('click', () => {
+        window.PrintOkScan?.document(handleCustomerFile);
       });
-
-      document.getElementById('btnMakeIdPage')?.addEventListener('click', async () => {
-        const front = document.getElementById('idFront').files[0];
-        const back = document.getElementById('idBack').files[0];
-        const w = Number(document.getElementById('idWidth').value);
-        const h = Number(document.getElementById('idHeight').value);
-        if (!front || !back) {
-          showToast('warning', 'Both sides needed', 'Choose a photo of the front and of the back.');
-          return;
-        }
-        // Two cards stacked, 15 mm margins and a 10 mm gap, on a portrait A4 sheet.
-        if (!(w >= 20 && h >= 20 && w <= 180 && 2 * h <= 257)) {
-          showToast('warning', 'Size does not fit', 'Width up to 180 mm, and height up to 128 mm so both sides fit on A4.');
-          return;
-        }
-        try {
-          handleCustomerFile(await composeIdPage(front, back, w, h));
-          // The page is drawn for A4, so print it on A4 whatever was picked before.
+      const idPanel = document.getElementById('idCardTool');
+      if (idPanel && window.PrintOkScan) {
+        window.PrintOkScan.idTool(idPanel, (file) => {
+          handleCustomerFile(file);
+          // The page is drawn for A4, so it prints on A4 whatever was picked before.
           const paper = document.getElementById('selectPaperSize');
           if (paper && paper.value !== 'A4') { paper.value = 'A4'; paper.dispatchEvent(new Event('change')); }
-          document.querySelector('.id-card-tool')?.removeAttribute('open');
-        } catch {
-          showToast('danger', 'Could not read the photos', 'Try JPG or PNG images of each side.');
-        }
-      });
-
-      /**
-       * One A4 page image, at 200 dpi, with each side drawn at its real size.
-       * Each photo is turned to match the card's shape and filled edge to edge,
-       * which trims the background around a photographed card.
-       * ponytail: no crop tool; add one if customers upload loosely framed photos.
-       */
-      async function composeIdPage(frontFile, backFile, wMm, hMm) {
-        const px = (mm) => Math.round((mm / 25.4) * 200);
-        const canvas = document.createElement('canvas');
-        canvas.width = px(210);
-        canvas.height = px(297);
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#fff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        const x = (canvas.width - px(wMm)) / 2;
-        const sides = [[frontFile, px(15)], [backFile, px(15) + px(hMm) + px(10)]];
-        for (const [file, y] of sides) {
-          const img = await createImageBitmap(file, { imageOrientation: 'from-image' });
-          const bw = px(wMm);
-          const bh = px(hMm);
-          const turn = (img.width > img.height) !== (bw > bh);
-          const iw = turn ? img.height : img.width;
-          const ih = turn ? img.width : img.height;
-          const scale = Math.max(bw / iw, bh / ih);
-
-          ctx.save();
-          ctx.beginPath();
-          ctx.rect(x, y, bw, bh);
-          ctx.clip();
-          ctx.translate(x + bw / 2, y + bh / 2);
-          if (turn) ctx.rotate(Math.PI / 2);
-          ctx.drawImage(img, (-img.width * scale) / 2, (-img.height * scale) / 2, img.width * scale, img.height * scale);
-          ctx.restore();
-          // A thin outline to cut along.
-          ctx.strokeStyle = '#999';
-          ctx.strokeRect(x, y, bw, bh);
-          img.close();
-        }
-
-        const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
-        return new File([blob], 'id-card-both-sides.jpg', { type: 'image/jpeg' });
+          idPanel.removeAttribute('open');
+        });
       }
 
       dropZone.addEventListener('dragover', (e) => {
@@ -2602,6 +2549,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function handleCustomerFile(file) {
+      // A phone photo can be 5-15 MB at 50 megapixels. Reading, previewing and
+      // base64-encoding that is what ran low-memory phones out of memory; at
+      // print resolution it is a tenth of the size and prints the same.
+      if (window.PrintOkScan) file = await window.PrintOkScan.shrinkImage(file);
       if (file.size > MAX_UPLOAD_BYTES) {
         showToast('danger', 'File Too Large',
           `${(file.size / (1024 * 1024)).toFixed(1)} MB exceeds the 25 MB limit. Please compress or split the document.`);

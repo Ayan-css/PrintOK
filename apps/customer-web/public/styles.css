@@ -321,6 +321,23 @@ a { color: inherit; }
   flex-shrink: 0;
 }
 
+/* ID card page: the A4 preview beside its size, with a draggable corner. */
+.id-preview {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin-block: 10px 12px;
+}
+#idPreview {
+  width: 150px;
+  max-width: 45%;
+  height: auto;
+  flex: none;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  touch-action: none;
+}
+
 /* Paper is white whatever the theme; its shape is set from app.js. */
 .preview-sheet {
   background: #fff;
@@ -1805,7 +1822,8 @@ body::before {
   transition: all 150ms ease;
 }
 
-.option-pill.active {
+.option-pill.active,
+.option-pill[aria-pressed="true"] {
   background: var(--color-primary-light);
   border-color: var(--color-primary);
   box-shadow: var(--shadow-xs);

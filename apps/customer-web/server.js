@@ -76,7 +76,8 @@ const REPORT_ONLY_CSP = [
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+  // The customer page scans documents with the camera; merchant screens never need it.
+  res.setHeader('Permissions-Policy', `camera=${/^\/(dashboard|admin|setup)/.test(req.path) ? '()' : '(self)'}, microphone=(), geolocation=(), payment=()`);
 
   // Merchant and operator screens carry authenticated, state-changing controls
   // and nothing legitimately frames them.

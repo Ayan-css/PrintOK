@@ -33,6 +33,7 @@
     moment — pdf.js still pinned by the same content hash, checkout still
     deliberately unpinned because Razorpay update it in place.
   -->
+  <script src="/scan.js" defer></script>
   <script src="/app.js" defer></script>
   <meta property="og:image" content="https://printok.vercel.app/og-image.png">
   <meta property="og:image:width" content="1200">
@@ -156,35 +157,45 @@
             <div class="drop-zone-sub">PDF &amp; Images (Max 25MB) — export Word or Excel as PDF first</div>
           </div>
 
-          <!-- Paper in hand, no file: the phone camera takes the page. -->
-          <label class="btn btn-outline btn-full" style="margin-top: 10px;">
-            <svg class="icon" aria-hidden="true"><use href="/icons.svg#camera"/></svg> Scan a page with your camera
-            <input type="file" id="scanInput" class="sr-only" accept="image/*" capture="environment">
-          </label>
+          <!-- Paper in hand, no file: scan it here, in the page, like a document scanner. -->
+          <button type="button" id="btnScanDocument" class="btn btn-outline btn-full" style="margin-top: 10px;">
+            <svg class="icon" aria-hidden="true"><use href="/icons.svg#camera"/></svg> Scan a document
+          </button>
 
-          <!-- Both sides of an ID card on one side of one sheet, at real size. -->
-          <details class="id-card-tool" style="margin-top: 10px;">
+          <!-- Both sides of an ID card on one side of one sheet. -->
+          <details class="id-card-tool" id="idCardTool" style="margin-top: 10px;">
             <summary class="btn btn-outline btn-full"><svg class="icon" aria-hidden="true"><use href="/icons.svg#id-card"/></svg> ID card: front and back on one page</summary>
             <div class="grid-2" style="margin-top: 10px;">
-              <div class="form-group">
-                <label class="form-label" for="idFront">Front side</label>
-                <input type="file" id="idFront" class="form-input" accept="image/*">
+              <button type="button" id="idScanFront" class="btn btn-outline btn-sm"><svg class="icon" aria-hidden="true"><use href="/icons.svg#camera"/></svg> Scan front</button>
+              <button type="button" id="idScanBack" class="btn btn-outline btn-sm"><svg class="icon" aria-hidden="true"><use href="/icons.svg#camera"/></svg> Scan back</button>
+            </div>
+
+            <div class="form-group" style="margin-top: 12px;">
+              <span class="form-label">Size on paper</span>
+              <div class="option-pill-group" role="group" aria-label="Size on paper">
+                <button type="button" class="option-pill" data-id-size="card" aria-pressed="true">Card size</button>
+                <button type="button" class="option-pill" data-id-size="bigger" aria-pressed="false">Bigger</button>
+                <button type="button" class="option-pill" data-id-size="large" aria-pressed="false">Large</button>
+                <button type="button" class="option-pill" data-id-size="custom" aria-pressed="false">Custom</button>
               </div>
-              <div class="form-group">
-                <label class="form-label" for="idBack">Back side</label>
-                <input type="file" id="idBack" class="form-input" accept="image/*">
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="idWidth">Width on paper (mm)</label>
-                <input type="number" id="idWidth" class="form-input" value="86" min="20" max="200" step="1">
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="idHeight">Height on paper (mm)</label>
-                <input type="number" id="idHeight" class="form-input" value="54" min="20" max="200" step="1">
+              <div id="idCustom" class="grid-2" style="margin-top: 8px;" hidden>
+                <label class="form-label" for="idWidth">Width (mm)
+                  <input type="number" id="idWidth" class="form-input" min="30" max="180" step="1" value="86"></label>
+                <label class="form-label" for="idHeight">Height (mm)
+                  <input type="number" id="idHeight" class="form-input" min="19" max="128" step="1" value="54"></label>
               </div>
             </div>
-            <p class="form-help">A standard ID card is 86 × 54 mm. Both sides print on the same side of an A4 sheet.</p>
-            <button type="button" id="btnMakeIdPage" class="btn btn-primary btn-full">Put both sides on one page</button>
+
+            <div class="id-preview">
+              <canvas id="idPreview" width="210" height="297" aria-label="Preview of the A4 page"></canvas>
+              <p class="form-help">
+                <strong id="idSizeLabel">86 × 54 mm</strong><br>
+                Card size is the real size of an Aadhaar, PAN, driving licence or voter ID card.
+                Drag the orange corner to make both sides bigger or smaller.
+              </p>
+            </div>
+
+            <button type="button" id="btnMakeIdPage" class="btn btn-primary btn-full" disabled>Put both sides on one page</button>
           </details>
 
           <!-- Uploaded File Details Pill -->
