@@ -54,6 +54,7 @@ public class PrintAgentWorker : BackgroundService
         _pollIntervalMs = settings.PollIntervalMs;
         _idlePollIntervalMs = settings.IdlePollIntervalMs;
         _status = status;
+        if (_status != null) _status.DecideCashJob = DecideCashJobAsync;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -74,6 +75,9 @@ public class PrintAgentWorker : BackgroundService
 
         // Start periodic background telemetry heartbeat (every 30s)
         _ = Task.Run(() => StartHeartbeatLoopAsync(stoppingToken), stoppingToken);
+
+        // Only a host that can ask someone (the tray) wants cash orders.
+        if (_status != null) _ = Task.Run(() => CashJobLoopAsync(stoppingToken), stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -457,6 +461,55 @@ public class PrintAgentWorker : BackgroundService
         }
 
         return await _httpClient.GetByteArrayAsync(job.FileUrl, cancellationToken);
+    }
+
+    /// <summary>Keeps AgentStatus.CashJobs current, every few seconds.</summary>
+    private async Task CashJobLoopAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, "/api/agent/cash-jobs");
+                ApplyAuthHeaders(request);
+                using var response = await _httpClient.SendAsync(request, cancellationToken);
+                if (response.IsSuccessStatusCode)
+                {
+                    var body = await response.Content.ReadFromJsonAsync<CashJobsResponse>(cancellationToken: cancellationToken);
+                    _status?.SetCashJobs(body?.Jobs ?? new List<CashJob>());
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogDebug("Cash order check failed: {Message}", ex.Message);
+            }
+
+            await Task.Delay(5000, cancellationToken);
+        }
+    }
+
+    /// <summary>Approves (prints) or rejects one cash order. False if the server refused.</summary>
+    public async Task<bool> DecideCashJobAsync(string jobId, bool approve)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            $"/api/agent/cash-jobs/{Uri.EscapeDataString(jobId)}/{(approve ? "approve" : "reject")}");
+        ApplyAuthHeaders(request);
+        try
+        {
+            using var response = await _httpClient.SendAsync(request);
+            // Approved means queued: fetch it now rather than at the next idle poll.
+            if (response.IsSuccessStatusCode && approve) { try { _pollWake.Release(); } catch (SemaphoreFullException) { } }
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("Could not answer cash order {JobId}: {Message}", jobId, ex.Message);
+            return false;
+        }
+        finally
+        {
+            _status?.SetCashJobs(_status.CashJobs.Where(j => j.Id != jobId).ToList());
+        }
     }
 
     private async Task UpdateJobStatusAsync(string jobId, string printState, string? errorMessage = null, CancellationToken cancellationToken = default)

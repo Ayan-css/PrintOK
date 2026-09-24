@@ -136,6 +136,48 @@ public sealed class TrayContext : ApplicationContext
 
             _lastNotified = state;
         }
+
+        AskAboutCashJob();
+    }
+
+    private readonly HashSet<string> _askedCash = new();
+    private bool _asking;
+
+    /// <summary>
+    /// One prompt at a time, once per order, on top of whatever the counter PC
+    /// is showing. "Later" leaves it for the dashboard.
+    /// </summary>
+    private async void AskAboutCashJob()
+    {
+        if (_asking || _status.DecideCashJob is null) return;
+        var job = _status.CashJobs.FirstOrDefault(j => !_askedCash.Contains(j.Id));
+        if (job is null) return;
+
+        _asking = true;
+        _askedCash.Add(job.Id);
+        try
+        {
+            string who = string.IsNullOrWhiteSpace(job.CustomerName) ? "" : $" from {job.CustomerName}";
+            using var owner = new Form { TopMost = true, ShowInTaskbar = false };
+            var answer = MessageBox.Show(owner,
+                $"Cash order {job.TokenNumber}{who}\n\n{job.FileName}\n" +
+                $"{job.PageCount} page(s) × {job.Copies} — ₹{job.TotalPriceInCents / 100m:0.00}\n\n" +
+                "Yes — cash received, print it\nNo — reject this order\nCancel — decide later in the dashboard",
+                "PrintOk — cash payment", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question,
+                MessageBoxDefaultButton.Button3);
+
+            if (answer == DialogResult.Cancel) return;
+            bool approve = answer == DialogResult.Yes;
+            bool ok = await _status.DecideCashJob(job.Id, approve);
+            _icon.ShowBalloonTip(4000, "PrintOk",
+                ok ? (approve ? $"Order {job.TokenNumber} is printing." : $"Order {job.TokenNumber} was rejected.")
+                   : $"Order {job.TokenNumber} could not be updated — use the dashboard.",
+                ok ? ToolTipIcon.Info : ToolTipIcon.Warning);
+        }
+        finally
+        {
+            _asking = false;
+        }
     }
 
     /// <summary>
@@ -153,7 +195,7 @@ public sealed class TrayContext : ApplicationContext
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
 
-            // A sheet of paper, in the brand purple.
+            // A sheet of paper, in the brand ink colour.
             using var paper = new SolidBrush(Theme.Primary);
             g.FillRectangle(paper, 7, 4, 18, 22);
 

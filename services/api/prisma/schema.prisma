@@ -67,6 +67,8 @@ model Shop {
   commissionBps Int    @default(200)
   /// active | suspended | cancelled
   planStatus    String @default("active")
+  /// The Razorpay subscription (sub_...) paying for a paid tier. Null on Free.
+  razorpaySubscriptionId String?
 
   // --- Razorpay Route (automatic split settlement) ---
   /// Linked account id (acc_...). Present once the shop is onboarded to Route.

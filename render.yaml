@@ -47,6 +47,13 @@ services:
         sync: false
       - key: RAZORPAY_WEBHOOK_SECRET
         sync: false
+      # Paid plans: the Razorpay plan (plan_...) billing each tier monthly.
+      - key: RAZORPAY_PLAN_ID_STARTER
+        sync: false
+      - key: RAZORPAY_PLAN_ID_BUSINESS
+        sync: false
+      - key: RAZORPAY_PLAN_ID_PRO
+        sync: false
       # Email. Without these, contact enquiries reach nobody and a shop owner
       # who forgets their password cannot get back in. Set EMAIL_PROVIDER to
       # 'resend' once the other three are filled in.

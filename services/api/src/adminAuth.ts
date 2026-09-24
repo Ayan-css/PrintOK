@@ -14,6 +14,8 @@ import crypto from 'crypto';
 const SCRYPT_KEYLEN = 64;
 const SCRYPT_COST = 16384; // 2^14, the Node default; deliberate CPU cost.
 const TOKEN_TTL_SECONDS = 12 * 60 * 60;
+// A shop counter is opened every morning; a merchant session outlives a weekend.
+const MERCHANT_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 /**
  * Audience separates operator sessions from merchant sessions. Without it a
@@ -106,7 +108,7 @@ function signingSecret(): string {
  *
  * Past half its life, so a session in continuous use is renewed long before it
  * expires while an idle one is left to lapse. This is what lets the token stay
- * short-lived — twelve hours — without a shop owner signing in every morning:
+ * short-lived without a shop owner signing in every morning:
  * the session follows the work rather than the clock.
  *
  * Deliberately not applied to the admin console, whose token is meant to die
@@ -117,7 +119,7 @@ export function shouldRenewToken(
   nowSeconds: number = Math.floor(Date.now() / 1000)
 ): boolean {
   const age = nowSeconds - payload.iat;
-  return age > TOKEN_TTL_SECONDS / 2;
+  return age > (payload.exp - payload.iat) / 2;
 }
 
 export function issueAdminToken(
@@ -133,7 +135,7 @@ export function issueAdminToken(
     aud: audience,
     ...(user.shopId ? { shopId: user.shopId } : {}),
     iat: nowSeconds,
-    exp: nowSeconds + TOKEN_TTL_SECONDS,
+    exp: nowSeconds + (audience === 'merchant' ? MERCHANT_TOKEN_TTL_SECONDS : TOKEN_TTL_SECONDS),
   };
 
   const encodedHeader = base64UrlEncode(JSON.stringify(header));

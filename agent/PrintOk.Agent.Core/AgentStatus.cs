@@ -90,4 +90,18 @@ public sealed class AgentStatus
         }
         Changed?.Invoke();
     }
+
+    private IReadOnlyList<CashJob> _cashJobs = Array.Empty<CashJob>();
+
+    /// <summary>Cash orders waiting at the counter, refreshed by the worker.</summary>
+    public IReadOnlyList<CashJob> CashJobs { get { lock (_gate) return _cashJobs; } }
+
+    /// <summary>Answers a cash order: true approves and prints it, false rejects it. Set by the worker.</summary>
+    public Func<string, bool, Task<bool>>? DecideCashJob { get; set; }
+
+    public void SetCashJobs(IReadOnlyList<CashJob> jobs)
+    {
+        lock (_gate) _cashJobs = jobs;
+        Changed?.Invoke();
+    }
 }

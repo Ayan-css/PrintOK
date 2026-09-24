@@ -874,10 +874,35 @@ export function createApp(
     };
   }
 
+  /**
+   * Shape-checked, not verified. Nothing here proves the account exists — only
+   * that it could. A wrong-but-plausible account is caught when a payout fails.
+   */
+  function payoutShapeError(upiId?: string, bankAccountNumber?: string, bankIfsc?: string): string {
+    if (upiId && !/^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/.test(upiId)) {
+      return 'That does not look like a UPI ID. They look like name@bank, for example ramesh@oksbi.';
+    }
+    if (bankAccountNumber && !/^[0-9]{9,18}$/.test(bankAccountNumber)) {
+      return 'A bank account number is 9 to 18 digits, with no spaces or letters.';
+    }
+    if (bankIfsc && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(bankIfsc)) {
+      return 'That does not look like an IFSC code. They are 11 characters, like HDFC0001234.';
+    }
+    return '';
+  }
+
   app.post('/api/merchant/signup', async (req: Request, res: Response) => {
     try {
-      const { shopName, ownerEmail, printerName, password, name, phone,
-              upiId, bankAccountNumber, bankIfsc } = req.body || {};
+      const { shopName, ownerEmail, printerName, password, name, phone } = req.body || {};
+      const clean = (v: unknown) => (v ? String(v).replace(/\s+/g, '') : undefined);
+      const upiId = clean(req.body?.upiId);
+      const bankAccountNumber = clean(req.body?.bankAccountNumber);
+      const bankIfsc = clean(req.body?.bankIfsc)?.toUpperCase();
+
+      const shapeError = payoutShapeError(upiId, bankAccountNumber, bankIfsc) ||
+        (Boolean(bankAccountNumber) !== Boolean(bankIfsc)
+          ? 'A bank account needs both the account number and its IFSC code, or neither.' : '');
+      if (shapeError) return res.status(400).json({ error: shapeError });
 
       if (!shopName || !ownerEmail || !printerName || !password) {
         return res.status(400).json({
@@ -3302,6 +3327,25 @@ export function createApp(
     }
   });
 
+  /** Clears a revoked key from the list. Active keys must be revoked first. */
+  app.delete('/api/printers/:printerId/devices/:deviceId', async (req: Request, res: Response) => {
+    try {
+      const ctx = await authorizePrinter(req, res);
+      if (!ctx) return;
+
+      const device = await storage.getAgentDevice(req.params.deviceId);
+      if (!device || device.printerId !== ctx.printer.id) {
+        return res.status(404).json({ error: 'Device not found for this printer.' });
+      }
+      if (!(await storage.deleteRevokedAgentDevice(device.id))) {
+        return res.status(409).json({ error: 'Revoke this PC before removing it.' });
+      }
+      return res.status(204).end();
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   /** Agent security audit trail for a printer (PRD 7.2). */
   app.get('/api/printers/:printerId/security-events', async (req: Request, res: Response) => {
     try {
@@ -3892,6 +3936,52 @@ export function createApp(
    */
   const PAYMENT_CONFIRMING_EVENTS = new Set(['payment.captured', 'order.paid']);
 
+  /**
+   * A shop's plan follows its Razorpay subscription.
+   *
+   * `activated` switches the shop to the tier in the subscription's notes and
+   * cancels whatever subscription it replaces. `charged` only re-affirms the
+   * current one, so a late charge on a replaced subscription cannot switch the
+   * shop back. Losing the current subscription drops the shop to Free.
+   */
+  async function applySubscriptionEvent(event: string, sub: any) {
+    const shopId = sub?.notes?.shopId;
+    const plan = shopId ? await storage.getShopPlan(shopId) : undefined;
+    if (!sub?.id || !plan) return { success: true, ignored: event };
+
+    const isCurrent = sub.id === plan.razorpaySubscriptionId;
+
+    if (event === 'subscription.activated' || (event === 'subscription.charged' && isCurrent)) {
+      const target = getPlan(sub.notes.tier);
+      if (!target || target.monthlyPriceCents === 0) return { success: true, ignored: event };
+      if (plan.razorpaySubscriptionId && !isCurrent) {
+        await razorpayService.cancelSubscription(plan.razorpaySubscriptionId);
+      }
+      await storage.updateShopPlan(shopId, {
+        planTier: target.tier,
+        commissionBps: target.platformFeeBps,
+        planStatus: 'active',
+        razorpaySubscriptionId: sub.id,
+      });
+      logOps('info', 'plan.limit_reached', { shopId, to: target.tier, action: 'subscription_active' });
+      return { success: true, applied: target.tier };
+    }
+
+    if (isCurrent && ['subscription.halted', 'subscription.cancelled', 'subscription.completed'].includes(event)) {
+      const free = getPlan(DEFAULT_PLAN_TIER)!;
+      await storage.updateShopPlan(shopId, {
+        planTier: free.tier,
+        commissionBps: free.platformFeeBps,
+        planStatus: 'active',
+        razorpaySubscriptionId: null,
+      });
+      logOps('warn', 'plan.limit_reached', { shopId, to: free.tier, action: event });
+      return { success: true, applied: free.tier };
+    }
+
+    return { success: true, ignored: event };
+  }
+
   app.post('/api/payments/webhook', async (req: Request, res: Response) => {
     try {
       // Razorpay sends its signature in a header and its job reference inside
@@ -3903,6 +3993,15 @@ export function createApp(
       // the only accepted source.
       const signature = req.headers['x-razorpay-signature'] as string | undefined;
       const body = req.body || {};
+
+      // Plan billing. Carries a subscription entity, not a job.
+      if (typeof body.event === 'string' && body.event.startsWith('subscription.')) {
+        const raw = (req as any).rawBody || JSON.stringify(body);
+        if (!signature || !razorpayService.verifyWebhookSignature(raw, signature)) {
+          return res.status(400).json({ error: 'Invalid HMAC payment webhook signature.' });
+        }
+        return res.json(await applySubscriptionEvent(body.event, body?.payload?.subscription?.entity));
+      }
 
       // A refund delivery carries a refund entity rather than a payment one, and
       // its own notes — set when the refund was requested.
@@ -4099,6 +4198,53 @@ export function createApp(
   /**
    * Windows Print Agent Polling Endpoint
    */
+  /**
+   * Cash orders waiting at this printer's counter, for the desktop agent's
+   * approve/reject prompt. A cash order is one awaiting payment that never
+   * opened online checkout; anything older than a day is left to the dashboard.
+   */
+  async function pendingCashJobs(identity: { printerId: string; shopId: string }) {
+    const since = Date.now() - 24 * 60 * 60 * 1000;
+    return (await storage.getRecentJobsForShop(identity.shopId, 200)).filter((j) =>
+      j.printerId === identity.printerId && j.printState === PrintState.AwaitingPayment &&
+      !j.razorpayOrderId && new Date(j.createdAt).getTime() >= since);
+  }
+
+  app.get('/api/agent/cash-jobs', async (req: Request, res: Response) => {
+    try {
+      const identity = await authenticateAgent(storage, req, res);
+      if (!identity) return;
+      const jobs = (await pendingCashJobs(identity)).map((j) => ({
+        id: j.id, tokenNumber: j.tokenNumber, fileName: j.fileName, pageCount: j.pageCount,
+        copies: j.copies, totalPriceInCents: j.totalPriceInCents, customerName: j.customerName,
+      }));
+      return res.json({ jobs });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/agent/cash-jobs/:id/:decision(approve|reject)', async (req: Request, res: Response) => {
+    try {
+      const identity = await authenticateAgent(storage, req, res);
+      if (!identity) return;
+      if (!(await pendingCashJobs(identity)).some((j) => j.id === req.params.id)) {
+        return res.status(404).json({ error: 'No cash order with that id is waiting at this printer.' });
+      }
+
+      const actor = `agent:${identity.deviceId || identity.printerId}`;
+      const result = req.params.decision === 'approve'
+        ? await storage.confirmPaymentAndQueueJob(req.params.id, { actor })
+        : await storage.declineJob(req.params.id, 'Declined at the counter.', { actor });
+      if (!result.ok) return res.status(409).json({ error: result.reason });
+
+      if (req.params.decision === 'approve' && wsServer) wsServer.notifyJobQueued(result.job);
+      return res.json({ success: true, job: result.job });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/agent/jobs/pending', async (req: Request, res: Response) => {
     try {
       const identity = await authenticateAgent(storage, req, res);
@@ -4288,26 +4434,8 @@ export function createApp(
       const bankAccountNumber = clean(body.bankAccountNumber);
       const bankIfsc = clean(body.bankIfsc)?.toUpperCase();
 
-      // Shape-checked, not verified. Nothing here proves the account exists —
-      // only that it could. A wrong-but-plausible account is caught when a
-      // payout fails, and that is Razorpay's answer to give, not ours.
-      if (upiId && !/^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/.test(upiId)) {
-        return res.status(400).json({
-          error: 'That does not look like a UPI ID. They look like name@bank, for example ramesh@oksbi.',
-        });
-      }
-
-      if (bankAccountNumber && !/^[0-9]{9,18}$/.test(bankAccountNumber)) {
-        return res.status(400).json({
-          error: 'A bank account number is 9 to 18 digits, with no spaces or letters.',
-        });
-      }
-
-      if (bankIfsc && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(bankIfsc)) {
-        return res.status(400).json({
-          error: 'That does not look like an IFSC code. They are 11 characters, like HDFC0001234.',
-        });
-      }
+      const shapeError = payoutShapeError(upiId, bankAccountNumber, bankIfsc);
+      if (shapeError) return res.status(400).json({ error: shapeError });
 
       // A bank transfer needs both halves, so half of one is refused rather
       // than saved as something that cannot be paid to.
@@ -4457,16 +4585,12 @@ export function createApp(
           wouldCostCents:
             p.monthlyPriceCents + platformFeeFor(grossCents, p.platformFeeBps),
         })),
-        // Downgrades are self-serve; upgrades need a person, because nothing
-        // can charge for them yet. Stated as two facts rather than one flag,
-        // so the dashboard can offer the half that works instead of disabling
-        // the whole screen.
         canDowngrade: true,
-        canUpgrade: false,
+        canUpgrade: true,
         howToChange:
-          'You can move to a cheaper plan yourself, straight away. Moving up needs us to set ' +
-          'up billing first — ask from here and we will get back to you the same day. Nothing ' +
-          'is charged automatically either way.',
+          'Paid plans are billed monthly through Razorpay: choosing one takes you to Razorpay to ' +
+          'set up the payment, and the plan applies as soon as it goes through. Moving to Free ' +
+          'cancels the subscription and applies straight away.',
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -4480,17 +4604,13 @@ export function createApp(
    * owner saw a screen recommending a cheaper tier and had no way to act on it.
    * That reads as broken rather than as unfinished, and it was.
    *
-   * The two directions are genuinely different, and pretending otherwise is
-   * what made this hard to ship:
+   *   Paid tier — starts a Razorpay subscription and returns its checkout link.
+   *               Nothing changes until the `subscription.activated` webhook
+   *               says the mandate went through (see applySubscriptionEvent).
+   *   Free      — cancels any subscription and applies immediately.
    *
-   *   Down  — costs the shop less and us nothing to honour, needs no payment,
-   *           and is applied immediately.
-   *   Up    — cannot be charged for, because Razorpay Subscriptions do not
-   *           exist on this account. Granting it anyway would hand out paid
-   *           tiers for free; refusing silently is what we had. So it records
-   *           a request and emails an operator, who applies it.
-   *
-   * Nothing here fabricates a payment or a subscription.
+   * Outside production with no Razorpay plan configured, a paid tier is
+   * applied directly, as the webhook would, so development and tests work.
    */
   app.post('/api/shops/:shopId/plan', async (req: Request, res: Response) => {
     const merchant = await authenticateMerchant(req, res, { requireOwner: true });
@@ -4515,58 +4635,44 @@ export function createApp(
         return res.status(400).json({ error: `This shop is already on ${target.name}.` });
       }
 
-      const isUpgrade = target.monthlyPriceCents > (current?.monthlyPriceCents ?? 0);
+      // ---- Paid tiers: through Razorpay -----------------------------------
+      if (target.monthlyPriceCents > 0) {
+        const planId = razorpayService.subscriptionPlanId(target.tier);
 
-      // ---- Upgrades: recorded, not applied ---------------------------------
-      if (isUpgrade) {
-        const shop = await storage.getShop(shopId);
-
-        const notice = await emailService.send({
-          to: emailService.operatorAddress,
-          subject: `Plan upgrade requested: ${shop?.name || shopId} wants ${target.name}`,
-          text:
-            `${shop?.name || shopId} has asked to move from ${current?.name ?? currentTier} to ` +
-            `${target.name} (₹${Math.round(target.monthlyPriceCents / 100)}/month, ` +
-            `${(target.platformFeeBps / 100).toFixed(2)}% platform fee).\n\n` +
-            `Shop id: ${shopId}\n` +
-            `Requested by: ${merchant.email}\n\n` +
-            'Subscription billing is not live, so this has NOT been applied. Take payment, then ' +
-            'set the tier from the admin console.',
-        });
-
-        if (!notice.ok) {
-          // Logged, not hidden: an upgrade request that reached nobody is the
-          // same failure as having no button at all.
-          logOps('error', 'email.failed', {
-            reason: 'plan upgrade request', shopId, provider: notice.provider,
+        if (planId) {
+          const sub = await razorpayService.createSubscription(planId, { shopId, tier: target.tier });
+          logOps('info', 'plan.limit_reached', {
+            shopId, from: currentTier, to: target.tier, action: 'checkout_started',
+          });
+          return res.status(202).json({
+            applied: false,
+            requested: target.tier,
+            checkoutUrl: sub.shortUrl,
+            message: `Taking you to Razorpay to set up ${target.name}. The plan applies as soon as the payment goes through.`,
           });
         }
 
-        logOps('info', 'plan.limit_reached', {
-          shopId, from: currentTier, to: target.tier, action: 'upgrade_requested',
-          delivered: notice.ok,
-        });
-
-        return res.status(202).json({
-          applied: false,
-          requested: target.tier,
-          message: notice.ok
-            ? `Thanks — we have your request for ${target.name} and will set it up and get back ` +
-              'to you. Your current plan is unchanged until then, and nothing has been charged.'
-            : `Your request for ${target.name} is recorded. Please also contact support directly, ` +
-              'because we could not send the notification email.',
-        });
+        if (process.env.NODE_ENV === 'production') {
+          return res.status(503).json({
+            error: `Online billing for ${target.name} is not set up yet. Your plan is unchanged and nothing was charged.`,
+          });
+        }
+        // Development: behave as the activation webhook would.
       }
 
-      // ---- Downgrades: applied now ----------------------------------------
+      // ---- Free, or a simulated paid tier: applied now ---------------------
       // Deliberately does NOT remove anything. A shop dropping to a smaller
       // plan keeps its printers, staff and orders; it simply cannot add more,
       // and is told where it stands. Silently disabling staff accounts because
       // a plan shrank would lock real people out of a till mid-shift.
+      if (plan?.razorpaySubscriptionId) {
+        await razorpayService.cancelSubscription(plan.razorpaySubscriptionId);
+      }
       const updated = await storage.updateShopPlan(shopId, {
         planTier: target.tier,
         commissionBps: target.platformFeeBps,
         planStatus: 'active',
+        razorpaySubscriptionId: null,
       });
 
       if (!updated) return res.status(404).json({ error: 'That shop no longer exists.' });

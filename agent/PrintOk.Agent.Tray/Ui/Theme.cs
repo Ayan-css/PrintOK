@@ -16,7 +16,7 @@ namespace PrintOk.Agent.Tray.Ui;
 public static class Theme
 {
     // Verbatim from styles.css.
-    public static readonly Color Primary    = Color.FromArgb(0x6c, 0x2c, 0xff); // --color-primary
+    public static readonly Color Primary    = Color.FromArgb(0x0e, 0x5e, 0x6f); // --color-primary
     public static readonly Color Secondary  = Color.FromArgb(0xf5, 0xc4, 0x00); // --color-secondary
     public static readonly Color Success    = Color.FromArgb(0x1d, 0xb8, 0x7a); // --color-success
     public static readonly Color Danger     = Color.FromArgb(0xe0, 0x20, 0x20); // --color-danger

@@ -823,6 +823,11 @@ export class PrismaStorage implements IStorageProvider {
     return this.mapDevice(device);
   }
 
+  public async deleteRevokedAgentDevice(deviceId: string): Promise<boolean> {
+    const { count } = await this.prisma.agentDevice.deleteMany({ where: { id: deviceId, status: 'revoked' } });
+    return count > 0;
+  }
+
   public async touchAgentDevice(deviceId: string, agentVersion?: string): Promise<void> {
     await this.prisma.agentDevice.updateMany({
       where: { id: deviceId },
@@ -1044,6 +1049,7 @@ export class PrismaStorage implements IStorageProvider {
       planTier: shop.planTier as ShopPlan['planTier'],
       commissionBps: shop.commissionBps,
       planStatus: shop.planStatus as ShopPlan['planStatus'],
+      razorpaySubscriptionId: shop.razorpaySubscriptionId,
     };
   }
 
@@ -1057,6 +1063,8 @@ export class PrismaStorage implements IStorageProvider {
         ...(plan.planTier ? { planTier: plan.planTier } : {}),
         ...(plan.commissionBps !== undefined ? { commissionBps: plan.commissionBps } : {}),
         ...(plan.planStatus ? { planStatus: plan.planStatus } : {}),
+        ...(plan.razorpaySubscriptionId !== undefined
+          ? { razorpaySubscriptionId: plan.razorpaySubscriptionId } : {}),
       },
     });
 
@@ -1064,6 +1072,7 @@ export class PrismaStorage implements IStorageProvider {
       planTier: shop.planTier as ShopPlan['planTier'],
       commissionBps: shop.commissionBps,
       planStatus: shop.planStatus as ShopPlan['planStatus'],
+      razorpaySubscriptionId: shop.razorpaySubscriptionId,
     };
   }
 

@@ -109,7 +109,7 @@
           <form id="formStep1" class="wizard-pane active">
             <div class="form-group">
               <label class="form-label" for="regShopName">Shop Name <span class="text-danger">*</span></label>
-              <input type="text" id="regShopName" class="form-input" placeholder="e.g. Metro Speed Copy Center" required value="Metro Print &amp; Stationers">
+              <input type="text" id="regShopName" class="form-input" placeholder="e.g. Metro Speed Copy Center" required>
             </div>
 
             <div class="form-group">
@@ -128,7 +128,7 @@
 
             <div class="form-group">
               <label class="form-label" for="regPrinterName">Primary Printer Model <span class="text-danger">*</span></label>
-              <input type="text" id="regPrinterName" class="form-input" placeholder="e.g. Canon ImageRUNNER 2525 / HP LaserJet M404" required value="Canon ImageRUNNER 2525">
+              <input type="text" id="regPrinterName" class="form-input" placeholder="e.g. Canon ImageRUNNER 2525 / HP LaserJet M404" required>
             </div>
 
             <button type="button" id="btnNextStep1" class="btn btn-primary btn-full" style="margin-top: 10px;">
@@ -140,8 +140,21 @@
           <form id="formStep2" class="wizard-pane" hidden>
             <div class="form-group">
               <label class="form-label" for="regUpiId">UPI ID for Payouts <span class="text-danger">*</span></label>
-              <input type="text" id="regUpiId" class="form-input" placeholder="e.g. metroprint@upi" required value="metroprint@upi">
-              <div class="form-help">Customer payments are credited to this UPI ID or shop counter.</div>
+              <input type="text" id="regUpiId" class="form-input" placeholder="e.g. ramesh@oksbi" required autocomplete="off" spellcheck="false">
+              <div class="form-help">Where your payouts are sent. You can change it later under Revenue Analytics.</div>
+            </div>
+
+            <div class="grid-2">
+              <div class="form-group">
+                <label class="form-label" for="regBankAccount">Bank account number</label>
+                <input type="text" id="regBankAccount" class="form-input" inputmode="numeric"
+                       autocomplete="off" spellcheck="false" placeholder="Optional">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="regBankIfsc">Bank IFSC</label>
+                <input type="text" id="regBankIfsc" class="form-input" autocomplete="off"
+                       spellcheck="false" placeholder="e.g. HDFC0001234">
+              </div>
             </div>
 
             <!--
@@ -187,25 +200,13 @@
                      autocomplete="postal-code" inputmode="numeric" placeholder="6 digits">
             </div>
 
-            <div class="form-section-title">Initial Per-Page Rates (INR ₹)</div>
-            
-            <div class="grid-2">
-              <div class="form-group">
-                <label class="form-label" for="regRateBwSingle">B&amp;W Single (₹)</label>
-                <input type="number" id="regRateBwSingle" class="form-input" value="2.00" step="0.5">
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="regRateBwDuplex">B&amp;W Duplex (₹)</label>
-                <input type="number" id="regRateBwDuplex" class="form-input" value="1.50" step="0.5">
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="regRateColorSingle">Color Single (₹)</label>
-                <input type="number" id="regRateColorSingle" class="form-input" value="10.00" step="1">
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="regRateColorDuplex">Color Duplex (₹)</label>
-                <input type="number" id="regRateColorDuplex" class="form-input" value="8.00" step="1">
-              </div>
+            <div class="form-section-title">What you print, and what it costs (₹ per page)</div>
+            <p class="meta-text">Untick anything you do not offer. Bulk and extra-copy discounts are in Business Setup once you are in.</p>
+            <div class="table-scroll">
+              <table class="ledger" id="regRateGrid">
+                <thead><tr><th>Offer</th><th>Paper</th><th>Colour</th><th>Sides</th><th class="num">₹ / page</th></tr></thead>
+                <tbody></tbody>
+              </table>
             </div>
 
             <div class="grid-2" style="margin-top: 10px;">
@@ -213,7 +214,7 @@
                 ⬅️ Back
               </button>
               <button type="button" id="btnNextStep2" class="btn btn-primary">
-                Next: Select Plan &amp; Pay Upfront ➔
+                Next: Choose a plan ➔
               </button>
             </div>
           </form>
@@ -222,21 +223,10 @@
           <div id="formStep3" class="wizard-pane" hidden>
             <div class="card-header" style="padding: 0 0 12px 0;">
               <h3 class="card-title">Choose Your Shop Subscription Plan</h3>
-              <p class="meta-text">Select your plan and pay upfront to activate your shop QR code.</p>
+              <p class="meta-text">Start free, or pick a paid plan and pay through Razorpay.</p>
             </div>
 
             <div class="grid-2" role="group" aria-label="Subscription plan">
-              <!--
-                These four are PLAN_CATALOGUE, and nothing else may appear here.
-                This block previously offered "Commission-Only 5%", "Growth
-                ₹299" and "Scale ₹599 / Unlimited" — four tiers at four rates,
-                none of which have ever existed in the catalogue. The API also
-                ignores any plan sent at registration, so a shop that picked
-                "Growth" was charged nothing, given the default tier, and never
-                told. Shown as a read-only ladder for that reason: every shop
-                starts on Free because subscription billing is not live, and
-                pretending otherwise is what caused this.
-              -->
               <label class="option-pill active" id="planPillFree" style="text-align: left; padding: 12px;">
                 <input type="radio" name="regPlanSelect" value="free" class="sr-only" checked>
                 <div style="font-weight: 800; font-size: 14px;">🆓 Free</div>
@@ -245,31 +235,30 @@
               </label>
 
               <label class="option-pill" id="planPillStarter" style="text-align: left; padding: 12px;">
-                <input type="radio" name="regPlanSelect" value="starter" class="sr-only" disabled>
+                <input type="radio" name="regPlanSelect" value="starter" class="sr-only">
                 <div style="font-weight: 800; font-size: 14px;">🚀 Starter</div>
                 <div style="font-size: 16px; font-weight: 800; color: var(--color-primary);">₹149 <span>/ month</span></div>
                 <div class="meta-text" style="font-size: 10px; margin-top: 4px;">1% platform fee • 2 printers • 3 staff • 1,000 orders/month</div>
               </label>
 
               <label class="option-pill" id="planPillBusiness" style="text-align: left; padding: 12px;">
-                <input type="radio" name="regPlanSelect" value="business" class="sr-only" disabled>
+                <input type="radio" name="regPlanSelect" value="business" class="sr-only">
                 <div style="font-weight: 800; font-size: 14px;">⚡ Business</div>
                 <div style="font-size: 16px; font-weight: 800; color: var(--color-primary);">₹349 <span>/ month</span></div>
                 <div class="meta-text" style="font-size: 10px; margin-top: 4px;">0.5% platform fee • 5 printers • 8 staff • 4,000 orders/month</div>
               </label>
 
               <label class="option-pill" id="planPillPro" style="text-align: left; padding: 12px;">
-                <input type="radio" name="regPlanSelect" value="pro" class="sr-only" disabled>
+                <input type="radio" name="regPlanSelect" value="pro" class="sr-only">
                 <div style="font-weight: 800; font-size: 14px;">👑 Pro</div>
                 <div style="font-size: 16px; font-weight: 800; color: var(--color-primary);">₹699 <span>/ month</span></div>
                 <div class="meta-text" style="font-size: 10px; margin-top: 4px;">No platform fee • 10 printers • 15 staff • 10,000 orders/month</div>
               </label>
 
               <p class="meta-text" style="font-size: 11px; margin-top: 10px;">
-                Every shop starts on <strong>Free</strong>. Paid plans are not yet
-                self-serve — contact support to move, and nothing is charged until
-                you do. Razorpay's payment processing charges are separate from the
-                PrintOk platform fee on every plan.
+                Paid plans are billed monthly through Razorpay — you will be taken there to set up
+                the payment once your shop is created. Razorpay's payment processing charges are
+                separate from the PrintOk platform fee on every plan.
               </p>
             </div>
 
@@ -278,7 +267,7 @@
                 ⬅️ Back
               </button>
               <button type="button" id="btnSubmitRegister" class="btn btn-primary">
-                💳 Pay Upfront &amp; Activate Shop
+                Create my shop
               </button>
             </div>
           </div>
@@ -293,8 +282,8 @@
 
             <!-- QR Code Display Box -->
             <div class="qr-poster-preview">
-              <div class="qr-shop-title" id="resShopTitle">Metro Print &amp; Stationers</div>
-              <div class="qr-printer-title" id="resPrinterTitle">Canon ImageRUNNER 2525</div>
+              <div class="qr-shop-title" id="resShopTitle"></div>
+              <div class="qr-printer-title" id="resPrinterTitle"></div>
               
               <div class="qr-image-wrapper">
                 <img id="resQrImage" src="" alt="Shop QR Code">

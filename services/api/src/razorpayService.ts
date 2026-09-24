@@ -348,4 +348,53 @@ export class RazorpayService {
       return false;
     }
   }
+
+  // ------------------------------------------------------- subscriptions ---
+
+  /**
+   * The Razorpay plan (plan_...) that bills a paid tier, from
+   * RAZORPAY_PLAN_ID_STARTER / _BUSINESS / _PRO. Empty when not set up, which
+   * the caller treats as "billing is not live" rather than guessing.
+   */
+  public subscriptionPlanId(tier: string): string {
+    if (!this.keyId || !this.keySecret) return '';
+    return process.env[`RAZORPAY_PLAN_ID_${tier.toUpperCase()}`] || '';
+  }
+
+  /**
+   * Starts a monthly subscription and returns Razorpay's hosted checkout link.
+   * `notes` travel back on every subscription webhook, which is how the shop
+   * and tier are known when it activates.
+   */
+  public async createSubscription(
+    planId: string,
+    notes: { shopId: string; tier: string }
+  ): Promise<{ id: string; shortUrl: string }> {
+    const Razorpay = require('razorpay');
+    const instance = new Razorpay({ key_id: this.keyId, key_secret: this.keySecret });
+    try {
+      const sub = await instance.subscriptions.create({
+        plan_id: planId,
+        // Razorpay requires a finite count; ten years of months is "until cancelled".
+        total_count: 120,
+        customer_notify: 1,
+        notes,
+      });
+      return { id: sub.id, shortUrl: sub.short_url };
+    } catch (err: any) {
+      throw new Error(`Razorpay could not start the subscription: ${describeRazorpayError(err)}`);
+    }
+  }
+
+  /** Cancels immediately. Logged, not thrown: the plan change has already been decided. */
+  public async cancelSubscription(subscriptionId: string): Promise<void> {
+    if (!subscriptionId || !this.keyId || !this.keySecret) return;
+    try {
+      const Razorpay = require('razorpay');
+      const instance = new Razorpay({ key_id: this.keyId, key_secret: this.keySecret });
+      await instance.subscriptions.cancel(subscriptionId, false);
+    } catch (err: any) {
+      console.error(`[Razorpay Service] Could not cancel ${subscriptionId}:`, describeRazorpayError(err));
+    }
+  }
 }

@@ -159,7 +159,7 @@ document.addEventListener('DOMContentLoaded', () => {
    * The counter-PC concern that motivated sessionStorage is real and is
    * answered differently: there is a sign-out button on every merchant screen
    * now, which is the deliberate way to hand the machine over, and the token
-   * itself still expires twelve hours after it was last used. What changed is
+   * itself still expires thirty days after it was last used. What changed is
    * that closing a browser is no longer treated as signing out, because nobody
    * means it that way.
    *
@@ -398,9 +398,31 @@ document.addEventListener('DOMContentLoaded', () => {
     const planPills = [
       { id: 'planPillFree', val: 'free' },
       { id: 'planPillStarter', val: 'starter' },
-      { id: 'planPillGrowth', val: 'growth' },
-      { id: 'planPillScale', val: 'scale' }
+      { id: 'planPillBusiness', val: 'business' },
+      { id: 'planPillPro', val: 'pro' }
     ];
+
+    // The full grid Business Setup edits: every paper size, colour mode and
+    // side. Starting prices only; the owner changes them here or later.
+    const START_RATES = { bw: [200, 150], colour: [1000, 800] }; // paise: [single, double]
+    const rateGrid = document.querySelector('#regRateGrid tbody');
+    if (rateGrid) {
+      const rows = [];
+      for (const paperSize of ['A4', 'A3', 'Letter']) {
+        for (const isColor of [false, true]) {
+          for (const isDuplex of [false, true]) {
+            const base = START_RATES[isColor ? 'colour' : 'bw'][isDuplex ? 1 : 0];
+            const cents = paperSize === 'A3' ? base * 2 : base;
+            rows.push(`<tr data-paper="${paperSize}" data-color="${isColor ? 1 : ''}" data-duplex="${isDuplex ? 1 : ''}">
+              <td><input type="checkbox" class="rate-on" checked aria-label="Offer ${paperSize} ${isColor ? 'colour' : 'B&W'} ${isDuplex ? 'double' : 'single'}-sided"></td>
+              <td>${paperSize}</td><td>${isColor ? 'Colour' : 'B&amp;W'}</td><td>${isDuplex ? 'Double' : 'Single'}</td>
+              <td class="num"><input type="number" class="form-input rate-price" min="0" step="0.5" value="${(cents / 100).toFixed(2)}" style="max-width: 90px;"></td>
+            </tr>`);
+          }
+        }
+      }
+      rateGrid.innerHTML = rows.join('');
+    }
 
     function selectPlan(pillId, value) {
       selectedPlan = value;
@@ -449,8 +471,19 @@ document.addEventListener('DOMContentLoaded', () => {
     if (btnNextStep2) {
       btnNextStep2.addEventListener('click', () => {
         const upiId = document.getElementById('regUpiId').value.trim();
-        if (!upiId) {
-          showToast('warning', 'UPI Required', 'Please enter your Payout UPI ID.');
+        if (!/^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/.test(upiId)) {
+          showToast('warning', 'UPI ID needed', 'Enter the UPI ID your payouts should go to, like ramesh@oksbi.');
+          return;
+        }
+        const account = document.getElementById('regBankAccount').value.replace(/\s+/g, '');
+        const ifsc = document.getElementById('regBankIfsc').value.replace(/\s+/g, '').toUpperCase();
+        if ((account || ifsc) && !(/^[0-9]{9,18}$/.test(account) && /^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc))) {
+          showToast('warning', 'Bank details incomplete',
+            'Enter both a 9–18 digit account number and an 11-character IFSC, or leave both empty.');
+          return;
+        }
+        if (!document.querySelector('#regRateGrid .rate-on:checked')) {
+          showToast('warning', 'Nothing to print', 'Tick at least one kind of print you offer.');
           return;
         }
 
@@ -510,7 +543,9 @@ document.addEventListener('DOMContentLoaded', () => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              shopName, ownerEmail, printerName, upiId, password, plan: selectedPlan,
+              shopName, ownerEmail, printerName, upiId, password,
+              bankAccountNumber: val('regBankAccount').replace(/\s+/g, ''),
+              bankIfsc: val('regBankIfsc').replace(/\s+/g, '').toUpperCase(),
               // Stored on the shop so Route onboarding has them already, rather
               // than asking again at the moment the shop wants to be paid.
               contactPhone: val('regContactPhone'),
@@ -527,13 +562,30 @@ document.addEventListener('DOMContentLoaded', () => {
           if (res.ok && data.shop && data.printer) {
             // Signed in immediately, so the dashboard works without a second step.
             if (data.token) MerchantSession.set(data.token);
+            ShopContext.write({ shopId: data.shop.id, printerId: data.printer.id });
+            await saveInitialPricing(data.shop.id);
+
+            // A paid plan goes to Razorpay now. The shop exists on Free until
+            // the subscription activates, and the dashboard has everything
+            // step 4 would have shown.
+            if (selectedPlan !== 'free') {
+              const planRes = await shopFetch(`/api/shops/${encodeURIComponent(data.shop.id)}/plan`, {
+                method: 'POST', body: JSON.stringify({ tier: selectedPlan }),
+              });
+              const planBody = await planRes.json().catch(() => ({}));
+              if (planBody.checkoutUrl) {
+                window.location.href = planBody.checkoutUrl;
+                return;
+              }
+              if (!planRes.ok) {
+                showToast('warning', 'Shop created on Free', `${planBody.error || 'The plan could not be started.'} You can choose it again from the dashboard.`);
+              }
+            }
             formStep3.hidden = true;
             formStep4.hidden = false;
             stepNav3.classList.remove('active');
             stepNav4.classList.add('active');
 
-            // Remember this shop so the dashboard and nav resolve to it later.
-            ShopContext.write({ shopId: data.shop.id, printerId: data.printer.id });
 
             document.getElementById('resShopTitle').textContent = data.shop.name;
             document.getElementById('resPrinterTitle').textContent = data.printer.printerName;
@@ -559,8 +611,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const btnGoToDashboard = document.getElementById('btnGoToDashboard');
             if (btnGoToDashboard) btnGoToDashboard.href = `/dashboard?shop=${encodeURIComponent(data.shop.id)}&printer=${encodeURIComponent(data.printer.id)}`;
 
-            // Save the shop's opening rates so customers are quoted what the owner set.
-            await saveInitialPricing(data.shop.id);
 
             const btnDownloadPosterPng = document.getElementById('btnDownloadPosterPng');
             if (btnDownloadPosterPng) {
@@ -575,45 +625,38 @@ document.addEventListener('DOMContentLoaded', () => {
               };
             }
 
-            showToast('success', '🎉 Shop & Plan Activated!', `Printer ID: ${data.printer.id}`);
+            showToast('success', '🎉 Your shop is live', `Printer ID: ${data.printer.id}`);
           } else {
             showToast('danger', 'Error', data.error || 'Could not register shop.');
             btnSubmitRegister.disabled = false;
-            btnSubmitRegister.textContent = '💳 Pay Upfront & Activate Shop';
+            btnSubmitRegister.textContent = 'Create my shop';
           }
         } catch {
           showToast('danger', 'Network Error', 'Could not connect to API server.');
           btnSubmitRegister.disabled = false;
-          btnSubmitRegister.textContent = '💳 Pay Upfront & Activate Shop';
+          btnSubmitRegister.textContent = 'Create my shop';
         }
       });
     }
 
-    /** Persist the per-page rates typed in step 2 — previously collected but never sent. */
+    /** Saves the step-2 rate grid, exactly as Business Setup would. */
     async function saveInitialPricing(shopId) {
-      const toCents = (id) => {
-        const el = document.getElementById(id);
-        const val = el ? parseFloat(el.value) : NaN;
-        return Number.isFinite(val) ? Math.round(val * 100) : null;
-      };
-
-      const config = {
-        bwSinglePerPageCents: toCents('regRateBwSingle'),
-        bwDuplexPerPageCents: toCents('regRateBwDuplex'),
-        colorSinglePerPageCents: toCents('regRateColorSingle'),
-        colorDuplexPerPageCents: toCents('regRateColorDuplex'),
-      };
-
-      Object.keys(config).forEach(k => { if (config[k] === null) delete config[k]; });
-      if (Object.keys(config).length === 0) return;
+      const rates = [...document.querySelectorAll('#regRateGrid tbody tr')].map((tr) => ({
+        paperSize: tr.dataset.paper,
+        isColor: Boolean(tr.dataset.color),
+        isDuplex: Boolean(tr.dataset.duplex),
+        perPageCents: Math.max(0, Math.round((parseFloat(tr.querySelector('.rate-price').value) || 0) * 100)),
+        enabled: tr.querySelector('.rate-on').checked,
+      }));
 
       try {
-        await shopFetch(`/api/shops/${encodeURIComponent(shopId)}/pricing`, {
+        const res = await shopFetch(`/api/shops/${encodeURIComponent(shopId)}/rates`, {
           method: 'POST',
-          body: JSON.stringify(config),
+          body: JSON.stringify({ rates }),
         });
+        if (!res.ok) throw new Error();
       } catch {
-        showToast('warning', 'Rates Not Saved', 'Shop is live, but set your rates again from the dashboard.');
+        showToast('warning', 'Rates Not Saved', 'Shop is live, but set your rates again in Business Setup.');
       }
     }
   }
@@ -1199,7 +1242,9 @@ document.addEventListener('DOMContentLoaded', () => {
               <span class="badge ${revoked ? 'badge-danger' : 'badge-success'}">
                 ${revoked ? 'Revoked' : 'Active'}
               </span>
-              ${revoked ? '' : `<button class="btn btn-outline btn-sm" data-revoke-device="${escapeHtml(d.id)}" type="button">Revoke</button>`}
+              ${revoked
+                ? `<button class="btn btn-outline btn-sm" data-remove-device="${escapeHtml(d.id)}" type="button">Remove</button>`
+                : `<button class="btn btn-outline btn-sm" data-revoke-device="${escapeHtml(d.id)}" type="button">Revoke</button>`}
             </div>
           </div>`;
       }).join('');
@@ -1479,6 +1524,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const pairedDeviceList = document.getElementById('pairedDeviceList');
     if (pairedDeviceList) {
       pairedDeviceList.addEventListener('click', async (event) => {
+        const remove = event.target.closest('[data-remove-device]');
+        if (remove) {
+          remove.disabled = true;
+          const res = await shopFetch(`/api/printers/${encodeURIComponent(dashPrinterId)}/devices/${
+            encodeURIComponent(remove.getAttribute('data-remove-device'))}`, { method: 'DELETE' }).catch(() => null);
+          if (!res?.ok) showToast('danger', 'Not removed', 'That key could not be removed. Try again.');
+          await loadPairedDevices();
+          return;
+        }
+
         const button = event.target.closest('[data-revoke-device]');
         if (!button) return;
 
@@ -1766,10 +1821,16 @@ document.addEventListener('DOMContentLoaded', () => {
         // ignore
       }
 
+      // Once per page, not on the 8-second refresh: these are forms, and
+      // reloading them every few seconds overwrote whatever the owner was typing
+      // into the UPI and bank fields before they could press Save.
+      if (settingsPanelsLoaded) return;
+      settingsPanelsLoaded = true;
       await loadPayoutDetails();
       await loadRazorpayAccount();
       await loadPlan();
     }
+    let settingsPanelsLoaded = false;
 
     /**
      * The shop's payout destination.
@@ -1991,14 +2052,10 @@ document.addEventListener('DOMContentLoaded', () => {
           const currentPrice = plan.current.monthlyPriceCents ?? 0;
 
           options.innerHTML = plan.options.map((o) => {
-            // Two directions, two behaviours. Down is applied immediately;
-            // up is a request, because nothing can charge for a paid tier yet
-            // and quietly granting one would be giving it away. The button says
-            // which it is, so nobody presses "Upgrade" expecting it to happen.
             const isUp = o.monthlyPriceCents > currentPrice;
             const label = o.isCurrent
               ? 'Current plan'
-              : isUp ? `Ask about ${escapeHtml(o.name)}` : `Switch to ${escapeHtml(o.name)}`;
+              : o.monthlyPriceCents > 0 ? `Pay &amp; switch to ${escapeHtml(o.name)}` : `Switch to ${escapeHtml(o.name)}`;
 
             return `
             <div class="pricing-mini-card"${o.isCurrent ? ' style="border: 2px solid var(--color-primary);"' : ''}>
@@ -2033,8 +2090,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const isUp = button.getAttribute('data-plan-up') === '1';
 
             // A downgrade takes effect immediately and can leave the shop over
-            // its new limits, so it is worth one confirmation. An upgrade
-            // request changes nothing and needs none.
+            // its new limits, so it is worth one confirmation. A paid plan goes
+            // to Razorpay first, which is its own confirmation.
             if (!isUp && !window.confirm(
               `Move this shop to ${name}? It applies straight away. Nothing is deleted — `
               + 'if you end up over the new limits you keep what you have, but cannot add more.'
@@ -2042,7 +2099,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const original = button.textContent;
             button.disabled = true;
-            button.textContent = isUp ? 'Sending…' : 'Switching…';
+            button.textContent = 'Switching…';
 
             try {
               const res = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/plan`, {
@@ -2054,6 +2111,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
               if (!res.ok && res.status !== 202) {
                 throw new Error(body.error || 'The plan could not be changed.');
+              }
+              if (body.checkoutUrl) {
+                showToast('info', 'Opening Razorpay', body.message);
+                window.location.href = body.checkoutUrl;
+                return;
               }
 
               showToast(
@@ -2363,6 +2425,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
       fileInput.addEventListener('change', (e) => {
         if (e.target.files.length > 0) handleCustomerFile(e.target.files[0]);
+      });
+      document.getElementById('scanInput')?.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) handleCustomerFile(e.target.files[0]);
+        e.target.value = '';
       });
 
       dropZone.addEventListener('dragover', (e) => {
@@ -2867,7 +2933,7 @@ document.addEventListener('DOMContentLoaded', () => {
           description: `${job.fileName} · ${job.pageCount} page(s)`,
           order_id: order.orderId,
           notes: { jobId: job.id },
-          theme: { color: '#6c2cff' },
+          theme: { color: '#0e5e6f' },
           handler: async (response) => {
             try {
               const verifyRes = await fetch(`${API_BASE}/api/payments/verify`, {

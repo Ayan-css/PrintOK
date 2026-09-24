@@ -137,6 +137,8 @@ export interface ShopPlan {
   planTier: PlanTier;
   commissionBps: number;
   planStatus: 'active' | 'suspended' | 'cancelled';
+  /** The Razorpay subscription paying for a paid tier; null once cancelled. */
+  razorpaySubscriptionId?: string | null;
 }
 
 /** Whether a shop is safe to remove, and how (PRD 21). */
@@ -371,6 +373,8 @@ export interface IStorageProvider {
   getAgentDevice(deviceId: string): Promise<AgentDeviceRecord | undefined>;
   listAgentDevices(printerId: string): Promise<AgentDeviceRecord[]>;
   revokeAgentDevice(deviceId: string, reason?: string): Promise<AgentDeviceRecord | undefined>;
+  /** Removes a revoked device from the list. Its security events are kept. */
+  deleteRevokedAgentDevice(deviceId: string): Promise<boolean>;
   touchAgentDevice(deviceId: string, agentVersion?: string): Promise<void>;
   recordSecurityEvent(event: Omit<AgentSecurityEventRecord, 'id' | 'createdAt'>): Promise<void>;
   listSecurityEvents(printerId: string, limit?: number): Promise<AgentSecurityEventRecord[]>;
@@ -1983,6 +1987,11 @@ export class MemoryStorage implements IStorageProvider {
     device.revokedReason = reason;
     this.agentDevices.set(deviceId, device);
     return device;
+  }
+
+  public async deleteRevokedAgentDevice(deviceId: string): Promise<boolean> {
+    if (this.agentDevices.get(deviceId)?.status !== 'revoked') return false;
+    return this.agentDevices.delete(deviceId);
   }
 
   public async touchAgentDevice(deviceId: string, agentVersion?: string): Promise<void> {

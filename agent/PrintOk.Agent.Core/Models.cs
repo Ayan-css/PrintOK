@@ -48,3 +48,16 @@ public record AgentUpdateStatusDto(
     [property: JsonPropertyName("printState")] string PrintState,
     [property: JsonPropertyName("errorMessage")] string? ErrorMessage = null
 );
+
+/// <summary>A cash order waiting for the counter to say whether money changed hands.</summary>
+public record CashJob(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("tokenNumber")] string? TokenNumber,
+    [property: JsonPropertyName("fileName")] string FileName,
+    [property: JsonPropertyName("pageCount")] int PageCount,
+    [property: JsonPropertyName("copies")] int Copies,
+    [property: JsonPropertyName("totalPriceInCents")] int TotalPriceInCents,
+    [property: JsonPropertyName("customerName")] string? CustomerName = null
+);
+
+public record CashJobsResponse([property: JsonPropertyName("jobs")] List<CashJob> Jobs);

@@ -156,6 +156,12 @@
             <div class="drop-zone-sub">PDF &amp; Images (Max 25MB) — export Word or Excel as PDF first</div>
           </div>
 
+          <!-- Paper in hand, no file: the phone camera takes the page. -->
+          <label class="btn btn-outline btn-full" style="margin-top: 10px;">
+            📷 Scan a page with your camera
+            <input type="file" id="scanInput" class="sr-only" accept="image/*" capture="environment">
+          </label>
+
           <!-- Uploaded File Details Pill -->
           <div id="fileInfoBox" class="file-info-pill" hidden>
             <div class="file-info-left">

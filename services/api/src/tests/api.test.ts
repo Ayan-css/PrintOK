@@ -524,6 +524,16 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     });
     assert.strictEqual(afterRevoke.status, 401, 'a revoked device must lose access immediately');
 
+    // A revoked key can then be cleared from the list.
+    const removed = await fetch(
+      `${baseUrl}/api/printers/${createdPrinterId}/devices/${paired.deviceId}`,
+      { method: 'DELETE', headers: merchantAuth }
+    );
+    assert.strictEqual(removed.status, 204);
+    const remaining = (await (await fetch(`${baseUrl}/api/printers/${createdPrinterId}/devices`,
+      { headers: merchantAuth })).json()) as any;
+    assert.ok(!remaining.devices.some((d: any) => d.id === paired.deviceId));
+
     // The legacy printer key still works, so revocation is genuinely scoped.
     const legacyStillWorks = await fetch(`${baseUrl}/api/agent/heartbeat`, {
       method: 'POST',
@@ -718,6 +728,30 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const approved = (await approve.json()) as any;
     assert.strictEqual(approved.job.paymentState, PaymentState.Paid);
     assert.strictEqual(approved.job.printState, PrintState.Queued);
+
+    // The desktop agent can answer cash orders at the counter too.
+    const cashJob = async (name: string) => ((await (await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ printerId: createdPrinterId, fileName: name, fileBase64: pdf, pageCount: 1, copies: 1, isColor: false }),
+    })).json()) as any).job;
+    const toPrint = await cashJob('agent-yes.pdf');
+    const toReject = await cashJob('agent-no.pdf');
+    const agent = { 'x-agent-api-key': agentApiKey };
+
+    const listed = (await (await fetch(`${baseUrl}/api/agent/cash-jobs`, { headers: agent })).json()) as any;
+    const ids = listed.jobs.map((j: any) => j.id);
+    assert.ok(ids.includes(toPrint.id) && ids.includes(toReject.id), 'both wait for the counter');
+    assert.ok(!ids.includes(job.id), 'an approved job is no longer waiting');
+
+    assert.strictEqual((await fetch(`${baseUrl}/api/agent/cash-jobs`)).status, 401, 'only the shop agent');
+
+    const yes = (await (await fetch(`${baseUrl}/api/agent/cash-jobs/${toPrint.id}/approve`, {
+      method: 'POST', headers: agent })).json()) as any;
+    assert.strictEqual(yes.job.printState, PrintState.Queued);
+    const no = await fetch(`${baseUrl}/api/agent/cash-jobs/${toReject.id}/reject`, { method: 'POST', headers: agent });
+    assert.strictEqual(no.status, 200);
+    assert.strictEqual((await fetch(`${baseUrl}/api/agent/cash-jobs/${toPrint.id}/approve`, {
+      method: 'POST', headers: agent })).status, 404, 'an answered order cannot be answered again');
   });
 
   await t.test('17. Payment webhooks cannot be forged', async () => {
@@ -4188,8 +4222,8 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     // cannot move up, because nothing can charge for a paid tier yet. Reporting
     // a single "changeable: false" disabled the half that works.
     assert.strictEqual(plan.canDowngrade, true);
-    assert.strictEqual(plan.canUpgrade, false);
-    assert.match(plan.howToChange, /cheaper plan yourself/i);
+    assert.strictEqual(plan.canUpgrade, true);
+    assert.match(plan.howToChange, /through Razorpay/i);
 
     // Staff cannot read the shop's commercial terms.
     const added = await fetch(`${baseUrl}/api/shops/${shop.shopId}/staff`, {
@@ -5276,17 +5310,39 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(after.current.platformFeeBps, 100, 'the fee moves with the plan');
     assert.strictEqual(after.usage.staff.limit, 3, 'and so do the limits');
 
-    // --- Up: recorded, never silently granted ------------------------------
-    // Nothing can charge for a paid tier, so handing one over would be giving
-    // it away. 202: accepted, not applied.
+    // --- Up: with no Razorpay plan configured (dev), applied as the webhook would
     const up = await change('pro');
-    assert.strictEqual(up.status, 202, await up.clone().text());
-    const upBody = (await up.json()) as any;
-    assert.strictEqual(upBody.applied, false, 'an upgrade must never apply itself');
-    assert.strictEqual(upBody.requested, 'pro');
+    assert.strictEqual(up.status, 200, await up.clone().text());
+    assert.strictEqual((await readPlan()).current.tier, 'pro');
 
-    assert.strictEqual((await readPlan()).current.tier, 'starter',
-      'the shop stays where it was until someone takes payment');
+    // --- Subscription webhooks drive the plan ------------------------------
+    const subEvent = (event: string, id: string, tier: string) => {
+      const raw = JSON.stringify({
+        event, payload: { subscription: { entity: { id, notes: { shopId: shop.shopId, tier } } } },
+      });
+      return fetch(`${baseUrl}/api/payments/webhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-razorpay-signature': signWebhook(raw) },
+        body: raw,
+      });
+    };
+    const forged = await fetch(`${baseUrl}/api/payments/webhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-razorpay-signature': 'deadbeef' },
+      body: JSON.stringify({ event: 'subscription.activated', payload: { subscription: { entity: {
+        id: 'sub_x', notes: { shopId: shop.shopId, tier: 'business' } } } } }),
+    });
+    assert.strictEqual(forged.status, 400, 'an unsigned activation changes nothing');
+
+    assert.strictEqual((await subEvent('subscription.activated', 'sub_A', 'business')).status, 200);
+    assert.strictEqual((await readPlan()).current.tier, 'business');
+    await subEvent('subscription.charged', 'sub_OLD', 'pro');
+    assert.strictEqual((await readPlan()).current.tier, 'business', 'a stale subscription cannot move the plan');
+    await subEvent('subscription.halted', 'sub_A', 'business');
+    assert.strictEqual((await readPlan()).current.tier, 'free', 'failed billing drops to Free');
+
+    await subEvent('subscription.activated', 'sub_B', 'starter');
+    assert.strictEqual((await readPlan()).current.tier, 'starter');
 
     // --- Refusals ----------------------------------------------------------
     assert.strictEqual((await change('starter')).status, 400, 'already on it');
@@ -5333,7 +5389,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(onFree.current.tier, 'free');
     assert.strictEqual(onFree.usage.staff.over, true);
     assert.strictEqual(onFree.canDowngrade, true);
-    assert.strictEqual(onFree.canUpgrade, false, 'honest: nothing can charge for an upgrade yet');
+    assert.strictEqual(onFree.canUpgrade, true);
   });
 
   await t.test('109. A build can be pushed to the fleet, and only a real one', async () => {

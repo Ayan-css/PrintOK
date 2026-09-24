@@ -14,27 +14,27 @@
   --color-ink:           #1a1a1a;
 
   /* Brand Accents */
-  --color-primary:       #6c2cff;
-  --color-primary-hover: #5518e8;
-  --color-primary-active:#4310c5;
-  --color-primary-light: #ede5ff;
-  --color-secondary:     #f5c400;
-  --color-secondary-light: #fff8d6;
-  --color-accent-mint:   #2dd4a0;
-  --color-accent-mint-light: #d4f5eb;
-  --color-accent-coral:  #ff5c5c;
-  --color-accent-coral-light: #ffe0e0;
-  --color-accent-sky:    #38b2f5;
+  --color-primary:       #0e5e6f;
+  --color-primary-hover: #0a4a58;
+  --color-primary-active:#073a45;
+  --color-primary-light: #d9ecef;
+  --color-secondary:     #d99a1e;
+  --color-secondary-light: #fbefd4;
+  --color-accent-mint:   #7fa37a;
+  --color-accent-mint-light: #e3ecdf;
+  --color-accent-coral:  #d0674b;
+  --color-accent-coral-light: #f6e1da;
+  --color-accent-sky:    #4f6d8f;
 
   /* Semantic */
   --color-success:       #1db87a;
-  --color-success-light: #d4f5eb;
+  --color-success-light: #e3ecdf;
   --color-warning:       #f5a623;
   --color-warning-light: #fff3d6;
   --color-danger:        #e02020;
-  --color-danger-light:  #ffe0e0;
-  --color-info:          #38b2f5;
-  --color-info-light:    #ddf0ff;
+  --color-danger-light:  #f6e1da;
+  --color-info:          #4f6d8f;
+  --color-info-light:    #e1e8f0;
 
   /* Surface */
   --color-surface:       #ffffff;
@@ -377,8 +377,8 @@ a { color: inherit; }
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  background: rgba(45, 212, 160, 0.15);
-  border: 1px solid rgba(45, 212, 160, 0.4);
+  background: rgba(127, 163, 122, 0.15);
+  border: 1px solid rgba(127, 163, 122, 0.4);
   border-radius: var(--radius-sm);
   padding: 5px 10px;
 }
@@ -1559,7 +1559,7 @@ body::before {
 
 .status-pulse-dot.online {
   background-color: var(--color-accent-mint);
-  box-shadow: 0 0 0 0 rgba(45, 212, 160, 0.7);
+  box-shadow: 0 0 0 0 rgba(127, 163, 122, 0.7);
   animation: pulse-mint 2s infinite;
 }
 
@@ -1570,9 +1570,9 @@ body::before {
 }
 
 @keyframes pulse-mint {
-  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(45, 212, 160, 0.7); }
-  70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(45, 212, 160, 0); }
-  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(45, 212, 160, 0); }
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(127, 163, 122, 0.7); }
+  70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(127, 163, 122, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(127, 163, 122, 0); }
 }
 
 @keyframes pulse-coral {
@@ -3640,8 +3640,8 @@ body::before {
   --shadow-color:        #46443e;
   --color-grain:         rgba(255,255,255,0.035);
 
-  --color-primary-light: #2a1a52;
-  --color-secondary-light: #3a3005;
+  --color-primary-light: #0f2f36;
+  --color-secondary-light: #3a2c0c;
   --color-accent-mint-light: #0d3b2c;
   --color-accent-coral-light: #4a1d1d;
   --color-success-light: #0d3b2c;
@@ -3650,7 +3650,7 @@ body::before {
   --color-info-light:    #0f2f47;
 
   /* Accent text, brightened to stay legible on the tints above. */
-  --color-primary-text:  #b394ff;
+  --color-primary-text:  #7fc4d1;
   --color-success-text:  #4fd8a4;
   --color-warning-text:  #f0b44a;
   --color-danger-text:   #ff8a8a;

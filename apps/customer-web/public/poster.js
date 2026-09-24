@@ -23,7 +23,7 @@
   const W = 1240;
   const H = 1754;
 
-  const BRAND = '#6c2cff';
+  const BRAND = '#0e5e6f';
   const INK = '#0d0d0d';
   const PAPER = '#faf9f5';
 
