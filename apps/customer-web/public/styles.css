@@ -1327,6 +1327,11 @@ a { color: inherit; }
   }
 }
 
+/* Signup: wide enough for the rate grid and two-up fields, not a stretched form. */
+@media (min-width: 768px) {
+  .page-container.page-container--signup { max-width: 1080px; }
+}
+
 /* ============================================================
    PRINT MOTIF BACKGROUND TEXTURE
    ============================================================ */

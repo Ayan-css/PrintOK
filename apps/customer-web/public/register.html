@@ -36,7 +36,7 @@
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>
 
   <div class="app-wrapper">
-    <div class="page-container">
+    <div class="page-container page-container--signup">
       
       <!-- Top Brand Header -->
       <header class="app-header">
@@ -107,9 +107,15 @@
 
           <!-- STEP 1 FORM: Shop Information -->
           <form id="formStep1" class="wizard-pane active">
+            <div class="grid-2">
             <div class="form-group">
               <label class="form-label" for="regShopName">Shop Name <span class="text-danger">*</span></label>
               <input type="text" id="regShopName" class="form-input" placeholder="e.g. Metro Speed Copy Center" required>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="regPrinterName">Primary Printer Model <span class="text-danger">*</span></label>
+              <input type="text" id="regPrinterName" class="form-input" placeholder="e.g. Canon ImageRUNNER 2525 / HP LaserJet M404" required>
             </div>
 
             <div class="form-group">
@@ -125,10 +131,6 @@
               <p class="meta-text">You will use this email and password to sign in to your dashboard.
                  Needs 12+ characters with upper case, lower case and a digit.</p>
             </div>
-
-            <div class="form-group">
-              <label class="form-label" for="regPrinterName">Primary Printer Model <span class="text-danger">*</span></label>
-              <input type="text" id="regPrinterName" class="form-input" placeholder="e.g. Canon ImageRUNNER 2525 / HP LaserJet M404" required>
             </div>
 
             <button type="button" id="btnNextStep1" class="btn btn-primary btn-full" style="margin-top: 10px;">
@@ -171,6 +173,7 @@
               <div class="form-help">Used for payment verification. Razorpay cannot settle to you without it.</div>
             </div>
 
+            <div class="grid-2">
             <div class="form-group">
               <label class="form-label" for="regAddressStreet1">Street Address <span class="text-danger">*</span></label>
               <input type="text" id="regAddressStreet1" class="form-input"
@@ -182,8 +185,9 @@
               <input type="text" id="regAddressStreet2" class="form-input"
                      placeholder="Optional" autocomplete="address-line2">
             </div>
+            </div>
 
-            <div class="grid-2">
+            <div class="grid-3">
               <div class="form-group">
                 <label class="form-label" for="regAddressCity">City <span class="text-danger">*</span></label>
                 <input type="text" id="regAddressCity" class="form-input" required autocomplete="address-level2">
@@ -192,12 +196,11 @@
                 <label class="form-label" for="regAddressState">State <span class="text-danger">*</span></label>
                 <input type="text" id="regAddressState" class="form-input" required autocomplete="address-level1">
               </div>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="regAddressPostalCode">PIN Code <span class="text-danger">*</span></label>
-              <input type="text" id="regAddressPostalCode" class="form-input" required
-                     autocomplete="postal-code" inputmode="numeric" placeholder="6 digits">
+              <div class="form-group">
+                <label class="form-label" for="regAddressPostalCode">PIN Code <span class="text-danger">*</span></label>
+                <input type="text" id="regAddressPostalCode" class="form-input" required
+                       autocomplete="postal-code" inputmode="numeric" placeholder="6 digits">
+              </div>
             </div>
 
             <div class="form-section-title">What you print, and what it costs (₹ per page)</div>
