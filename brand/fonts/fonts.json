@@ -1,0 +1,23 @@
+[
+  {
+    "family": "Space Grotesk",
+    "role": "Display: headings, numbers, the wordmark",
+    "weights": "700 / 500",
+    "url": "https://fonts.google.com/specimen/Space+Grotesk",
+    "license": "SIL OFL 1.1"
+  },
+  {
+    "family": "Inter",
+    "role": "Body: interface text, forms, tables",
+    "weights": "400 / 500 / 600",
+    "url": "https://fonts.google.com/specimen/Inter",
+    "license": "SIL OFL 1.1"
+  },
+  {
+    "family": "Noto Sans Devanagari",
+    "role": "Hindi: posters, customer-facing Hindi",
+    "weights": "400 / 700",
+    "url": "https://fonts.google.com/noto/specimen/Noto+Sans+Devanagari",
+    "license": "SIL OFL 1.1"
+  }
+]

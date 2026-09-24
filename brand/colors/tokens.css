@@ -1,0 +1,12 @@
+:root {
+  --printok-petrol: #0e5e6f; /* Primary. The mark, buttons, links. */
+  --printok-petrol-deep: #073a45; /* Pressed states, dark surfaces. */
+  --printok-ochre: #d99a1e; /* Accent. Motion lines, highlights. Never body text on white. */
+  --printok-mist: #9cc7cf; /* The folded corner; quiet fills. */
+  --printok-paper: #f5f2ec; /* Page background. */
+  --printok-sheet: #fbfaf7; /* The P, cards, anything that is "the page". */
+  --printok-ink: #10262b; /* Text and the wordmark on light backgrounds. */
+  --printok-sage: #7fa37a; /* Success. */
+  --printok-terracotta: #d0674b; /* Errors and destructive actions. */
+  --printok-slate: #4f6d8f; /* Information. */
+}

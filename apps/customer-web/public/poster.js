@@ -73,10 +73,12 @@
 
   <!-- Brand band -->
   <rect x="0" y="0" width="${W}" height="150" fill="${BRAND}"/>
-  <g transform="translate(58 27) scale(3)">
-    <path d="M9.5 5.5h9.2l5.8 5.8v14.7a1.5 1.5 0 0 1-1.5 1.5H9.5A1.5 1.5 0 0 1 8 26V7a1.5 1.5 0 0 1 1.5-1.5z" fill="#fbfaf7"/>
-    <path d="M18.7 5.5v4.3a1.5 1.5 0 0 0 1.5 1.5h4.3z" fill="#9cc7cf"/>
-    <path d="M11.6 18.4l3.3 3.3 6.4-7.1" fill="none" stroke="#d99a1e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <g transform="translate(52 27) scale(1.5)">
+    <g transform="translate(5 0) skewX(-9)">
+      <path fill="#fbfaf7" fill-rule="evenodd" d="M24 13h14l9 9v5a13 13 0 0 1-13 13h-3v8.5a4.5 4.5 0 0 1-9 0V17.5A4.5 4.5 0 0 1 24 13zM31 21v11h3.5a5.5 5.5 0 0 0 0-11z"/>
+      <path fill="#9cc7cf" d="M38 13v6.5a2.5 2.5 0 0 0 2.5 2.5H47z"/>
+    </g>
+    <g stroke="#d99a1e" stroke-width="4" stroke-linecap="round"><path d="M7 22h11"/><path d="M10 31h8"/><path d="M13 40h5"/></g>
   </g>
   <text x="150" y="98" font-family="${LATIN}" font-size="56" font-weight="700" fill="#ffffff">PrintOk</text>
 

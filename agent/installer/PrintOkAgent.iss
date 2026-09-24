@@ -40,6 +40,7 @@ OutputBaseFilename=PrintOkAgentSetup-{#AppVersion}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\PrintOk.Agent.Tray\printok.ico
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#AppName}

@@ -22,6 +22,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>PrintOk.Agent.Tray</RootNamespace>
+    <!-- From brand/: python3 brand/build.py writes it here. -->
+    <ApplicationIcon>printok.ico</ApplicationIcon>
     <AssemblyName>PrintOkAgent</AssemblyName>
     <Product>PrintOk Print Agent</Product>
     <Company>PrintOk</Company>

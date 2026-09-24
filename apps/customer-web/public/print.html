@@ -16,6 +16,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/styles.css">
   <!--
     pdf.js and Razorpay Checkout are deliberately NOT loaded here.
@@ -32,6 +34,10 @@
     deliberately unpinned because Razorpay update it in place.
   -->
   <script src="/app.js" defer></script>
+  <meta property="og:image" content="https://printok.vercel.app/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
 </head>
 <body class="bg-paper">
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>
