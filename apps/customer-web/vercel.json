@@ -3,7 +3,7 @@
   "outputDirectory": "public",
   "routes": [
     {
-      "src": "/(dashboard|setup|admin)",
+      "src": "/(dashboard|admin)",
       "headers": {
         "X-Content-Type-Options": "nosniff",
         "Referrer-Policy": "strict-origin-when-cross-origin",
@@ -14,7 +14,7 @@
       "continue": true
     },
     {
-      "src": "/(?!(dashboard|setup|admin)$).*",
+      "src": "/(?!(dashboard|admin)$).*",
       "headers": {
         "X-Content-Type-Options": "nosniff",
         "Referrer-Policy": "strict-origin-when-cross-origin",

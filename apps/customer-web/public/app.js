@@ -252,6 +252,43 @@ document.addEventListener('DOMContentLoaded', () => {
     return res;
   }
 
+  /**
+   * A plan checkout in flight. Razorpay's subscription page never sends the
+   * owner back, so the dashboard remembers what they went to pay for and says,
+   * on their return, whether it went through — rather than leaving them to
+   * notice the badge did or did not change.
+   */
+  const PendingPlan = {
+    KEY: 'printok.pendingPlan',
+    set(tier, name) {
+      try { localStorage.setItem(this.KEY, JSON.stringify({ tier, name, at: Date.now() })); } catch { /* private mode */ }
+    },
+    report(current) {
+      let pending = null;
+      try { pending = JSON.parse(localStorage.getItem(this.KEY) || 'null'); } catch { /* unreadable */ }
+      if (!pending || !current) return;
+      const clear = () => { try { localStorage.removeItem(this.KEY); } catch { /* private mode */ } };
+
+      if (current.tier === pending.tier) {
+        clear();
+        showToast('success', `You're now on ${pending.name}`, 'Payment received. Your new plan is active.', 8000);
+      } else if (Date.now() - pending.at > 3 * 60 * 1000) {
+        clear();
+        showToast('warning', `${pending.name} payment not completed`,
+          `The payment was cancelled or failed, so you are still on ${current.name || current.tier} ` +
+          `and nothing was charged for ${pending.name}. Choose it again under Your plan to retry.`, 15000);
+      } else {
+        // Razorpay's confirmation can trail the payment by a few seconds.
+        showToast('info', 'Checking your payment…', `Waiting for Razorpay to confirm ${pending.name}.`, 6000);
+        setTimeout(() => window.location.reload(), 15000);
+      }
+    },
+  };
+
+  // Back from Razorpay restores this page from the browser's cache, without
+  // loading anything, so the check above would never run.
+  if (isDashboardPage) window.addEventListener('pageshow', (e) => { if (e.persisted) window.location.reload(); });
+
   const ShopContext = {
     read() {
       let stored = { shopId: null, printerId: null };
@@ -567,6 +604,7 @@ document.addEventListener('DOMContentLoaded', () => {
               });
               const planBody = await planRes.json().catch(() => ({}));
               if (planBody.checkoutUrl) {
+                PendingPlan.set(selectedPlan, selectedPlan[0].toUpperCase() + selectedPlan.slice(1));
                 window.location.href = planBody.checkoutUrl;
                 return;
               }
@@ -927,6 +965,22 @@ document.addEventListener('DOMContentLoaded', () => {
         p.hidden = !on;
         p.classList.toggle('active', on);
       });
+      if (tabId === 'tabRatesFrame') loadRatesFrame();
+    }
+
+    /** Loads Business Setup's rates into the tab once, sized to its content. */
+    function loadRatesFrame() {
+      const frame = document.getElementById('ratesFrame');
+      if (!frame || frame.src) return;
+      frame.addEventListener('load', () => {
+        try {
+          const doc = frame.contentDocument;
+          const fit = () => { frame.style.height = `${doc.documentElement.scrollHeight}px`; };
+          new ResizeObserver(fit).observe(doc.body);
+          fit();
+        } catch { /* not same-origin: keep the minimum height */ }
+      });
+      frame.src = `${frame.dataset.src}${dashShopId ? `&shop=${encodeURIComponent(dashShopId)}` : ''}`;
     }
 
     /**
@@ -938,7 +992,7 @@ document.addEventListener('DOMContentLoaded', () => {
      */
     const HASH_TABS = {
       '#agent': 'tabQr', '#queue': 'tabQueue',
-      '#earnings': 'tabMoney', '#analytics': 'tabStats',
+      '#earnings': 'tabMoney', '#analytics': 'tabStats', '#rates': 'tabRatesFrame',
     };
 
     function activateTabFromHash() {
@@ -1739,7 +1793,7 @@ document.addEventListener('DOMContentLoaded', () => {
           // The shop id is added to whatever the link already points at, so a
           // link aimed at a section keeps its section. Overwriting the href
           // wholesale would send "Rates & discounts" to the first tab instead.
-          for (const id of ['btnBusinessSetup', 'btnRatesToSetup']) {
+          for (const id of ['btnBusinessSetup']) {
             const link = document.getElementById(id);
             if (!link || !dashShopId) continue;
 
@@ -1986,6 +2040,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const res = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/plan`);
         if (!res.ok) return; // staff accounts get 403, which is correct
         const plan = await res.json();
+        PendingPlan.report(plan.current);
 
         // `platformFeeBps` is the current name; `commissionBps` is the same
         // number under the old one, so a page still cached from before the
@@ -2107,6 +2162,7 @@ document.addEventListener('DOMContentLoaded', () => {
               }
               if (body.checkoutUrl) {
                 showToast('info', 'Opening Razorpay', body.message);
+                PendingPlan.set(tier, name);
                 window.location.href = body.checkoutUrl;
                 return;
               }
@@ -2424,6 +2480,75 @@ document.addEventListener('DOMContentLoaded', () => {
         e.target.value = '';
       });
 
+      document.getElementById('btnMakeIdPage')?.addEventListener('click', async () => {
+        const front = document.getElementById('idFront').files[0];
+        const back = document.getElementById('idBack').files[0];
+        const w = Number(document.getElementById('idWidth').value);
+        const h = Number(document.getElementById('idHeight').value);
+        if (!front || !back) {
+          showToast('warning', 'Both sides needed', 'Choose a photo of the front and of the back.');
+          return;
+        }
+        // Two cards stacked, 15 mm margins and a 10 mm gap, on a portrait A4 sheet.
+        if (!(w >= 20 && h >= 20 && w <= 180 && 2 * h <= 257)) {
+          showToast('warning', 'Size does not fit', 'Width up to 180 mm, and height up to 128 mm so both sides fit on A4.');
+          return;
+        }
+        try {
+          handleCustomerFile(await composeIdPage(front, back, w, h));
+          // The page is drawn for A4, so print it on A4 whatever was picked before.
+          const paper = document.getElementById('selectPaperSize');
+          if (paper && paper.value !== 'A4') { paper.value = 'A4'; paper.dispatchEvent(new Event('change')); }
+          document.querySelector('.id-card-tool')?.removeAttribute('open');
+        } catch {
+          showToast('danger', 'Could not read the photos', 'Try JPG or PNG images of each side.');
+        }
+      });
+
+      /**
+       * One A4 page image, at 200 dpi, with each side drawn at its real size.
+       * Each photo is turned to match the card's shape and filled edge to edge,
+       * which trims the background around a photographed card.
+       * ponytail: no crop tool; add one if customers upload loosely framed photos.
+       */
+      async function composeIdPage(frontFile, backFile, wMm, hMm) {
+        const px = (mm) => Math.round((mm / 25.4) * 200);
+        const canvas = document.createElement('canvas');
+        canvas.width = px(210);
+        canvas.height = px(297);
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const x = (canvas.width - px(wMm)) / 2;
+        const sides = [[frontFile, px(15)], [backFile, px(15) + px(hMm) + px(10)]];
+        for (const [file, y] of sides) {
+          const img = await createImageBitmap(file, { imageOrientation: 'from-image' });
+          const bw = px(wMm);
+          const bh = px(hMm);
+          const turn = (img.width > img.height) !== (bw > bh);
+          const iw = turn ? img.height : img.width;
+          const ih = turn ? img.width : img.height;
+          const scale = Math.max(bw / iw, bh / ih);
+
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(x, y, bw, bh);
+          ctx.clip();
+          ctx.translate(x + bw / 2, y + bh / 2);
+          if (turn) ctx.rotate(Math.PI / 2);
+          ctx.drawImage(img, (-img.width * scale) / 2, (-img.height * scale) / 2, img.width * scale, img.height * scale);
+          ctx.restore();
+          // A thin outline to cut along.
+          ctx.strokeStyle = '#999';
+          ctx.strokeRect(x, y, bw, bh);
+          img.close();
+        }
+
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
+        return new File([blob], 'id-card-both-sides.jpg', { type: 'image/jpeg' });
+      }
+
       dropZone.addEventListener('dragover', (e) => {
         e.preventDefault();
         dropZone.classList.add('drag-over');
@@ -2677,6 +2802,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // colour and sides already chosen.
         applySellableCombinations();
         updateCustomerPrice();
+        DocumentPreview.refresh();
       });
     }
 
@@ -3301,6 +3427,9 @@ document.addEventListener('DOMContentLoaded', () => {
    * page range that will actually print. What you see is what comes out.
    * ========================================================================= */
 
+  /** Paper in millimetres, portrait: width, height. */
+  const PAPER_MM = { A4: [210, 297], A3: [297, 420], Letter: [216, 279] };
+
   const DocumentPreview = {
     pdf: null,
     objectUrl: null,
@@ -3336,6 +3465,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const { box, img, canvas, fallback, nav } = this.els();
       if (img) { img.hidden = true; img.removeAttribute('src'); }
       if (canvas) canvas.hidden = true;
+      const sheet = document.getElementById('previewSheet');
+      if (sheet) sheet.hidden = true;
       if (fallback) fallback.hidden = false;
       if (nav) nav.hidden = true;
       if (box) box.hidden = true;
@@ -3483,6 +3614,24 @@ document.addEventListener('DOMContentLoaded', () => {
       const selected = this.selectedPages();
       const printing = selected ? selected.size : this.totalPages;
 
+      // The sheet it lands on. Auto follows the page's own shape, which is
+      // what the agent does when it prints.
+      const sheet = document.getElementById('previewSheet');
+      const content = this.kind === 'pdf' ? canvas : this.kind === 'image' ? img : null;
+      let landscape = orientation === 'landscape';
+      if (sheet) {
+        sheet.hidden = !content;
+        if (content) {
+          const w = content.naturalWidth || content.width;
+          const h = content.naturalHeight || content.height;
+          const [pw, ph] = PAPER_MM[paperSize] || PAPER_MM.A4;
+          landscape = orientation === 'landscape' || (orientation === 'auto' && w > h);
+          const ratio = landscape ? ph / pw : pw / ph;
+          sheet.style.aspectRatio = String(ratio);
+          sheet.style.width = `min(100%, ${Math.round(280 * ratio)}px)`;
+        }
+      }
+
       if (badge) {
         badge.textContent = this.kind === 'pdf'
           ? `Page ${this.page} of ${this.totalPages}`
@@ -3501,6 +3650,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const bits = [];
         bits.push(isColor ? 'Colour' : 'Black & white');
         bits.push(isDuplex ? 'both sides' : 'one side');
+        bits.push(`${paperSize} ${landscape ? 'landscape' : 'portrait'}`);
         if (selected) {
           bits.push(`pages ${customPageRange.trim()} (${printing} of ${this.totalPages})`);
         }

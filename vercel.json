@@ -107,7 +107,7 @@
       ]
     },
     {
-      "source": "/(dashboard|setup|admin)",
+      "source": "/(dashboard|admin)",
       "headers": [
         {
           "key": "X-Frame-Options",

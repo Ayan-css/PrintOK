@@ -83,6 +83,10 @@ internal static class WindowsRasterPrinter
         ApplyPaperSize(doc, options.PaperSize, logger);
         ApplyOrientation(doc, options.Orientation);
 
+        // Only what the customer selected and was billed for.
+        IReadOnlyList<int> pages = options.PagesWithin(document.PageCount);
+        int cursor = 0;
+
         // Re-asserted for every page. Some drivers rebuild page settings from
         // the queue's defaults between pages, and a job that starts mono and
         // finishes in colour is worse than one that was colour throughout.
@@ -93,11 +97,15 @@ internal static class WindowsRasterPrinter
             {
                 e.PageSettings.Landscape = options.Orientation == PrintOrientation.Landscape;
             }
+            else if (cursor < pages.Count)
+            {
+                // Auto means the sheet follows the page. Left to the driver's
+                // portrait default, a landscape certificate printed shrunk into
+                // a tall sheet with bands above and below.
+                try { e.PageSettings.Landscape = document.IsLandscape(pages[cursor] - 1); }
+                catch { /* unreadable size: keep the driver's orientation */ }
+            }
         };
-
-        // Only what the customer selected and was billed for.
-        IReadOnlyList<int> pages = options.PagesWithin(document.PageCount);
-        int cursor = 0;
         Exception? failure = null;
 
         doc.PrintPage += (_, e) =>
@@ -179,9 +187,9 @@ internal static class WindowsRasterPrinter
     /// <summary>
     /// Turns the page the way the customer asked.
     ///
-    /// Auto is left alone deliberately: PDFium reports a landscape page as a
-    /// landscape bitmap, so forcing portrait on it would letterbox a wide page
-    /// into a tall sheet. Only an explicit choice overrides the document.
+    /// Auto is not set here: it is decided per page in QueryPageSettings, from
+    /// the page's own shape, so a document mixing portrait and landscape pages
+    /// prints each on the sheet it fits. An explicit choice overrides that.
     /// </summary>
     private static void ApplyOrientation(PrintDocument doc, PrintOrientation orientation)
     {

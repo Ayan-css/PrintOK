@@ -80,7 +80,7 @@ app.use((req, res, next) => {
 
   // Merchant and operator screens carry authenticated, state-changing controls
   // and nothing legitimately frames them.
-  const privileged = /^\/(dashboard|setup|admin)/.test(req.path);
+  const privileged = /^\/(dashboard|admin)/.test(req.path);
   res.setHeader('X-Frame-Options', privileged ? 'DENY' : 'SAMEORIGIN');
 
   res.setHeader('Content-Security-Policy-Report-Only', REPORT_ONLY_CSP);

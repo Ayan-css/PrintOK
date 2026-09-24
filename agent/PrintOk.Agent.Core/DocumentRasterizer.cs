@@ -125,6 +125,22 @@ public sealed class DocumentRasterizer : IDisposable
         return null;
     }
 
+    /// <summary>
+    /// Whether a page is wider than it is tall, read from the document without
+    /// rendering it, so the printer can turn the sheet before the page is drawn.
+    /// </summary>
+    public bool IsLandscape(int index)
+    {
+        if (_pdf is not null)
+        {
+            var size = PDFtoImage.Conversion.GetPageSize(_pdf, page: (Index)index);
+            return size.Width > size.Height;
+        }
+
+        using var codec = SKCodec.Create(_imagePath);
+        return codec is not null && codec.Info.Width > codec.Info.Height;
+    }
+
     /// <summary>Renders one page. The caller owns the bitmap and must dispose it.</summary>
     public SKBitmap RenderPage(int index)
     {

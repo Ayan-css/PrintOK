@@ -13,6 +13,12 @@
 (function () {
   'use strict';
 
+  // Framed inside the dashboard's Rates & discounts tab: the page keeps its
+  // editor and its Save, and styles.css hides the rest (see .is-embedded).
+  if (new URLSearchParams(window.location.search).has('embed')) {
+    document.documentElement.classList.add('is-embedded');
+  }
+
   const API_BASE = (function () {
     // Same rule as the dashboard: same-origin in development, the deployed API
     // otherwise. A relative path would hit Vercel, which serves no API.

@@ -297,7 +297,7 @@ test('customer web routing', async (t) => {
 
     assert.ok(privileged, 'the merchant screens need their own rule');
     assert.strictEqual(privileged.headers['X-Frame-Options'], 'DENY',
-      'nothing legitimately frames the dashboard, setup or admin screens');
+      'nothing legitimately frames the dashboard or admin screens (setup is framed by the dashboard)');
 
     assert.ok(general, 'the remaining pages need a rule too');
     assert.strictEqual(general.headers['X-Frame-Options'], 'SAMEORIGIN');

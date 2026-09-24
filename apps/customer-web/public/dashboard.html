@@ -280,16 +280,12 @@
                     role="tab" aria-selected="false" aria-controls="tabStats" tabindex="-1">
               📊 Revenue Analytics
             </button>
+            <button class="dash-tab-btn" id="tabBtnRates" data-tab="tabRatesFrame" type="button"
+                    role="tab" aria-selected="false" aria-controls="tabRatesFrame" tabindex="-1">
+              💷 Rates &amp; discounts
+            </button>
             </div>
 
-            <!--
-              A link, not a tab, and outside the tablist because it is neither.
-              Pricing lives in Business Setup; a tab that opens a pane saying so
-              costs a click and teaches nothing, so this goes straight there.
-            -->
-            <a class="dash-tab-link" id="btnRatesToSetup" href="/setup?tab=tabRates">
-              💷 Rates &amp; discounts ↗
-            </a>
           </div>
 
           <!-- TAB 1: LIVE QUEUE & CASH APPROVALS -->
@@ -328,6 +324,16 @@
                 <div class="empty-sub">Customer print requests will appear here in real-time as they scan your shop QR code.</div>
               </div>
             </div>
+          </div>
+
+          <!--
+            Rates & discounts: Business Setup's own Pricing and Discounts tabs,
+            framed, so there is one editor and one Save rather than two copies
+            that drift. Loaded the first time the tab is opened.
+          -->
+          <div id="tabRatesFrame" role="tabpanel" aria-labelledby="tabBtnRates" tabindex="0" class="dash-tab-pane" hidden style="padding: 16px;">
+            <iframe id="ratesFrame" title="Rates and discounts" data-src="/setup?tab=tabRates&amp;embed=1"
+                    style="width: 100%; min-height: 600px; border: 0; display: block;"></iframe>
           </div>
 
           <!-- TAB: EARNINGS -->

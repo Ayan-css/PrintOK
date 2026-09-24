@@ -162,6 +162,31 @@
             <input type="file" id="scanInput" class="sr-only" accept="image/*" capture="environment">
           </label>
 
+          <!-- Both sides of an ID card on one side of one sheet, at real size. -->
+          <details class="id-card-tool" style="margin-top: 10px;">
+            <summary class="btn btn-outline btn-full">🪪 ID card: front and back on one page</summary>
+            <div class="grid-2" style="margin-top: 10px;">
+              <div class="form-group">
+                <label class="form-label" for="idFront">Front side</label>
+                <input type="file" id="idFront" class="form-input" accept="image/*">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="idBack">Back side</label>
+                <input type="file" id="idBack" class="form-input" accept="image/*">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="idWidth">Width on paper (mm)</label>
+                <input type="number" id="idWidth" class="form-input" value="86" min="20" max="200" step="1">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="idHeight">Height on paper (mm)</label>
+                <input type="number" id="idHeight" class="form-input" value="54" min="20" max="200" step="1">
+              </div>
+            </div>
+            <p class="form-help">A standard ID card is 86 × 54 mm. Both sides print on the same side of an A4 sheet.</p>
+            <button type="button" id="btnMakeIdPage" class="btn btn-primary btn-full">Put both sides on one page</button>
+          </details>
+
           <!-- Uploaded File Details Pill -->
           <div id="fileInfoBox" class="file-info-pill" hidden>
             <div class="file-info-left">
@@ -181,8 +206,11 @@
               <span id="previewPageBadge" class="badge badge-neutral">Page 1</span>
             </div>
             <div class="preview-viewport">
-              <img id="previewImg" src="" alt="Preview of the document you are printing" hidden>
-              <canvas id="previewCanvas" hidden></canvas>
+              <!-- The sheet it prints on: paper size and orientation, page fitted inside. -->
+              <div id="previewSheet" class="preview-sheet" hidden>
+                <img id="previewImg" src="" alt="Preview of the document you are printing" hidden>
+                <canvas id="previewCanvas" hidden></canvas>
+              </div>
               <div id="previewFallback" class="preview-fallback">
                 <div class="fallback-icon">📄</div>
                 <div id="previewFallbackText">Loading preview…</div>
@@ -201,6 +229,34 @@
             <!-- Reflects the settings chosen below, so what you see is what prints -->
             <p class="preview-note meta-text" id="previewNote"></p>
           </div>
+        </div>
+
+        <!--
+          Customer details. Hidden unless the shop has asked for them, so a
+          shop that collects nothing shows a form with nothing extra on it.
+          Populated from /api/shops/:id/portal-config at boot. Shown before
+          upload, where Business Setup's preview puts it.
+        -->
+        <div id="customerDetailsBox" class="card card--elevated" style="margin-top: 14px;" hidden>
+          <span class="form-label">Your details</span>
+          <p class="form-help" id="customerDetailsWhy" style="margin-top: 0;">
+            The shop uses this to contact you about this order.
+          </p>
+
+          <div id="customerNameField" hidden style="margin-top: 8px;">
+            <label class="form-label" for="inputCustomerName" id="labelCustomerName">Name</label>
+            <input type="text" id="inputCustomerName" class="form-input"
+                   maxlength="80" autocomplete="name" placeholder="Your name">
+          </div>
+
+          <div id="customerPhoneField" hidden style="margin-top: 8px;">
+            <label class="form-label" for="inputCustomerPhone" id="labelCustomerPhone">Mobile number</label>
+            <input type="tel" id="inputCustomerPhone" class="form-input"
+                   maxlength="20" inputmode="tel" autocomplete="tel" placeholder="e.g. 98200 12345">
+          </div>
+
+          <div id="customerDetailsError" class="form-help" role="alert"
+               style="color: var(--color-danger); margin-top: 6px;" hidden></div>
         </div>
 
         <!-- Print Configuration Card -->
@@ -308,33 +364,6 @@
                 <button type="button" id="btnIncCopies" class="stepper-btn" aria-label="Increase copies">+</button>
               </div>
             </div>
-          </div>
-
-          <!--
-            Customer details. Hidden unless the shop has asked for them, so a
-            shop that collects nothing shows a form with nothing extra on it.
-            Populated from /api/shops/:id/portal-config at boot.
-          -->
-          <div id="customerDetailsBox" class="form-group" style="margin-top: 14px;" hidden>
-            <span class="form-label">Your details</span>
-            <p class="form-help" id="customerDetailsWhy" style="margin-top: 0;">
-              The shop uses this to contact you about this order.
-            </p>
-
-            <div id="customerNameField" hidden style="margin-top: 8px;">
-              <label class="form-label" for="inputCustomerName" id="labelCustomerName">Name</label>
-              <input type="text" id="inputCustomerName" class="form-input"
-                     maxlength="80" autocomplete="name" placeholder="Your name">
-            </div>
-
-            <div id="customerPhoneField" hidden style="margin-top: 8px;">
-              <label class="form-label" for="inputCustomerPhone" id="labelCustomerPhone">Mobile number</label>
-              <input type="tel" id="inputCustomerPhone" class="form-input"
-                     maxlength="20" inputmode="tel" autocomplete="tel" placeholder="e.g. 98200 12345">
-            </div>
-
-            <div id="customerDetailsError" class="form-help" role="alert"
-                 style="color: var(--color-danger); margin-top: 6px;" hidden></div>
           </div>
 
           <!-- Cost Calculation Summary Box -->

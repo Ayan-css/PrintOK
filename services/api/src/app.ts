@@ -3976,6 +3976,24 @@ export function createApp(
         razorpaySubscriptionId: null,
       });
       logOps('warn', 'plan.limit_reached', { shopId, to: free.tier, action: event });
+
+      // The owner is not on the page when a renewal fails, so tell them.
+      const shop = await storage.getShop(shopId);
+      if (shop?.ownerEmail) {
+        const lost = getPlan(sub.notes?.tier)?.name || 'paid';
+        const notice = await emailService.send({
+          to: shop.ownerEmail,
+          subject: `Your PrintOk ${lost} plan has ended`,
+          text:
+            `Hello ${shop.name},\n\n` +
+            (event === 'subscription.halted'
+              ? `Razorpay could not collect the monthly payment for your ${lost} plan after several attempts, `
+              : `The Razorpay subscription for your ${lost} plan was ${event === 'subscription.completed' ? 'completed' : 'cancelled'}, `) +
+            `so your shop is now on the Free plan. Nothing has been removed.\n\n` +
+            'To go back, open your dashboard, go to Revenue Analytics and choose the plan again.\n',
+        });
+        if (!notice.ok) logOps('error', 'email.failed', { reason: 'plan ended notice', shopId });
+      }
       return { success: true, applied: free.tier };
     }
 
