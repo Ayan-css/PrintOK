@@ -83,10 +83,39 @@ document.addEventListener('DOMContentLoaded', () => {
   let submissionKey = newSubmissionKey();
   let currentPrinterId = null;
   let currentShopId = null; // resolved from the printer, then used to price the order
+  /**
+   * The shop fulfilling this order, as the API describes it: { id, name, city,
+   * state }. It is the payee and the printer, so it is named wherever the
+   * customer decides anything — never assumed from the URL.
+   */
+  let currentShop = null;
+  /** The server-quoted total currently on screen, in paise; null while estimating. */
+  let displayedTotalCents = null;
+  /** Whether the order is otherwise ready to pay; the shop must also be known. */
+  let payButtonsWanted = false;
+
+  /** Pay is possible only with a ready order AND an identified shop to pay. */
+  function applyPayButtons() {
+    const on = payButtonsWanted && Boolean(currentShop && currentShop.name);
+    ['btnPayCash', 'btnPayRazorpay'].forEach((id) => {
+      const b = document.getElementById(id);
+      if (b) b.disabled = !on;
+    });
+  }
   let pollingTimer = null;
   let healthCheckTimer = null;
   let previewObjectUrl = null;
   let rerenderPrice = null; // set by the customer screen so async pricing can refresh the quote
+  /**
+   * Set by the customer screen: loads what the shop asks of its customers and
+   * which services it offers. A handle rather than a direct call, because
+   * loadPortalConfig and loadPortalOptions are async functions declared inside
+   * that screen's block — and unlike plain functions, an async function
+   * declared in a block is never visible outside it. fetchShopInfo called them
+   * by name and threw a ReferenceError on every order page, which its catch
+   * then reported as "Shop Unavailable".
+   */
+  let loadShopPortal = null;
 
   // Detect current page route
   const pathname = window.location.pathname.toLowerCase();
@@ -108,6 +137,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function formatRupees(cents) {
     return `₹${((Number(cents) || 0) / 100).toFixed(2)}`;
+  }
+
+  /** "Chembur, Maharashtra" from a public shop view, or '' when it has neither. */
+  function shopPlace(shop) {
+    return shop ? [shop.city, shop.state].filter(Boolean).join(', ') : '';
+  }
+
+  /**
+   * Writes the shop's name into every element marked data-shop-name, so the
+   * header card, the review box and the confirmation can never disagree about
+   * who the order is with.
+   */
+  function paintShopName(name) {
+    document.querySelectorAll('[data-shop-name]').forEach((el) => { el.textContent = name; });
   }
 
   async function copyToClipboard(text) {
@@ -567,6 +610,14 @@ document.addEventListener('DOMContentLoaded', () => {
           return;
         }
 
+        const acceptTerms = document.getElementById('regAcceptTerms');
+        if (!acceptTerms || !acceptTerms.checked) {
+          if (acceptTerms) acceptTerms.focus();
+          showToast('warning', 'Terms not accepted',
+            'Tick the box to agree to the PrintOk Terms & Conditions before creating your shop.');
+          return;
+        }
+
         btnSubmitRegister.disabled = true;
         btnSubmitRegister.textContent = 'Creating your shop account...';
 
@@ -577,6 +628,7 @@ document.addEventListener('DOMContentLoaded', () => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+              acceptTerms: true,
               shopName, ownerEmail, printerName, upiId, password,
               bankAccountNumber: val('regBankAccount').replace(/\s+/g, ''),
               bankIfsc: val('regBankIfsc').replace(/\s+/g, '').toUpperCase(),
@@ -900,12 +952,16 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!email) return;
         const password = window.prompt('Choose a password (at least 12 characters, with upper, lower and a digit):');
         if (!password) return;
+        const acceptTerms = window.confirm(
+          `To create an account you must agree to the PrintOk Terms & Conditions and applicable policies (${location.origin}/terms).\n\nPress OK to agree.`
+        );
+        if (!acceptTerms) return;
 
         try {
           const res = await fetch(`${API_BASE}/api/merchant/claim`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ shopId: shopId.trim(), ownerEmail: email.trim(), password }),
+            body: JSON.stringify({ acceptTerms: true, shopId: shopId.trim(), ownerEmail: email.trim(), password }),
           });
           const body = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(body.error || 'Could not claim that shop.');
@@ -1670,19 +1726,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
         btnRequestWithdrawal.disabled = true;
         const original = btnRequestWithdrawal.textContent;
-        btnRequestWithdrawal.textContent = 'Processing Instant Payout...';
+        btnRequestWithdrawal.textContent = 'Checking payout…';
 
         try {
           const res = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/withdraw`, { method: 'POST' });
           const data = await res.json();
           if (res.ok && data.success) {
-            showToast('success', 'Instant Payout Triggered!', `${formatRupees(data.payout.netTransferredCents)} transferred to ${data.payout.payoutUpiId}.`);
+            showToast('success', 'Payout requested', `${formatRupees(data.payout.netTransferredCents)} to ${data.payout.payoutUpiId}.`);
             loadDashboard();
           } else {
             showToast('info', 'Payout Info', data.error || 'No available balance to withdraw.');
           }
         } catch {
-          showToast('danger', 'Error', 'Failed to process instant payout.');
+          showToast('danger', 'Error', 'Could not check your payout. Try again.');
         } finally {
           btnRequestWithdrawal.disabled = false;
           btnRequestWithdrawal.textContent = original;
@@ -1941,13 +1997,34 @@ document.addEventListener('DOMContentLoaded', () => {
         const data = await res.json();
 
         panel.hidden = false;
+        const form = document.getElementById('razorpayOnboardForm');
+        if (form) form.hidden = true;
+
+        // Razorpay's own status, as reported. Only "activated" with Route
+        // switched on means money is transferred automatically.
+        const requirementsList = document.getElementById('razorpayRequirements');
+        const requirements = Array.isArray(data.requirements) ? data.requirements : [];
+        if (requirementsList) {
+          requirementsList.innerHTML = requirements.map((r) =>
+            `<li>${escapeHtml(r.description || r.field_reference || r.reason_code || 'More information needed')}`
+            + (r.resolution_url ? ` — <a href="${escapeHtml(r.resolution_url)}" target="_blank" rel="noopener">provide it</a>` : '')
+            + '</li>').join('');
+          requirementsList.hidden = requirements.length === 0;
+        }
 
         if (data.accountId) {
-          const activated = data.status === 'activated';
-          status.textContent = activated
-            ? 'Set up. Your share of each order is settled to your own account automatically.'
-            : 'Razorpay still needs some details from you before automatic settlement starts. '
-              + 'Until then you are paid by transfer as usual.';
+          const messages = {
+            activated: data.routeEnabled
+              ? 'Active. Your share of each online order is transferred to your own Razorpay account, held until the job prints, then settled by Razorpay.'
+              : 'Verified by Razorpay. Automatic settlement is not switched on yet; until it is, PrintOk pays you out as usual.',
+            needs_clarification: 'Razorpay needs more information before it can activate your account.',
+            under_review: 'Razorpay is reviewing your account. Until it is active, PrintOk pays you out as usual.',
+            requested: 'Submitted to Razorpay. Until it is active, PrintOk pays you out as usual.',
+            suspended: 'Razorpay has suspended this linked account. PrintOk pays you out as usual meanwhile.',
+            rejected: 'Razorpay did not approve this linked account. PrintOk pays you out as usual.',
+          };
+          status.textContent = messages[data.status]
+            || `Razorpay status: ${data.status}. Until it is active, PrintOk pays you out as usual.`;
           if (button) button.hidden = true;
         } else if (data.routeEnabled === false) {
           // The true state today, said plainly rather than hidden behind a
@@ -1958,7 +2035,8 @@ document.addEventListener('DOMContentLoaded', () => {
           if (button) button.hidden = true;
         } else {
           status.textContent =
-            'Get paid automatically into your own account instead of by transfer.';
+            'Get paid into your own Razorpay account instead of by transfer from PrintOk. '
+            + 'Razorpay verifies your business (KYC) before anything is transferred.';
           if (button) button.hidden = false;
         }
       } catch {
@@ -1967,24 +2045,41 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    document.getElementById('btnLinkRazorpay')?.addEventListener('click', async (event) => {
-      const button = event.currentTarget;
-      button.disabled = true;
-      button.textContent = 'Setting up…';
+    document.getElementById('btnLinkRazorpay')?.addEventListener('click', (event) => {
+      event.currentTarget.hidden = true;
+      const form = document.getElementById('razorpayOnboardForm');
+      if (form) form.hidden = false;
+      document.getElementById('rzpContactName')?.focus();
+    });
+
+    document.getElementById('razorpayOnboardForm')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = document.getElementById('btnSubmitRazorpay');
+      if (!document.getElementById('rzpTnc')?.checked) {
+        showToast('warning', 'Consent needed', 'Tick the box to accept Razorpay\'s terms for Route.');
+        return;
+      }
+      if (button) { button.disabled = true; button.textContent = 'Submitting…'; }
       try {
+        const legal = (document.getElementById('rzpLegalName')?.value || '').trim();
         const res = await shopFetch(`/api/shops/${encodeURIComponent(dashShopId)}/razorpay-account`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
+          body: JSON.stringify({
+            businessType: document.getElementById('rzpBusinessType')?.value,
+            contactName: (document.getElementById('rzpContactName')?.value || '').trim(),
+            ...(legal ? { legalBusinessName: legal } : {}),
+            tncAccepted: true,
+          }),
         });
         const body = await res.json();
         if (!res.ok) throw new Error(body.error || 'Could not set up automatic settlement.');
-        showToast('success', 'Started', 'Razorpay will ask you for a few details to finish.');
+        showToast('success', 'Submitted', 'Razorpay will review your account and may ask for KYC documents.');
         loadRazorpayAccount();
       } catch (err) {
         showToast('danger', 'Not set up', err.message);
-        button.disabled = false;
-        button.textContent = 'Set up automatic settlement';
+      } finally {
+        if (button) { button.disabled = false; button.textContent = 'Submit to Razorpay'; }
       }
     });
 
@@ -2060,7 +2155,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const badge = document.getElementById('planCurrentBadge');
         if (badge) {
           badge.textContent =
-            `${plan.current.name || plan.current.tier} · ${(feeBps / 100).toFixed(2)}%`;
+            `${plan.current.name || plan.current.tier} · ${(feeBps / 100).toFixed(2)}%`
+            + (plan.current.status === 'cancelling' ? ' · ends at period end' : '');
         }
 
         const month = document.getElementById('planThisMonth');
@@ -2147,12 +2243,14 @@ document.addEventListener('DOMContentLoaded', () => {
             const name = button.getAttribute('data-plan-name');
             const isUp = button.getAttribute('data-plan-up') === '1';
 
-            // A downgrade takes effect immediately and can leave the shop over
-            // its new limits, so it is worth one confirmation. A paid plan goes
-            // to Razorpay first, which is its own confirmation.
+            // Leaving a paid plan for Free keeps the paid plan until the end of
+            // the period already paid for; the server says which applies. Worth
+            // one confirmation either way. A paid plan goes to Razorpay first,
+            // which is its own confirmation.
             if (!isUp && !window.confirm(
-              `Move this shop to ${name}? It applies straight away. Nothing is deleted — `
-              + 'if you end up over the new limits you keep what you have, but cannot add more.'
+              `Move this shop to ${name}? If you are on a paid plan, it stays active until the end `
+              + 'of the period you have paid for and is not renewed. Nothing is deleted — if you end '
+              + 'up over the new limits you keep what you have, but cannot add more.'
             )) return;
 
             const original = button.textContent;
@@ -2179,7 +2277,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
               showToast(
                 body.applied ? 'success' : 'info',
-                body.applied ? `Now on ${name}` : 'Request sent',
+                body.applied ? `Now on ${name}` : (body.cancelsAtPeriodEnd ? 'Plan will not renew' : 'Request sent'),
                 body.message
               );
               // The warning is the part that is easy to miss in a toast, so it
@@ -2544,8 +2642,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function setPayButtonsEnabled(enabled) {
-      [document.getElementById('btnPayCash'), document.getElementById('btnPayRazorpay')]
-        .forEach(b => { if (b) b.disabled = !enabled; });
+      payButtonsWanted = enabled;
+      applyPayButtons();
     }
 
     async function handleCustomerFile(file) {
@@ -2853,12 +2951,29 @@ document.addEventListener('DOMContentLoaded', () => {
       }, 250);
     }
 
+    /**
+     * The review box's price lines. The printing charge and the total are the
+     * same figure: the customer pays the shop's price, and PrintOk's fee is
+     * paid by the shop out of it — never added on top.
+     */
+    function paintPrice(totalCents, confirmed) {
+      displayedTotalCents = confirmed ? totalCents : null;
+      const charge = document.getElementById('reviewPrintingCharge');
+      const total = document.getElementById('totalCostDisplay');
+      if (charge) charge.textContent = formatRupees(totalCents);
+      if (total) total.textContent = formatRupees(totalCents);
+      const status = document.getElementById('priceStatus');
+      if (status) {
+        status.hidden = confirmed;
+        status.textContent = confirmed ? '' : 'Estimate — checking this shop\'s rates…';
+      }
+    }
+
     /** Paints a figure the server has confirmed it will charge. */
     function renderQuote(quote) {
-      const totalCostDisplay = document.getElementById('totalCostDisplay');
       const costBreakdownText = document.getElementById('costBreakdownText');
 
-      if (totalCostDisplay) totalCostDisplay.textContent = formatRupees(quote.totalPriceInCents);
+      paintPrice(quote.totalPriceInCents, true);
       if (costBreakdownText) {
         const parts = [
           `${quote.pages} ${quote.pages === 1 ? 'page' : 'pages'}`,
@@ -2925,10 +3040,9 @@ document.addEventListener('DOMContentLoaded', () => {
         discounted = pct > 0;
       }
 
-      const totalCostDisplay = document.getElementById('totalCostDisplay');
       const costBreakdownText = document.getElementById('costBreakdownText');
 
-      if (totalCostDisplay) totalCostDisplay.textContent = formatRupees(totalCents);
+      paintPrice(totalCents, false);
       if (costBreakdownText) {
         const parts = [
           `${safePages} ${safePages === 1 ? 'page' : 'pages'}`,
@@ -2942,6 +3056,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     rerenderPrice = updateCustomerPrice;
+    loadShopPortal = async (shopId) => {
+      await loadPortalConfig(shopId);
+      await loadPortalOptions(shopId);
+    };
 
     const btnPrevPage = document.getElementById('btnPrevPage');
     const btnNextPage = document.getElementById('btnNextPage');
@@ -2998,15 +3116,23 @@ document.addEventListener('DOMContentLoaded', () => {
         throw new Error('Payment library failed to load. Check your connection and try again.');
       }
 
+      // The shop is named from the server's answer — the payee of this order —
+      // not from anything on this page.
+      const payeeName = (order.payee && order.payee.shopName) || (job.shop && job.shop.name) || '';
+      if (!payeeName) throw new Error('Could not confirm which shop this order is for. Please reload and try again.');
+
       return new Promise((resolve, reject) => {
         const checkout = new window.Razorpay({
           key: order.keyId,
+          // Exactly what the server opened the order for: the job's total.
           amount: order.amountInCents,
           currency: order.currency || 'INR',
+          // The platform's name as registered with Razorpay; the description
+          // names the shop that is being paid and will print the order.
           name: 'PrintOk',
-          description: `${job.fileName} · ${job.pageCount} page(s)`,
+          description: `Print order from ${payeeName}, via PrintOk`.slice(0, 255),
           order_id: order.orderId,
-          notes: { jobId: job.id },
+          notes: { jobId: job.id, shopId: currentShopId || '', shopName: payeeName.slice(0, 200) },
           theme: { color: '#0e5e6f' },
           handler: async (response) => {
             try {
@@ -3051,6 +3177,26 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('stPageCopy').textContent =
         `${job.pageCount} ${job.pageCount === 1 ? 'page' : 'pages'}, ${job.copies} ${job.copies === 1 ? 'copy' : 'copies'}`;
       document.getElementById('stAmount').textContent = formatRupees(job.totalPriceInCents);
+
+      // Who the order is with, from the job the server returned.
+      const shop = job.shop || currentShop;
+      if (shop && shop.name) paintShopName(shop.name);
+      const place = shopPlace(shop);
+      const placeRow = document.getElementById('stShopPlaceRow');
+      if (placeRow) placeRow.hidden = !place;
+      const placeEl = document.getElementById('stShopPlace');
+      if (placeEl) placeEl.textContent = place;
+
+      const orderRef = document.getElementById('stOrderRef');
+      if (orderRef) orderRef.textContent = job.orderId || '—';
+      const payRow = document.getElementById('stPaymentRefRow');
+      if (payRow) payRow.hidden = !job.paymentReference;
+      const payRef = document.getElementById('stPaymentRef');
+      if (payRef) payRef.textContent = job.paymentReference || '';
+
+      // A cash order has not been paid yet; say what is owed, not "paid".
+      const amountLabel = document.getElementById('stAmountLabel');
+      if (amountLabel) amountLabel.textContent = job.paymentState === 'Paid' ? 'Amount paid:' : 'Amount to pay at the counter:';
 
       renderJobProgress(job);
       if (message) showToast('success', message.title, message.body);
@@ -3334,8 +3480,38 @@ document.addEventListener('DOMContentLoaded', () => {
         if (method === 'cash') {
           showJobStatus(data.job, {
             title: 'Show this token at the counter',
-            body: `Pay ₹${(data.job.totalPriceInCents / 100).toFixed(2)} in cash. Printing starts once the shop confirms.`,
+            body: `Pay ${formatRupees(data.job.totalPriceInCents)} in cash to ${(data.job.shop && data.job.shop.name) || 'the shop'}. Printing starts once the shop confirms.`,
           });
+          return;
+        }
+
+        // The server priced this job from the file itself. If that is not the
+        // total the customer was looking at — the page count came out
+        // differently, or the shop's quote had not arrived — show the real
+        // figure and stop, so nobody is asked to pay an amount they did not
+        // see. Pressing Pay again reuses the same job (same idempotency key).
+        if (displayedTotalCents !== data.job.totalPriceInCents) {
+          const costBreakdownText = document.getElementById('costBreakdownText');
+          const status = document.getElementById('priceStatus');
+          const charge = document.getElementById('reviewPrintingCharge');
+          const total = document.getElementById('totalCostDisplay');
+          if (charge) charge.textContent = formatRupees(data.job.totalPriceInCents);
+          if (total) total.textContent = formatRupees(data.job.totalPriceInCents);
+          displayedTotalCents = data.job.totalPriceInCents;
+          if (costBreakdownText) {
+            costBreakdownText.textContent =
+              `${data.job.pageCount} ${data.job.pageCount === 1 ? 'page' : 'pages'} × ${data.job.copies} ` +
+              `${data.job.copies === 1 ? 'copy' : 'copies'}, priced by the shop`;
+          }
+          if (status) {
+            status.hidden = false;
+            status.textContent = 'This is the final total from the shop\'s rates. Check it, then tap Pay again.';
+          }
+          document.getElementById('orderReview')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          showToast('warning', 'Please check the total',
+            `The total for this document is ${formatRupees(data.job.totalPriceInCents)}. Tap Pay again to continue.`);
+          submitting = false;
+          setPayButtonsEnabled(true);
           return;
         }
 
@@ -3674,6 +3850,34 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  /**
+   * The "You are ordering from" card. With no shop, the page says so and the
+   * pay buttons stay off: there is nobody to pay.
+   */
+  function renderShopIdentity(shop, missingLabel = 'Shop unavailable') {
+    currentShop = shop;
+    const card = document.getElementById('shopIdentityCard');
+    if (card) card.setAttribute('aria-busy', 'false');
+
+    const placeEl = document.getElementById('shopIdentityPlace');
+    const roleEl = document.getElementById('shopIdentityRole');
+    if (!shop || !shop.name) {
+      paintShopName(missingLabel);
+      if (placeEl) placeEl.hidden = true;
+      if (roleEl) roleEl.textContent = 'This order cannot be placed until the shop can be identified.';
+      if (card) card.classList.add('is-unavailable');
+      applyPayButtons();
+      return;
+    }
+
+    paintShopName(shop.name);
+    const place = shopPlace(shop);
+    if (placeEl) { placeEl.textContent = place; placeEl.hidden = !place; }
+    if (roleEl) roleEl.textContent = 'Independent print shop · Fulfils your order';
+    if (card) card.classList.remove('is-unavailable');
+    applyPayButtons();
+  }
+
   // Helper functions
   async function fetchShopInfo(printerId) {
     try {
@@ -3681,26 +3885,37 @@ document.addEventListener('DOMContentLoaded', () => {
       if (res.ok) {
         const data = await res.json();
         const shopNameDisplay = document.getElementById('shopNameDisplay');
-        if (shopNameDisplay) shopNameDisplay.textContent = data.shop ? data.shop.name : 'PrintOk Shop';
+        // Never a PrintOk-branded stand-in: a customer must not be led to pay
+        // "PrintOk Shop" when the shop could not be identified.
+        if (shopNameDisplay) shopNameDisplay.textContent = data.shop ? data.shop.name : 'Shop unavailable';
+        renderShopIdentity(data.shop || null);
 
         // Quote the shop's own rates rather than the hardcoded defaults, and
         // ask the same shop what it wants from the customer.
         if (data.shop && data.shop.id) {
           currentShopId = data.shop.id;
-          await loadPortalConfig(data.shop.id);
-          await loadPortalOptions(data.shop.id);
+          // A failure here is about the shop's page settings, not about which
+          // shop this is — so it must not turn an identified shop into
+          // "unavailable". The order still prices and submits either way.
+          try {
+            if (loadShopPortal) await loadShopPortal(data.shop.id);
+          } catch (err) {
+            console.warn('[PrintOk] Could not load this shop\'s page settings:', err && err.message);
+          }
           // Now that the shop is known, replace the opening estimate with the
           // figure this shop will actually charge.
           if (rerenderPrice) rerenderPrice();
         }
       } else {
         const shopNameDisplay = document.getElementById('shopNameDisplay');
-        if (shopNameDisplay) shopNameDisplay.textContent = 'Shop Not Found';
+        if (shopNameDisplay) shopNameDisplay.textContent = 'Shop not found';
+        renderShopIdentity(null, 'Shop not found');
         showToast('danger', 'Shop Not Found', 'This QR code points to a printer that no longer exists.');
       }
     } catch {
       const shopNameDisplay = document.getElementById('shopNameDisplay');
-      if (shopNameDisplay) shopNameDisplay.textContent = 'Shop Unavailable';
+      if (shopNameDisplay) shopNameDisplay.textContent = 'Shop unavailable';
+      renderShopIdentity(null);
     }
   }
 

@@ -13,18 +13,49 @@ export interface RazorpayOrderResult {
   currency: string;
   keyId: string;
   isSimulated: boolean;
-  /** Set when the order carries a Route split to the shop's linked account. */
-  transferAmountCents?: number;
-  serviceFeeCents?: number;
 }
 
-/** A Route split attached to an order at creation time. */
-export interface OrderTransfer {
-  account: string;
-  amount: number;
-  currency: 'INR';
-  notes?: Record<string, string>;
-  on_hold?: boolean;
+/**
+ * Who an order is for, attached to the Razorpay order's notes so the payee is
+ * identifiable on the gateway's side too. Public facts only: the shop's id and
+ * the name it trades under. Never contact details, bank details or anything
+ * about the customer.
+ */
+export interface OrderPayee {
+  shopId: string;
+  shopName: string;
+}
+
+/** Which kind of Razorpay key is configured: its prefix, not a guess. */
+export type RazorpayKeyMode = 'live' | 'test' | 'unknown' | 'none';
+
+export function razorpayKeyMode(keyId: string): RazorpayKeyMode {
+  if (!keyId) return 'none';
+  if (keyId.startsWith('rzp_live_')) return 'live';
+  if (keyId.startsWith('rzp_test_')) return 'test';
+  return 'unknown';
+}
+
+/**
+ * Why the configured keys must not take payments here, or undefined when they
+ * may. In production only a live key takes real money; a test key there would
+ * show customers a checkout that takes no money while printing their jobs.
+ * RAZORPAY_ALLOW_TEST_KEYS=true is the explicit escape hatch for a staging
+ * deployment that runs with NODE_ENV=production.
+ */
+export function razorpayConfigurationError(
+  keyId: string, keySecret: string, env: NodeJS.ProcessEnv = process.env
+): string | undefined {
+  if (!keyId || !keySecret) return undefined; // "not configured" is reported separately
+  if (env.NODE_ENV !== 'production') return undefined;
+  const mode = razorpayKeyMode(keyId);
+  if (mode === 'live') return undefined;
+  if (mode === 'test' && env.RAZORPAY_ALLOW_TEST_KEYS === 'true') return undefined;
+  return mode === 'test'
+    ? 'RAZORPAY_KEY_ID is a test key (rzp_test_) but NODE_ENV is production. Payments are refused ' +
+      'until a live key (rzp_live_) is configured, or RAZORPAY_ALLOW_TEST_KEYS=true is set for a ' +
+      'staging deployment.'
+    : 'RAZORPAY_KEY_ID is neither a live (rzp_live_) nor a test (rzp_test_) key. Payments are refused.';
 }
 
 /**
@@ -61,9 +92,17 @@ export class RazorpayService {
   private keySecret: string;
   private webhookSecret: string;
 
+  /** Set when the keys present must not be used here; see razorpayConfigurationError. */
+  private configurationError?: string;
+
   constructor() {
     this.keyId = process.env.RAZORPAY_KEY_ID || '';
     this.keySecret = process.env.RAZORPAY_KEY_SECRET || '';
+    this.configurationError = razorpayConfigurationError(this.keyId, this.keySecret);
+    if (this.configurationError) {
+      // Logged by name only. Neither key is ever printed.
+      console.error(`[Razorpay Service] ${this.configurationError}`);
+    }
     // The development fallback below is a literal in a public repository, so
     // anyone can read it. Falling back to it in production would let a stranger
     // sign their own "payment captured" webhook and mark any job paid — free
@@ -91,21 +130,23 @@ export class RazorpayService {
   }
 
   /**
-   * Create a Razorpay Order for a print job.
-   * Uses real Razorpay API if keys are provided, else falls back to mock order for dev.
-   */
-  /**
-   * Creates a Razorpay order.
+   * Creates a Razorpay order for a print job.
    *
-   * When `transfer` is supplied the order carries a Route instruction, so
-   * Razorpay settles the shop's share to its own linked account at capture and
-   * PrintOk retains only the service fee. Without it, the whole amount lands in
-   * the platform account and the shop must be paid out separately.
+   * The amount is the server's job total and nothing else. The notes name the
+   * job and the shop it is for, so the payee is on the gateway's record as
+   * well as on the customer's screen.
+   *
+   * No Route split is attached here. The shop's share is transferred from the
+   * captured payment instead, once Razorpay has reported the fee it actually
+   * charged — see settleRouteTransfer in app.ts.
+   *
+   * Uses the real Razorpay API when keys are configured; outside production,
+   * falls back to a simulated order.
    */
   public async createOrder(
     jobId: string,
     amountInCents: number,
-    transfer?: OrderTransfer
+    payee?: OrderPayee
   ): Promise<RazorpayOrderResult> {
     // Guarded here as well as at the endpoint, so no future caller can send an
     // amount Razorpay will refuse.
@@ -113,6 +154,10 @@ export class RazorpayService {
       throw new Error(
         `A Razorpay order must be at least ${MIN_ORDER_AMOUNT_PAISE} paise; this job came to ${amountInCents}.`
       );
+    }
+
+    if (this.configurationError) {
+      throw new Error(`Payments are not available: ${this.configurationError}`);
     }
 
     if (this.keyId && this.keySecret) {
@@ -124,8 +169,10 @@ export class RazorpayService {
           amount: amountInCents, // Razorpay takes amount in smallest currency unit (paise/cents)
           currency: 'INR',
           receipt: `rcpt_${jobId}`,
-          notes: { jobId },
-          ...(transfer ? { transfers: [transfer] } : {}),
+          notes: {
+            jobId,
+            ...(payee ? { shopId: payee.shopId, shopName: payee.shopName.slice(0, 200) } : {}),
+          },
         });
 
         return {
@@ -134,12 +181,6 @@ export class RazorpayService {
           currency: order.currency,
           keyId: this.keyId,
           isSimulated: false,
-          ...(transfer
-            ? {
-                transferAmountCents: transfer.amount,
-                serviceFeeCents: amountInCents - transfer.amount,
-              }
-            : {}),
         };
       } catch (err: any) {
         const reason = describeRazorpayError(err);
@@ -188,13 +229,17 @@ export class RazorpayService {
   public async refundPayment(
     paymentId: string,
     amountInCents: number,
-    notes: Record<string, string> = {}
+    notes: Record<string, string> = {},
+    options: { reverseAll?: boolean } = {}
   ): Promise<
     | { ok: true; refundId: string; amountInCents: number; status: string; settled: boolean }
     | { ok: false; error: string }
   > {
     if (!this.keyId || !this.keySecret) {
       return { ok: false, error: 'Razorpay is not configured, so no refund can be issued.' };
+    }
+    if (this.configurationError) {
+      return { ok: false, error: this.configurationError };
     }
 
     if (!paymentId) {
@@ -209,6 +254,10 @@ export class RazorpayService {
         amount: amountInCents,
         speed: 'normal',
         notes,
+        // Razorpay's documented flag for pulling a Route transfer back as part
+        // of the refund. Only sent when asked for; the caller normally reverses
+        // the transfer itself first so the reversal id is on record.
+        ...(options.reverseAll ? { reverse_all: true } : {}),
       });
 
       // Razorpay refunds are asynchronous. The call returning does not mean the
@@ -284,9 +333,19 @@ export class RazorpayService {
     }
   }
 
-  /** True when real Razorpay credentials are configured. */
-  public get isLive(): boolean {
-    return Boolean(this.keyId && this.keySecret);
+  /**
+   * True when real Razorpay credentials are configured and may be used here.
+   *
+   * This used to be called `isLive` and meant only "both keys are set" — test
+   * keys included. Whether the keys are live or test is `keyMode`.
+   */
+  public get isConfigured(): boolean {
+    return Boolean(this.keyId && this.keySecret && !this.configurationError);
+  }
+
+  /** live | test | unknown | none, from the key id's prefix. Never the secret. */
+  public get keyMode(): RazorpayKeyMode {
+    return razorpayKeyMode(this.keyId);
   }
 
   public get publishableKeyId(): string {
@@ -357,7 +416,7 @@ export class RazorpayService {
    * the caller treats as "billing is not live" rather than guessing.
    */
   public subscriptionPlanId(tier: string): string {
-    if (!this.keyId || !this.keySecret) return '';
+    if (!this.isConfigured) return '';
     return process.env[`RAZORPAY_PLAN_ID_${tier.toUpperCase()}`] || '';
   }
 
@@ -386,15 +445,35 @@ export class RazorpayService {
     }
   }
 
-  /** Cancels immediately. Logged, not thrown: the plan change has already been decided. */
-  public async cancelSubscription(subscriptionId: string): Promise<void> {
-    if (!subscriptionId || !this.keyId || !this.keySecret) return;
+  /**
+   * Cancels a subscription.
+   *
+   * `atCycleEnd` true: Razorpay stops renewing it but it stays active until the
+   * end of the period already paid for, then moves to cancelled and sends
+   * subscription.cancelled — which is when the shop drops to Free. That is what
+   * the Refund Policy promises a shop that cancels.
+   *
+   * `atCycleEnd` false: cancelled now. Used only when a replacement paid plan
+   * has just activated, so the shop is not billed for two plans at once.
+   *
+   * The SDK sends cancel_at_cycle_end: 1 whenever its second argument is
+   * truthy, so a plain boolean is passed — never an object, which would be
+   * truthy even as { cancel_at_cycle_end: false }.
+   */
+  public async cancelSubscription(
+    subscriptionId: string,
+    options: { atCycleEnd: boolean }
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (!subscriptionId || !this.isConfigured) return { ok: false, error: 'Razorpay is not configured.' };
     try {
       const Razorpay = require('razorpay');
       const instance = new Razorpay({ key_id: this.keyId, key_secret: this.keySecret });
-      await instance.subscriptions.cancel(subscriptionId, false);
+      await instance.subscriptions.cancel(subscriptionId, options.atCycleEnd === true);
+      return { ok: true };
     } catch (err: any) {
-      console.error(`[Razorpay Service] Could not cancel ${subscriptionId}:`, describeRazorpayError(err));
+      const reason = describeRazorpayError(err);
+      console.error(`[Razorpay Service] Could not cancel ${subscriptionId}:`, reason);
+      return { ok: false, error: reason };
     }
   }
 }

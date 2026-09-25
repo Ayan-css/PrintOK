@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="PrintOk — Scan a shop QR code, upload your document from your phone, pay and print instantly. Hardware-free printing for everyone.">
+  <meta name="description" content="Order prints from a local print shop. Scan the shop's QR code, upload your document, and pay the shop's price through PrintOk.">
   <meta name="theme-color" content="#0d0d0d">
-  <meta property="og:title" content="PrintOk — Instant Mobile Printing">
-  <meta property="og:description" content="Scan, upload, pay. Your document at the shop printer in seconds.">
-  <title>PrintOk — Instant Mobile Printing</title>
+  <meta property="og:title" content="PrintOk — Order prints from local print shops">
+  <meta property="og:description" content="Scan the shop's QR, upload, pay. The shop prints your order.">
+  <title>PrintOk — Order prints from local print shops</title>
   <meta name="robots" content="noindex">
 
   <!-- Google Fonts -->
@@ -33,6 +33,7 @@
     moment — pdf.js still pinned by the same content hash, checkout still
     deliberately unpinned because Razorpay update it in place.
   -->
+  <script src="/site-config.js" defer></script>
   <script src="/scan.js" defer></script>
   <script src="/app.js" defer></script>
   <meta property="og:image" content="https://printok.vercel.app/og-image.png">
@@ -52,7 +53,7 @@
           <img class="brand-mark" src="/favicon.svg" alt="" width="36" height="36">
           <div class="brand-text">
             <div class="brand-name">PrintOk</div>
-            <div class="brand-tagline">Hardware-Free Printing</div>
+            <div class="brand-tagline">Order from local print shops</div>
           </div>
         </a>
 
@@ -76,10 +77,12 @@
       ================================================== -->
       <main id="screenLanding" class="main-content" hidden>
         <div class="landing-hero">
-          <div class="landing-badge"><svg class="icon" aria-hidden="true"><use href="/icons.svg#sparkles"/></svg> Hardware-Free Stationery Printing</div>
-          <h1 class="landing-title">Scan. Upload.<br><em>Print.</em></h1>
+          <div class="landing-badge"><svg class="icon" aria-hidden="true"><use href="/icons.svg#store"/></svg> Order from local print shops</div>
+          <h1 class="landing-title">Scan the shop's<br><em>QR code.</em></h1>
           <p class="landing-desc">
-            No WhatsApp sending, no USB pen drives. Scan the shop QR code, select your print configuration, pay via UPI, and your document prints automatically at the counter!
+            This page opens from the QR code on a print shop's counter. Scan it to see that
+            shop's name and prices, upload your document and pay. The shop you scanned prints
+            and hands over your order; PrintOk handles the ordering and payment.
           </p>
 
           <div style="margin-top: 16px;">
@@ -89,42 +92,20 @@
           </div>
         </div>
 
-        <!-- Standard Rates Matrix Box -->
+        <!--
+          There used to be a "Standard Printing Rates" card here with fixed
+          prices, and a demo button pointing at a printer that does not exist in
+          production. Neither was true of any shop: each shop sets its own rates,
+          and they are only known once the customer has scanned that shop's QR.
+        -->
         <div class="card card--elevated" style="margin-top: 20px;">
           <div class="card-header">
-            <h3 class="card-title">Standard Printing Rates</h3>
-            <span class="badge badge-success">Transparent Pricing</span>
+            <h2 class="card-title">Who sets the price?</h2>
           </div>
-
-          <div class="grid-2">
-            <div class="pricing-mini-card">
-              <div class="pricing-type">B&amp;W Single-Sided</div>
-              <div class="pricing-rate">₹2.00 <span>/ page</span></div>
-              <div class="pricing-meta">Standard 80 GSM Sheet</div>
-            </div>
-            <div class="pricing-mini-card">
-              <div class="pricing-type">B&amp;W Back-to-Back</div>
-              <div class="pricing-rate">₹1.50 <span>/ page</span></div>
-              <div class="pricing-meta">Duplex (₹3.00 / sheet)</div>
-            </div>
-            <div class="pricing-mini-card">
-              <div class="pricing-type">Color Single-Sided</div>
-              <div class="pricing-rate">₹10.00 <span>/ page</span></div>
-              <div class="pricing-meta">Vibrant Laser Color</div>
-            </div>
-            <div class="pricing-mini-card">
-              <div class="pricing-type">Color Back-to-Back</div>
-              <div class="pricing-rate">₹8.00 <span>/ page</span></div>
-              <div class="pricing-meta">Color Duplex (₹16.00 / sheet)</div>
-            </div>
-          </div>
-
-          <!-- Demo Printer Launcher Button -->
-          <div style="margin-top: 16px; text-align: center;">
-            <a id="btnDemoPrinter" href="/?printer=prn_test" class="btn btn-secondary btn-full" style="text-decoration: none;">
-              <svg class="icon" aria-hidden="true"><use href="/icons.svg#smartphone"/></svg> Try Customer Printing Demo Mode
-            </a>
-          </div>
+          <p class="form-help" style="margin: 0;">
+            Prices are set by the selected print shop. You see the shop's name, its rates and the
+            full total before you pay, and PrintOk adds no fee to your bill.
+          </p>
         </div>
       </main>
 
@@ -132,7 +113,24 @@
            SCREEN 2: CUSTOMER PRINTING FLOW (When ?printer= is set)
       ================================================== -->
       <main id="screenCustomer" class="main-content" hidden>
-        
+
+        <!--
+          Who the customer is ordering from. PrintOk is the platform; this shop
+          is the one that prints and hands over the order, and is who the
+          customer's money is for. Filled from /api/printers/:id, which reads
+          the shop from the database — never from anything in the URL.
+        -->
+        <section class="shop-identity-card" id="shopIdentityCard" aria-labelledby="shopIdentityName" aria-busy="true">
+          <div class="shop-identity-icon" aria-hidden="true"><svg class="icon"><use href="/icons.svg#store"/></svg></div>
+          <div class="shop-identity-body">
+            <div class="shop-identity-eyebrow">You are ordering from</div>
+            <h1 class="shop-identity-name" id="shopIdentityName" data-shop-name>Loading shop…</h1>
+            <div class="shop-identity-place" id="shopIdentityPlace" hidden></div>
+            <div class="shop-identity-role" id="shopIdentityRole">Independent print shop · Fulfils your order</div>
+            <div class="shop-identity-platform">Ordering and payments by PrintOk</div>
+          </div>
+        </section>
+
         <!-- File Upload Card -->
         <div class="card card--elevated">
           <div class="card-header">
@@ -377,19 +375,60 @@
             </div>
           </div>
 
-          <!-- Cost Calculation Summary Box -->
-          <div class="cost-summary-box">
-            <div>
-              <div class="cost-label">Total Cost</div>
-              <div class="cost-breakdown" id="costBreakdownText">1 page × ₹2.00 (B&amp;W Single)</div>
+          <!--
+            Review, immediately above the pay buttons. Answers the four
+            questions a customer should be able to answer before paying: who am
+            I ordering from, who prints it, how much, and does PrintOk add a
+            fee. The figures come from the server's quote for this shop — the
+            same calculation that prices the job — and the amount actually
+            charged is the server's job total, checked against this before
+            checkout opens.
+          -->
+          <section class="order-review" id="orderReview" aria-labelledby="orderReviewTitle">
+            <h3 class="order-review-title" id="orderReviewTitle">Review your order</h3>
+            <div class="key-value-list">
+              <div class="key-value-row">
+                <span>Shop</span>
+                <strong data-shop-name>—</strong>
+              </div>
+              <div class="key-value-row">
+                <span>Fulfilled by</span>
+                <strong data-shop-name>—</strong>
+              </div>
+              <div class="key-value-row">
+                <span>Printing charge</span>
+                <strong id="reviewPrintingCharge">—</strong>
+              </div>
+              <div class="key-value-row">
+                <span>PrintOk fee to you</span>
+                <strong>₹0.00</strong>
+              </div>
             </div>
-            <div class="cost-value" id="totalCostDisplay">₹2.00</div>
-          </div>
+
+            <div class="cost-summary-box">
+              <div>
+                <div class="cost-label">Total payable</div>
+                <div class="cost-breakdown" id="costBreakdownText">Choose a document to see the price</div>
+              </div>
+              <div class="cost-value" id="totalCostDisplay" aria-live="polite">—</div>
+            </div>
+            <p class="order-review-status" id="priceStatus" role="status" hidden></p>
+
+            <p class="order-review-note">
+              PrintOk is the ordering and payment platform. Your printing order is fulfilled by
+              <strong data-shop-name>the shop</strong>. PrintOk's service fee is paid by the shop and
+              is not added to your bill.
+            </p>
+            <p class="order-review-note">
+              By paying, you agree to the <a href="/terms" target="_blank" rel="noopener">Terms</a>
+              and <a href="/refund" target="_blank" rel="noopener">Refund Policy</a>.
+            </p>
+          </section>
 
           <!-- Checkout Actions -->
           <div class="grid-2" style="margin-top: 14px;">
             <button id="btnPayRazorpay" class="btn btn-primary btn-full">
-              <svg class="icon" aria-hidden="true"><use href="/icons.svg#credit-card"/></svg> Pay via Razorpay / UPI
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#credit-card"/></svg> Pay online (UPI / card)
             </button>
             <button id="btnPayCash" class="btn btn-secondary btn-full">
               <svg class="icon" aria-hidden="true"><use href="/icons.svg#banknote"/></svg> Pay Cash at Counter
@@ -445,6 +484,26 @@
           <!-- Job Metadata Summary -->
           <div class="key-value-list" style="margin-top: 14px;">
             <div class="key-value-row">
+              <span>Order from:</span>
+              <strong data-shop-name>—</strong>
+            </div>
+            <div class="key-value-row">
+              <span>Fulfilled by:</span>
+              <strong data-shop-name>—</strong>
+            </div>
+            <div class="key-value-row" id="stShopPlaceRow" hidden>
+              <span>Shop location:</span>
+              <strong id="stShopPlace"></strong>
+            </div>
+            <div class="key-value-row">
+              <span>Order reference:</span>
+              <strong id="stOrderRef">—</strong>
+            </div>
+            <div class="key-value-row" id="stPaymentRefRow" hidden>
+              <span>Payment reference:</span>
+              <strong id="stPaymentRef"></strong>
+            </div>
+            <div class="key-value-row">
               <span>Document:</span>
               <strong id="stFileName">resume.pdf</strong>
             </div>
@@ -453,10 +512,17 @@
               <strong id="stPageCopy">1 page, 1 copy</strong>
             </div>
             <div class="key-value-row">
-              <span>Amount Paid:</span>
-              <strong id="stAmount">₹2.00</strong>
+              <span id="stAmountLabel">Amount paid:</span>
+              <strong id="stAmount">—</strong>
             </div>
           </div>
+
+          <p class="order-review-note" style="margin-top: 12px;">
+            Need help? Speak to <strong data-shop-name>the shop</strong> at the counter first — they
+            have your printout. If that does not resolve it, contact PrintOk support at
+            <a data-support-email href="/contact">our contact page</a> with your order reference.
+            See the <a href="/refund">Refund Policy</a>.
+          </p>
 
           <div style="margin-top: 16px;">
             <button id="btnNewPrintJob" class="btn btn-primary btn-full">
@@ -469,10 +535,16 @@
 
       <!-- FOOTER -->
       <footer class="app-footer">
-        <div>PrintOk Hardware-Free Stationery Printing</div>
-        <div style="margin-top: 4px;">
-          <a href="/" style="color: var(--color-primary); font-weight: 600;">About PrintOk</a>
-        </div>
+        <div>PrintOk is an ordering and payment platform for independent print shops.
+          Each order is printed and fulfilled by the shop named on this page.</div>
+        <div style="margin-top: 4px;">PrintOk is operated by BitWise.</div>
+        <nav class="app-footer-links" aria-label="Policies and support">
+          <a href="/terms">Terms</a>
+          <a href="/privacy">Privacy</a>
+          <a href="/refund">Refund Policy</a>
+          <a href="/contact">Contact</a>
+          <a href="/">About PrintOk</a>
+        </nav>
       </footer>
 
     </div>

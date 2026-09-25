@@ -86,8 +86,8 @@
       "dest": "/refund.html"
     },
     {
-      "src": "/example",
-      "dest": "/example.html"
+      "src": "/contact",
+      "dest": "/contact.html"
     },
     {
       "src": "/404",

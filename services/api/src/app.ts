@@ -9,7 +9,7 @@ import { processDocument } from './documentProcessor';
 import { RazorpayService, MIN_ORDER_AMOUNT_PAISE } from './razorpayService';
 import { EmailService } from './email';
 import { logOps } from './observability';
-import { RazorpayRouteService } from './razorpayRoute';
+import { RazorpayRouteService, LINKED_ACCOUNT_BUSINESS_TYPES, toTransferSnapshot, TransferSnapshot } from './razorpayRoute';
 import { parsePrintState } from './jobStateMachine';
 import { classifyFailure } from './jobRecovery';
 import { buildDefaultRateCard, calculateGridPriceBreakdown } from './pricing';
@@ -27,7 +27,8 @@ import {
   DEFAULT_PLAN_TIER, DEFAULT_PLATFORM_FEE_BPS,
   PAYMENT_GATEWAY_FEE_BPS, PAYMENT_GATEWAY_LABEL, calculateShopNetCents,
   wasPaidThroughGateway,
-  Printer, PrintJob, ShopPortalConfig, CUSTOMER_NAME_MAX, CUSTOMER_PHONE_MAX,
+  Printer, PrintJob, Shop, ShopPortalConfig, CUSTOMER_NAME_MAX, CUSTOMER_PHONE_MAX,
+  TERMS_VERSION,
   ShopRate, ShopRateCard,
   SERVICE_CATALOGUE, SERVICE_GROUPS, defaultEnabledServices, resolveEnabledServices,
   derivePortalOptions, checkJobAgainstPortal,
@@ -310,10 +311,59 @@ function readIdempotencyKey(req: Request): string | undefined {
  * being named here. What remains is what the status screen actually renders,
  * plus the configuration the customer chose themselves.
  */
-function customerJobView(job: PrintJob) {
+/**
+ * The shop as a customer may see it: the name it trades under and its town.
+ *
+ * This is the payee and the provider of the printing, so the customer is shown
+ * who it is. Deliberately not the street address, phone or GSTIN: those were
+ * given for Razorpay's KYC, and for a proprietorship the registered address is
+ * often the owner's home. Nothing here comes from the request — only from the
+ * shop row the printer belongs to.
+ */
+function publicShopView(shop: Shop | undefined) {
+  if (!shop) return undefined;
+  return {
+    name: shop.name,
+    city: shop.addressCity || undefined,
+    state: shop.addressState || undefined,
+  };
+}
+
+const TERMS_REQUIRED_ERROR =
+  'You must accept the PrintOk Terms & Conditions and policies to create a shop account.';
+
+/** Largest number of copies one order may ask for; the quote endpoint's cap too. */
+const MAX_COPIES = 999;
+
+/**
+ * Copies, as a whole number from 1 to MAX_COPIES, or why not.
+ *
+ * Absent means one copy, which is what every older page sent. Anything else
+ * must be a whole number: pricing used Math.max(1, copies), so 0.5, -3, NaN or
+ * "2abc" were silently priced as something and stored as something else.
+ */
+function parseCopies(raw: unknown): { value: number } | { error: string } {
+  if (raw === undefined || raw === null) return { value: 1 };
+  let n: number;
+  if (typeof raw === 'number') {
+    n = raw;
+  } else if (typeof raw === 'string' && /^\s*\d+\s*$/.test(raw)) {
+    n = Number(raw.trim());
+  } else {
+    return { error: 'copies must be a whole number.' };
+  }
+  if (!Number.isInteger(n)) return { error: 'copies must be a whole number.' };
+  if (n < 1) return { error: 'copies must be at least 1.' };
+  if (n > MAX_COPIES) return { error: `copies cannot be more than ${MAX_COPIES}.` };
+  return { value: n };
+}
+
+function customerJobView(job: PrintJob, shop?: Shop) {
   return {
     id: job.id,
     orderId: job.orderId,
+    /** Who the order is from and who prints it. */
+    shop: publicShopView(shop),
     printerId: job.printerId,
     tokenNumber: job.tokenNumber,
 
@@ -331,6 +381,8 @@ function customerJobView(job: PrintJob) {
     printConfig: job.printConfig,
 
     totalPriceInCents: job.totalPriceInCents,
+    /** The customer's own Razorpay payment id, for their records and support. */
+    paymentReference: job.razorpayPaymentId,
 
     errorMessage: job.errorMessage,
     declineReason: job.declineReason,
@@ -432,77 +484,99 @@ function summariseShopEarnings(jobs: PrintJob[], commissionBps: number) {
 /**
  * How this shop gets paid, why, and what it can do about it.
  *
- * The dashboard previously reported `settlement: 'manual'` and stopped there,
- * which tells a shop owner nothing they can act on — least of all why the
- * answer depends on a Razorpay account they may not have heard of.
+ * Automatic settlement needs two things: Razorpay Route switched on for the
+ * PrintOk account (`routeEnabled`), and Razorpay having activated this shop's
+ * own linked account. Only when both hold is anything described as automatic —
+ * an activated account on a platform where Route is still off is paid out by
+ * hand like every other shop, and is told so.
  *
- * The reason is structural rather than a policy we chose. Razorpay Route splits
- * a payment at capture and settles the shop's share into the shop's *own*
- * linked account, so the money is never PrintOk's to hold. That is what makes
- * it same-day and automatic — and it is also why the account has to exist and
- * clear KYC first: an account nobody has verified cannot legally receive a
- * split. Without one, every payment lands in the platform account and the shop
- * has to be paid out by hand.
+ * `razorpayAccountStatus` is Razorpay's own status, verbatim: the Route
+ * product's activation_status once onboarding has requested it.
  */
 function describeSettlement(shop: {
   razorpayAccountId?: string;
   razorpayAccountStatus?: string;
   razorpayAccountError?: string;
+  razorpayAccountRequirements?: unknown;
   upiId?: string;
   bankAccountNumber?: string;
-}) {
+}, routeEnabled: boolean) {
   const status = shop.razorpayAccountStatus || 'not_linked';
   const hasDestination = Boolean(shop.upiId || shop.bankAccountNumber);
+  const lastError = shop.razorpayAccountError ? { lastError: shop.razorpayAccountError } : {};
+  const requirements = Array.isArray(shop.razorpayAccountRequirements) && shop.razorpayAccountRequirements.length
+    ? { requirements: shop.razorpayAccountRequirements } : {};
 
-  if (status === 'activated') {
+  if (status === 'activated' && routeEnabled) {
     return {
       mode: 'automatic' as const,
       status,
-      headline: 'Each paid order is settled straight to your own Razorpay account.',
+      headline: 'Each paid order is transferred to your own Razorpay account.',
       detail:
-        'The split happens when the customer pays, so the money never sits with PrintOk. ' +
-        'There is nothing to request and no minimum to reach.',
+        'When a customer pays online, your share — the order total less the PrintOk platform fee and ' +
+        'the payment gateway charge — is transferred to your linked Razorpay account and held until ' +
+        'the job prints. It is then released and Razorpay settles it to your bank on its usual cycle. ' +
+        'If the order is refunded instead, the transfer is reversed.',
       action: null,
     };
   }
 
-  if (status === 'created' || status === 'needs_kyc') {
+  if (status === 'activated') {
     return {
       mode: 'manual' as const,
       status,
-      headline: 'Your Razorpay account is created but not yet active.',
+      headline: 'Your Razorpay account is verified. Automatic settlement is not switched on yet.',
       detail:
-        'Razorpay verifies every account that receives money before it can be paid into. ' +
-        'Once that completes, each order settles to you automatically at the moment it is paid.',
-      action: 'Finish the verification Razorpay has asked you for.',
-      ...(shop.razorpayAccountError ? { lastError: shop.razorpayAccountError } : {}),
+        'PrintOk has not yet switched on Razorpay Route, which automatic settlement needs. Until it ' +
+        'does, online payments are received by PrintOk and paid out to you separately — every paid ' +
+        'order is recorded and owed to you.',
+      action: null,
     };
   }
 
-  if (status === 'suspended') {
+  if (status === 'suspended' || status === 'rejected') {
     return {
       mode: 'manual' as const,
       status,
-      headline: 'Automatic settlement is paused on your Razorpay account.',
-      detail: 'Payments still reach PrintOk and are owed to you; they are paid out by hand meanwhile.',
+      headline: status === 'rejected'
+        ? 'Razorpay did not approve your linked account.'
+        : 'Razorpay has suspended your linked account.',
+      detail: 'Online payments are received by PrintOk and owed to you; they are paid out separately meanwhile.',
       action: 'Contact Razorpay support about your linked account, then tell us once it is active.',
-      ...(shop.razorpayAccountError ? { lastError: shop.razorpayAccountError } : {}),
+      ...lastError,
+    };
+  }
+
+  if (status !== 'not_linked') {
+    // created, requested, under_review, needs_clarification, legacy needs_kyc,
+    // or any status Razorpay adds later.
+    const needsAction = status === 'needs_clarification' || status === 'needs_kyc' || 'requirements' in requirements;
+    return {
+      mode: 'manual' as const,
+      status,
+      headline: needsAction
+        ? 'Razorpay needs more information before it can activate your account.'
+        : 'Razorpay is reviewing your linked account.',
+      detail:
+        'Razorpay verifies every account that receives money before anything can be transferred to ' +
+        'it. Until then, online payments are received by PrintOk and paid out to you separately.',
+      action: needsAction ? 'Provide what Razorpay has asked for (listed below, or in its email).' : null,
+      ...requirements,
+      ...lastError,
     };
   }
 
   return {
     mode: 'manual' as const,
     status,
-    headline: 'Your orders are collected by PrintOk and paid out to you.',
+    headline: 'Your online orders are collected by PrintOk and paid out to you.',
     detail:
-      'Automatic settlement needs a Razorpay account in your own name, because the money is ' +
-      'split to you at the moment the customer pays rather than passing through us. Until then ' +
-      'nothing is lost — every paid order is recorded and owed to you — but the payout is a ' +
-      'manual step rather than an instant one.',
+      'Online payments are received into PrintOk\'s Razorpay account and paid out to you separately. ' +
+      'Every paid order is recorded and owed to you. Automatic settlement to an account in your own ' +
+      'name needs Razorpay Route, which PrintOk is still setting up.',
     action: hasDestination
-      ? 'Connect a Razorpay account from this screen to switch to automatic, same-day settlement.'
-      : 'Add a UPI ID or bank account below so we know where to send your money, then connect ' +
-        'Razorpay to make it automatic.',
+      ? null
+      : 'Add a UPI ID or bank account below so we know where to send your money.',
   };
 }
 
@@ -902,6 +976,13 @@ export function createApp(
   app.post('/api/merchant/signup', async (req: Request, res: Response) => {
     try {
       const { shopName, ownerEmail, printerName, password, name, phone } = req.body || {};
+
+      // Checked here, not only by the form: a shop that has not agreed to the
+      // terms it will be held to must not be created by any client.
+      if (req.body?.acceptTerms !== true) {
+        return res.status(400).json({ error: TERMS_REQUIRED_ERROR });
+      }
+
       const clean = (v: unknown) => (v ? String(v).replace(/\s+/g, '') : undefined);
       const upiId = clean(req.body?.upiId);
       const bankAccountNumber = clean(req.body?.bankAccountNumber);
@@ -946,6 +1027,8 @@ export function createApp(
         name,
         phone,
         role: 'owner',
+        termsAcceptedAt: new Date().toISOString(),
+        termsVersion: TERMS_VERSION,
       });
 
       return res.status(201).json({
@@ -1021,6 +1104,9 @@ export function createApp(
       if (!shopId || !ownerEmail || !password) {
         return res.status(400).json({ error: 'shopId, ownerEmail and password are required.' });
       }
+      if (req.body?.acceptTerms !== true) {
+        return res.status(400).json({ error: TERMS_REQUIRED_ERROR });
+      }
 
       const shop = await storage.getShop(String(shopId));
       // Same response whether the shop is missing or the email is wrong, so
@@ -1044,6 +1130,8 @@ export function createApp(
         passwordHash: hashPassword(String(password)),
         name,
         role: 'owner',
+        termsAcceptedAt: new Date().toISOString(),
+        termsVersion: TERMS_VERSION,
       });
 
       return res.status(201).json({
@@ -1851,7 +1939,9 @@ export function createApp(
           status: printer.status,
           qrTargetUrl: printer.qrTargetUrl,
         },
-        shop: shop ? { id: shop.id, name: shop.name } : undefined,
+        // The shop that fulfils orders placed here, as the customer page shows
+        // it: name and town only. See publicShopView.
+        shop: shop ? { id: shop.id, ...publicShopView(shop)! } : undefined,
         telemetry,
       });
     } catch (err: any) {
@@ -2340,30 +2430,32 @@ export function createApp(
       const shop = await storage.getShop(shopId);
       if (!shop) return res.status(404).json({ error: 'Shop not found.' });
 
-      if (shop.razorpayAccountId) {
-        // Already linked; report live status rather than creating a duplicate.
-        const status = await routeService.getLinkedAccount(shop.razorpayAccountId);
-        if (status.ok && status.status) {
+      // Fully onboarded already: report Razorpay's current status rather than
+      // creating a duplicate account.
+      if (shop.razorpayAccountId && shop.razorpayProductId) {
+        const live = await routeService.getLinkedAccountStatus(shop.razorpayAccountId, shop.razorpayProductId);
+        if (live.ok && live.status) {
           await storage.updateShopRazorpayAccount(shopId, {
-            accountId: shop.razorpayAccountId,
-            status: status.status === 'activated' ? 'activated' : 'needs_kyc',
+            status: live.status,
+            requirements: live.requirements ?? null,
+            error: null,
           });
         }
         return res.json({
           accountId: shop.razorpayAccountId,
-          status: status.status || shop.razorpayAccountStatus,
+          status: live.status || shop.razorpayAccountStatus,
+          requirements: live.requirements,
           alreadyLinked: true,
         });
       }
 
-      const { phone, businessType, contactName, address } = req.body || {};
+      const body = req.body || {};
 
-      // What the shop gave at signup is the default; the request body may still
-      // override it, so a shop can correct its details at onboarding time
-      // without editing its profile first.
-      const effectivePhone = phone || shop.contactPhone;
-
-      if (!effectivePhone) {
+      // What the shop gave at signup is the default; the request body may
+      // still override it, so a shop can correct its details at onboarding
+      // time without editing its profile first.
+      const phone = String(body.phone || shop.contactPhone || '').trim();
+      if (!phone) {
         return res.status(400).json({
           error:
             'A contact phone number is required to create a Razorpay linked account. ' +
@@ -2371,47 +2463,103 @@ export function createApp(
         });
       }
 
-      const effectiveAddress = address || {
-        street1: shop.addressStreet1,
-        street2: shop.addressStreet2,
-        city: shop.addressCity,
-        state: shop.addressState,
-        postalCode: shop.addressPostalCode,
-        country: shop.addressCountry || 'IN',
-      };
-
-      const result = await routeService.createLinkedAccount({
-        shopId,
-        shopName: shop.name,
-        ownerEmail: shop.ownerEmail,
-        phone: effectivePhone,
-        businessType,
-        contactName,
-        address: effectiveAddress,
-      });
-
-      if (!result.ok) {
-        await storage.updateShopRazorpayAccount(shopId, {
-          status: 'not_linked',
-          error: result.error,
-        });
-        return res.status(result.routeUnavailable ? 503 : 400).json({
-          error: result.error,
-          routeUnavailable: result.routeUnavailable === true,
+      // Everything below is only worth asking for once Route exists to use it.
+      if (!routeService.isEnabled) {
+        return res.status(503).json({
+          error:
+            'Razorpay Route is not enabled for PrintOk yet, so linked accounts cannot be created. ' +
+            'Online payments are received by PrintOk and paid out to you separately meanwhile.',
+          routeUnavailable: true,
         });
       }
 
+      const businessType = String(body.businessType || '').trim();
+      if (!(LINKED_ACCOUNT_BUSINESS_TYPES as readonly string[]).includes(businessType)) {
+        return res.status(400).json({
+          error: `businessType must be one of: ${LINKED_ACCOUNT_BUSINESS_TYPES.join(', ')}.`,
+        });
+      }
+      const contactName = String(body.contactName || '').trim();
+      if (contactName.length < 4) {
+        return res.status(400).json({
+          error: 'contactName is required: the proprietor, partner or director Razorpay will verify.',
+        });
+      }
+      if (body.tncAccepted !== true) {
+        return res.status(400).json({ error: 'Razorpay\'s terms for Route must be accepted (tncAccepted).' });
+      }
+
+      const address = body.address || {
+        street1: shop.addressStreet1, street2: shop.addressStreet2, city: shop.addressCity,
+        state: shop.addressState, postalCode: shop.addressPostalCode, country: shop.addressCountry || 'IN',
+      };
+      if (!address.street1 || !address.city || !address.state || !/^\d{6}$/.test(String(address.postalCode || ''))) {
+        return res.status(400).json({
+          error: 'A complete registered address (street, city, state and 6-digit PIN code) is required. Add it to the shop profile.',
+        });
+      }
+
+      // Settlement goes to the bank account the shop already registered for
+      // payouts. Nothing new is collected here.
+      if (!shop.bankAccountNumber || !shop.bankIfsc) {
+        return res.status(400).json({
+          error: 'Add your bank account number and IFSC under payout details first. Razorpay settles to that account.',
+        });
+      }
+
+      const legalBusinessName = String(body.legalBusinessName || shop.name).trim();
+      const result = await routeService.createLinkedAccount({
+        shopId,
+        legalBusinessName,
+        customerFacingName: shop.name,
+        email: shop.ownerEmail,
+        phone,
+        businessType,
+        contactName,
+        address: {
+          street1: String(address.street1), street2: address.street2 ? String(address.street2) : undefined,
+          city: String(address.city), state: String(address.state),
+          postalCode: String(address.postalCode), country: address.country ? String(address.country) : 'IN',
+        },
+        gstin: shop.gstin,
+        settlement: {
+          accountNumber: shop.bankAccountNumber,
+          ifsc: shop.bankIfsc,
+          beneficiaryName: String(body.beneficiaryName || legalBusinessName).trim(),
+        },
+        tncAccepted: true,
+      }, {
+        accountId: shop.razorpayAccountId,
+        stakeholderId: shop.razorpayStakeholderId,
+        productId: shop.razorpayProductId,
+      });
+
+      // Whatever was created is kept even when a later step failed, so the
+      // next attempt resumes instead of creating a second account.
       await storage.updateShopRazorpayAccount(shopId, {
         accountId: result.accountId,
-        status: result.status === 'activated' ? 'activated' : 'needs_kyc',
-        error: null,
+        stakeholderId: result.stakeholderId,
+        productId: result.productId,
+        status: result.status || (result.accountId ? 'created' : 'not_linked'),
+        requirements: result.requirements ?? null,
+        error: result.ok ? null : result.error,
       });
+
+      if (!result.ok) {
+        return res.status(result.routeUnavailable ? 503 : 400).json({
+          error: result.error,
+          routeUnavailable: result.routeUnavailable === true,
+          accountId: result.accountId,
+        });
+      }
 
       return res.status(201).json({
         accountId: result.accountId,
         status: result.status,
+        requirements: result.requirements,
         message:
-          'Linked account created. Razorpay will ask for KYC documents before payouts can settle.',
+          'Linked account created and submitted to Razorpay. Razorpay reviews it and may ask for ' +
+          'KYC documents; nothing is transferred to it until Razorpay activates it.',
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -2435,17 +2583,18 @@ export function createApp(
         });
       }
 
-      const live = await routeService.getLinkedAccount(shop.razorpayAccountId);
+      const live = await routeService.getLinkedAccountStatus(shop.razorpayAccountId, shop.razorpayProductId);
       if (live.ok && live.status) {
         await storage.updateShopRazorpayAccount(req.params.shopId, {
-          accountId: shop.razorpayAccountId,
-          status: live.status === 'activated' ? 'activated' : 'needs_kyc',
+          status: live.status,
+          ...(live.requirements !== undefined ? { requirements: live.requirements } : {}),
         });
       }
 
       return res.json({
         accountId: shop.razorpayAccountId,
         status: live.status || shop.razorpayAccountStatus,
+        requirements: live.requirements ?? shop.razorpayAccountRequirements,
         routeEnabled: routeService.isEnabled,
       });
     } catch (err: any) {
@@ -3038,36 +3187,38 @@ export function createApp(
         });
       }
 
-      // Money already split to the shop cannot be clawed back by refunding.
+      // Money transferred to the shop comes back before the customer is paid.
       //
-      // When Route settles a payment, the shop's share goes straight to the
-      // shop's own linked account and never becomes PrintOk's. Refunding the
-      // customer from the platform account would then mean PrintOk paying the
-      // shop's share out of its own pocket, silently, on every declined job.
-      //
-      // Reversing a Route transfer is a separate Razorpay operation that this
-      // codebase does not implement, so this refuses rather than guessing. It
-      // cannot trigger while Route is disabled — transferId is only ever set by
-      // the Route path — so it is the guard that makes enabling Route safe
-      // rather than a change in behaviour today.
+      // With Route, the shop's share sits in the shop's own linked account (on
+      // hold until printing, which a declined job never reached). Refunding the
+      // customer from the platform account without reversing it would mean
+      // PrintOk paying that share out of its own pocket. So the transfer is
+      // reversed first, once, and the refund only follows a reversal that
+      // succeeded. A transfer id exists only when a real transfer was made —
+      // with Route off this whole block is skipped.
       if (job.transferId) {
-        logOps('error', 'refund.blocked', {
-          jobId: job.id, shopId: job.shopId, transferId: job.transferId,
-          reason: 'route-transfer-not-reversible-here', needsHuman: true,
-        });
-        return res.status(409).json({
-          error:
-            'This order was already settled directly to your Razorpay account, so it cannot be '
-            + 'refunded from here — the transfer has to be reversed first. Contact support and it '
-            + 'will be handled with Razorpay.',
-          job: declined.job,
-          refund: { issued: false, reason: 'route-transfer-not-reversible-here' },
-          transferId: job.transferId,
-        });
+        const reversal = await reverseRouteTransfer(job, reason);
+        if (!reversal.ok) {
+          logOps('error', 'refund.blocked', {
+            jobId: job.id, shopId: job.shopId, transferId: job.transferId,
+            reason: 'route-transfer-not-reversed', needsHuman: true,
+          });
+          return res.status(409).json({
+            error:
+              'This order\'s payment was already transferred to your Razorpay account, and that '
+              + 'transfer could not be reversed automatically, so the customer has not been refunded '
+              + 'yet. Contact support and it will be handled with Razorpay.',
+            job: declined.job,
+            refund: { issued: false, reason: 'route-transfer-not-reversed', detail: reversal.error },
+            transferId: job.transferId,
+          });
+        }
       }
 
       const refund = await razorpayService.refundPayment(
-        String(job.paymentRef || ''),
+        // The payment claimed for this job (unique platform-wide), else the
+        // reference its confirmation recorded.
+        String(job.razorpayPaymentId || job.paymentRef || ''),
         job.totalPriceInCents,
         { jobId: job.id, shopId: job.shopId, reason }
       );
@@ -3437,6 +3588,12 @@ export function createApp(
         return res.status(400).json({ error: 'printerId, fileName, and fileBase64 are required.' });
       }
 
+      const parsedCopies = parseCopies((req.body as any)?.copies);
+      if ('error' in parsedCopies) {
+        return res.status(400).json({ error: parsedCopies.error });
+      }
+      const copyCount = parsedCopies.value;
+
       const printer = await storage.getPrinter(printerId);
       if (!printer) {
         return res.status(404).json({ error: 'Target printer not found.' });
@@ -3482,7 +3639,7 @@ export function createApp(
         isColor: !!isColor,
         isDuplex: !!isDuplex,
         paperSize: paperSize || 'A4',
-        copies: copies || 1,
+        copies: copyCount,
         pageRange: (req.body as any)?.pageRange,
         orientation,
       });
@@ -3578,7 +3735,7 @@ export function createApp(
         fileName,
         fileBase64,
         chargeablePages,
-        copies || 1,
+        copyCount,
         !!isColor,
         autoApprove,
         !!isDuplex,
@@ -3605,7 +3762,8 @@ export function createApp(
 
       // The same projection as the status endpoint. The customer is the one
       // asking, and there is nothing here they need that it withholds.
-      const response = { job: customerJobView(job) } as unknown as CreatePrintJobResponse;
+      const shop = await storage.getShop(printer.shopId);
+      const response = { job: customerJobView(job, shop) } as unknown as CreatePrintJobResponse;
       return res.status(201).json(response);
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -3716,6 +3874,188 @@ export function createApp(
   });
 
 
+  // ------------------------------------------------------------------------
+  // Razorpay Route settlement
+  //
+  // Lifecycle, when Route is on and the order has a payee:
+  //   payment captured → transfer of the shop's share, ON HOLD
+  //   job printed      → hold released, Razorpay settles it to the shop
+  //   job refunded     → transfer reversed first, then the customer refunded
+  //
+  // Every step is idempotent and recorded on the job. Nothing here runs while
+  // RAZORPAY_ROUTE_ENABLED is not 'true', and nothing is ever inferred: a
+  // transfer id is only written from Razorpay's answer or a signed webhook.
+  // ------------------------------------------------------------------------
+
+  const PRINTED_STATES = new Set<PrintState>([
+    PrintState.Printed, PrintState.ReadyForCollection, PrintState.Completed,
+  ]);
+
+  /** Writes what Razorpay says about this job's transfer onto the job. */
+  async function recordTransferSnapshot(job: PrintJob, t: TransferSnapshot, extra: Record<string, unknown> = {}) {
+    // A late "processed" must not un-reverse a transfer we reversed.
+    const status = job.transferReversalId && t.status === 'processed' ? job.transferStatus : t.status;
+    await storage.updateJobRouteSettlement(job.id, {
+      ...(job.transferId ? {} : { transferId: t.id }),
+      ...(status ? { transferStatus: status } : {}),
+      ...(t.settlementStatus !== undefined ? { transferSettlementStatus: t.settlementStatus } : {}),
+      ...(t.onHold !== undefined ? { transferOnHold: t.onHold } : {}),
+      ...(t.amount !== undefined ? { transferAmountCents: t.amount } : {}),
+      ...(t.feesCents !== undefined ? { routeFeeCents: t.feesCents } : {}),
+      ...(t.settlementStatus === 'settled' && !job.settledAt ? { settledAt: new Date().toISOString() } : {}),
+      ...(t.status === 'failed'
+        ? { transferFailureReason: t.errorDescription || 'Razorpay reported that the transfer failed.' }
+        : {}),
+      ...extra,
+    });
+  }
+
+  /**
+   * Transfers the shop's share of a captured payment to its linked account,
+   * on hold until the job prints.
+   *
+   * Called from both the checkout confirmation and the payment webhook, which
+   * routinely arrive within a second of each other. Idempotent three ways:
+   * a job with a transfer is left alone; a transfer Razorpay already holds for
+   * this payment and payee is adopted rather than duplicated; and creation is
+   * claimed with a conditional write, so only one caller ever creates.
+   *
+   * The split uses the fee Razorpay actually charged on this payment, read
+   * from the payment itself — never the published estimate.
+   *
+   * Never throws: a failure is recorded on the job and logged for a person,
+   * and the next delivery of the payment webhook tries again.
+   */
+  async function settleRouteTransfer(jobId: string, via: string): Promise<void> {
+    try {
+      if (!routeService.isEnabled) return;
+      const job = await storage.getPrintJob(jobId);
+      if (!job || !job.payeeAccountId || !job.razorpayPaymentId || job.transferId) return;
+      if (job.paymentState !== PaymentState.Paid) return;
+
+      const existing = await routeService.getPaymentTransfers(job.razorpayPaymentId);
+      if (!existing.ok) {
+        logOps('warn', 'route.transfer_deferred', { jobId, via, reason: existing.error || 'could not list transfers' });
+        return;
+      }
+      const already = existing.transfers.find((t) => t.recipient === job.payeeAccountId);
+      if (already) {
+        await recordTransferSnapshot(job, already);
+        return;
+      }
+
+      if (!(await storage.claimRouteTransfer(job.id))) return; // another path is creating it
+
+      const release = async (reason: string) => {
+        await storage.updateJobRouteSettlement(job.id, { transferStatus: null, transferFailureReason: reason });
+        logOps('error', 'route.transfer_failed', { jobId, shopId: job.shopId, via, reason, needsHuman: true });
+      };
+
+      const fetched = await routeService.fetchPayment(job.razorpayPaymentId);
+      if (!fetched.ok) return release(fetched.error);
+      const payment = fetched.payment;
+
+      // The payment must be the one this job's order was opened for, for the
+      // job's amount, and captured — checked against Razorpay's own record.
+      if (payment.status !== 'captured') return release(`Payment is '${payment.status}', not captured.`);
+      if (payment.orderId !== job.razorpayOrderId) return release('Payment does not belong to this job\'s order.');
+      if (payment.amount !== job.totalPriceInCents) return release('Payment amount does not match the job total.');
+      if (payment.feeCents === undefined) return release('Razorpay has not reported the fee on this payment yet.');
+
+      // The same rate the fee ledger froze at confirmation.
+      const plan = await storage.getShopPlan(job.shopId);
+      const bps = job.commissionBpsUsed ?? plan?.commissionBps ?? DEFAULT_PLATFORM_FEE_BPS;
+      const built = routeService.buildTransfer(
+        job.payeeAccountId, job.totalPriceInCents, bps, payment.feeCents, job.id
+      );
+      if (built.transfer.amount < MIN_ORDER_AMOUNT_PAISE) {
+        return release('The shop\'s share is below Razorpay\'s ₹1 transfer minimum; settle it manually.');
+      }
+
+      // Already printed (a late webhook, or print-before-payment): no reason to hold.
+      if (PRINTED_STATES.has(job.printState)) built.transfer.on_hold = false;
+
+      const created = await routeService.createPaymentTransfer(job.razorpayPaymentId, built.transfer);
+      if (!created.ok) return release(created.error);
+
+      await recordTransferSnapshot(job, created.transfer, {
+        transferAmountCents: built.transfer.amount,
+        serviceFeeCents: built.serviceFeeCents,
+        transferFailureReason: null,
+      });
+      // The ledger now holds the real gateway fee, not the estimate.
+      await freezeFeeLedger(storage, job, bps, { feeCents: payment.feeCents, taxCents: payment.taxCents });
+
+      logOps('info', 'route.transfer_created', {
+        jobId, shopId: job.shopId, via, transferId: created.transfer.id,
+        amountCents: built.transfer.amount, onHold: built.transfer.on_hold,
+      });
+    } catch (err: any) {
+      logOps('error', 'route.transfer_failed', { jobId, via, reason: err?.message || String(err), needsHuman: true });
+    }
+  }
+
+  /** Releases a held transfer once the job has printed. Idempotent; never throws. */
+  async function releaseRouteTransfer(jobId: string): Promise<void> {
+    try {
+      if (!routeService.isEnabled) return;
+      const job = await storage.getPrintJob(jobId);
+      if (!job?.transferId || job.transferReversalId || job.transferOnHold === false) return;
+      if (!PRINTED_STATES.has(job.printState)) return;
+
+      const released = await routeService.releaseTransfer(job.transferId);
+      if (!released.ok) {
+        logOps('error', 'route.release_failed', { jobId, transferId: job.transferId, reason: released.error, needsHuman: true });
+        return;
+      }
+      if (released.transfer) await recordTransferSnapshot(job, released.transfer);
+      await storage.updateJobRouteSettlement(job.id, {
+        transferOnHold: false, transferReleasedAt: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      logOps('error', 'route.release_failed', { jobId, reason: err?.message || String(err), needsHuman: true });
+    }
+  }
+
+  /**
+   * Pulls the shop's share back before a refund, so the customer is not
+   * refunded out of PrintOk's own money while the shop keeps its share.
+   *
+   * Once only: the reversal is claimed with a conditional write and its id
+   * recorded, so a retried decline cannot reverse the same transfer twice.
+   */
+  async function reverseRouteTransfer(job: PrintJob, reason: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!job.transferId || job.transferReversalId) return { ok: true };
+    if (!routeService.isEnabled) {
+      return { ok: false, error: 'Route is switched off, so the transfer must be reversed from the Razorpay dashboard.' };
+    }
+
+    if (!(await storage.claimTransferReversal(job.id))) {
+      const fresh = await storage.getPrintJob(job.id);
+      return fresh?.transferReversalId
+        ? { ok: true }
+        : { ok: false, error: 'A reversal of this transfer is already in progress.' };
+    }
+
+    const reversed = await routeService.reverseTransfer(job.transferId, { jobId: job.id, reason: reason.slice(0, 200) });
+    if (!reversed.ok) {
+      await storage.updateJobRouteSettlement(job.id, {
+        transferStatus: job.transferStatus ?? null, transferFailureReason: `Reversal failed: ${reversed.error}`,
+      });
+      logOps('error', 'route.reversal_failed', { jobId: job.id, transferId: job.transferId, reason: reversed.error, needsHuman: true });
+      return { ok: false, error: reversed.error };
+    }
+
+    await storage.updateJobRouteSettlement(job.id, {
+      transferReversalId: reversed.reversalId,
+      transferReversedAt: new Date().toISOString(),
+      transferStatus: 'reversed',
+      transferOnHold: false,
+    });
+    logOps('info', 'route.transfer_reversed', { jobId: job.id, transferId: job.transferId, reversalId: reversed.reversalId });
+    return { ok: true };
+  }
+
   /**
    * Create Razorpay Payment Order Endpoint
    */
@@ -3748,33 +4088,24 @@ export function createApp(
       // payment refused as belonging to a different order. Razorpay keeps an
       // unpaid order payable, so handing the same one back is also what a retry
       // after a declined card should do.
+      // The payee is the shop this job's printer belongs to, read from the
+      // database. Nothing in the request can name a different shop.
+      const shop = await storage.getShop(job.shopId);
+      if (!shop) {
+        return res.status(404).json({ error: 'The shop for this order no longer exists.' });
+      }
+      // Who the customer is paying, returned so checkout can say so.
+      const payee = { shopName: shop.name };
+
       if (job.razorpayOrderId && job.razorpayOrderAmountCents === job.totalPriceInCents) {
         return res.json({
           orderId: job.razorpayOrderId,
           amountInCents: job.razorpayOrderAmountCents,
           currency: 'INR',
           keyId: razorpayService.publishableKeyId,
-          isSimulated: !razorpayService.isLive,
+          isSimulated: !razorpayService.isConfigured,
+          payee,
         });
-      }
-
-      // Split to the shop's own Razorpay account where Route is available, so
-      // the money settles to the shop directly instead of pooling with us.
-      // Falls back to the single-account flow when it is not.
-      let transfer;
-      let serviceFeeCents;
-
-      if (routeService.isEnabled) {
-        const shop = await storage.getShop(job.shopId);
-        const plan = await storage.getShopPlan(job.shopId);
-
-        if (shop?.razorpayAccountId && shop.razorpayAccountStatus === 'activated' && plan) {
-          const built = routeService.buildTransfer(
-            shop.razorpayAccountId, job.totalPriceInCents, plan.commissionBps, job.id
-          );
-          transfer = built.transfer;
-          serviceFeeCents = built.serviceFeeCents;
-        }
       }
 
       // Razorpay refuses anything under a rupee. A shop's own rate card can
@@ -3788,19 +4119,29 @@ export function createApp(
         });
       }
 
-      const orderResult = await razorpayService.createOrder(jobId, job.totalPriceInCents, transfer);
+      // The linked account this order's money is for, snapshotted now, so a
+      // shop that relinks later cannot re-point orders already taken. Only
+      // while Route is on and Razorpay has activated the shop's account;
+      // otherwise the order settles to PrintOk as it always has.
+      const payeeAccountId =
+        routeService.isEnabled && shop.razorpayAccountId && shop.razorpayAccountStatus === 'activated'
+          ? shop.razorpayAccountId
+          : undefined;
+
+      // Always the server's job total. No split is attached to the order: the
+      // shop's share is transferred from the captured payment, once Razorpay
+      // has reported the fee it actually charged. See settleRouteTransfer.
+      const orderResult = await razorpayService.createOrder(
+        jobId, job.totalPriceInCents, { shopId: shop.id, shopName: shop.name }
+      );
 
       // Recorded before the id is handed to the browser, because this is the
       // only thing a later confirmation can be checked against. Previously the
       // gateway order id was returned and forgotten, so /verify had nothing to
       // bind a claimed payment to and accepted any real payment for any job.
-      await storage.attachGatewayOrder(job.id, orderResult.orderId, orderResult.amountInCents);
+      await storage.attachGatewayOrder(job.id, orderResult.orderId, orderResult.amountInCents, payeeAccountId);
 
-      if (transfer && serviceFeeCents !== undefined) {
-        await storage.recordJobSettlement(job.id, transfer.amount, serviceFeeCents);
-      }
-
-      return res.json(orderResult);
+      return res.json({ ...orderResult, payee });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -3896,7 +4237,7 @@ export function createApp(
       // payment that was authorised but never captured, which the signature
       // alone cannot distinguish. Skipped without credentials, where the local
       // binding above is already decisive.
-      if (razorpayService.isLive) {
+      if (razorpayService.isConfigured) {
         const gateway = await razorpayService.confirmOrderPaidForJob(
           String(razorpayOrderId), job.id, job.totalPriceInCents
         );
@@ -3921,6 +4262,9 @@ export function createApp(
           jobId: result.job.id, shopId: result.job.shopId,
           grossCents: result.job.totalPriceInCents, via: 'checkout',
         });
+
+        // Transfers the shop's share when Route is on; a no-op otherwise.
+        await settleRouteTransfer(result.job.id, 'checkout');
       }
       if (!result.ok) {
         const status = result.code === 'NOT_FOUND' ? 404 : 409;
@@ -3929,7 +4273,10 @@ export function createApp(
 
       if (wsServer) wsServer.notifyJobQueued(result.job);
 
-      return res.json({ success: true, job: result.job });
+      // The customer's projection, with the shop they paid. The raw row carries
+      // other customers' concerns — storage keys, the shop's fee ledger.
+      const shopForView = await storage.getShop(result.job.shopId);
+      return res.json({ success: true, job: customerJobView(result.job, shopForView) });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -3963,8 +4310,10 @@ export function createApp(
     if (event === 'subscription.activated' || (event === 'subscription.charged' && isCurrent)) {
       const target = getPlan(sub.notes.tier);
       if (!target || target.monthlyPriceCents === 0) return { success: true, ignored: event };
+      // The replacement is live, so the old plan ends now rather than at its
+      // period end — otherwise the shop is billed for two plans at once.
       if (plan.razorpaySubscriptionId && !isCurrent) {
-        await razorpayService.cancelSubscription(plan.razorpaySubscriptionId);
+        await razorpayService.cancelSubscription(plan.razorpaySubscriptionId, { atCycleEnd: false });
       }
       await storage.updateShopPlan(shopId, {
         planTier: target.tier,
@@ -4009,6 +4358,77 @@ export function createApp(
     return { success: true, ignored: event };
   }
 
+  /**
+   * transfer.processed / transfer.failed (and any other transfer.* event).
+   *
+   * Applied only to the job the transfer is already recorded against — or,
+   * when the webhook beats our own recording, to the job named in its notes
+   * provided the transfer's source is that job's payment and its recipient is
+   * that job's snapshotted payee. Anything else is acknowledged and ignored:
+   * a signed but unrecognised transfer must not move any order's money state.
+   */
+  async function applyTransferEvent(event: string, entity: any) {
+    const t = toTransferSnapshot(entity);
+    if (!t) return { success: true, ignored: event, message: 'No transfer in this delivery.' };
+
+    let job = await storage.getJobByTransferId(t.id);
+    if (!job && t.notes?.jobId) {
+      const candidate = await storage.getPrintJob(String(t.notes.jobId));
+      if (candidate && !candidate.transferId) job = candidate;
+    }
+    if (!job) {
+      logOps('warn', 'route.webhook_rejected', { event, transferId: t.id, reason: 'no matching job' });
+      return { success: true, ignored: event, message: 'Transfer does not match any order.' };
+    }
+    if (!job.payeeAccountId || t.recipient !== job.payeeAccountId ||
+        !job.razorpayPaymentId || (t.source && t.source !== job.razorpayPaymentId)) {
+      logOps('error', 'route.webhook_rejected', {
+        event, transferId: t.id, jobId: job.id, reason: 'recipient or source does not match the order', needsHuman: true,
+      });
+      return { success: true, ignored: event, message: 'Transfer does not match this order.' };
+    }
+
+    await recordTransferSnapshot(job, t);
+    if (event === 'transfer.failed') {
+      logOps('error', 'route.transfer_failed', {
+        jobId: job.id, shopId: job.shopId, transferId: t.id, reason: t.errorDescription || 'transfer.failed', needsHuman: true,
+      });
+    }
+    // A job that printed before its transfer was confirmed is released now;
+    // releaseRouteTransfer does nothing for one that is not printed or held.
+    if (event === 'transfer.processed') await releaseRouteTransfer(job.id);
+    return { success: true, applied: event, jobId: job.id };
+  }
+
+  /**
+   * product.route.* — Razorpay's review of a shop's linked account. The
+   * activation_status is stored verbatim, with any requirements it lists.
+   */
+  async function applyRouteProductEvent(event: string, body: any) {
+    const product = body?.payload?.merchant_product?.entity;
+    const accountId = String(body?.account_id || product?.merchant_id || '');
+    const shop = accountId ? await storage.getShopByRazorpayAccountId(accountId) : undefined;
+    if (!shop) {
+      logOps('warn', 'route.webhook_rejected', { event, accountId, reason: 'no shop with this linked account' });
+      return { success: true, ignored: event, message: 'Linked account does not match any shop.' };
+    }
+    if (shop.razorpayProductId && product?.id && product.id !== shop.razorpayProductId) {
+      logOps('error', 'route.webhook_rejected', { event, accountId, reason: 'product id mismatch', needsHuman: true });
+      return { success: true, ignored: event, message: 'Product does not match this shop.' };
+    }
+
+    const status = String(product?.activation_status || event.replace('product.route.', ''));
+    const requirements = body?.payload?.merchant_product?.data?.requirements;
+    await storage.updateShopRazorpayAccount(shop.id, {
+      status,
+      ...(product?.id ? { productId: String(product.id) } : {}),
+      requirements: Array.isArray(requirements) ? requirements : null,
+      error: null,
+    });
+    logOps('info', 'route.account_updated', { shopId: shop.id, status });
+    return { success: true, applied: event, status };
+  }
+
   app.post('/api/payments/webhook', async (req: Request, res: Response) => {
     try {
       // Razorpay sends its signature in a header and its job reference inside
@@ -4021,36 +4441,65 @@ export function createApp(
       const signature = req.headers['x-razorpay-signature'] as string | undefined;
       const body = req.body || {};
 
+      // Every delivery is authenticated before anything in it is read for
+      // meaning — over the exact bytes Razorpay sent.
+      const rawBody = (req as any).rawBody || JSON.stringify(body);
+      if (!signature || !razorpayService.verifyWebhookSignature(rawBody, signature)) {
+        return res.status(400).json({ error: 'Invalid HMAC payment webhook signature.' });
+      }
+
+      const event: string | undefined = typeof body.event === 'string' ? body.event : undefined;
+
+      // Razorpay always names the event. A body without one was an older flat
+      // shape ({ jobId, paymentId }) that carried no order id or amount, so it
+      // could not be bound to the order a job opened — which is exactly the
+      // check that makes a confirmation trustworthy. It is no longer accepted.
+      if (!event) {
+        return res.status(400).json({ error: 'Unsupported webhook payload: no event.' });
+      }
+
+      // Deduplicated on the gateway's own event id — after the signature
+      // check, so an unauthenticated caller cannot fill this table or suppress
+      // a real delivery by guessing an id.
+      const eventId = req.headers['x-razorpay-event-id'] as string | undefined;
+
       // Plan billing. Carries a subscription entity, not a job.
-      if (typeof body.event === 'string' && body.event.startsWith('subscription.')) {
-        const raw = (req as any).rawBody || JSON.stringify(body);
-        if (!signature || !razorpayService.verifyWebhookSignature(raw, signature)) {
-          return res.status(400).json({ error: 'Invalid HMAC payment webhook signature.' });
+      if (event.startsWith('subscription.')) {
+        return res.json(await applySubscriptionEvent(event, body?.payload?.subscription?.entity));
+      }
+
+      // Route: transfers of a shop's share, and Razorpay's review of its account.
+      if (event.startsWith('transfer.') || event.startsWith('product.route.') || event.startsWith('settlement.')) {
+        if (eventId && !(await storage.markWebhookEventProcessed(eventId, event))) {
+          return res.json({ success: true, message: 'This delivery has already been processed.' });
         }
-        return res.json(await applySubscriptionEvent(body.event, body?.payload?.subscription?.entity));
+        if (event.startsWith('transfer.')) {
+          return res.json(await applyTransferEvent(event, body?.payload?.transfer?.entity));
+        }
+        if (event.startsWith('product.route.')) {
+          return res.json(await applyRouteProductEvent(event, body));
+        }
+        // settlement.* describes a linked account's bank settlement as a whole,
+        // not any one order; transfers carry their own settlement_status.
+        return res.json({ success: true, ignored: event });
       }
 
       // A refund delivery carries a refund entity rather than a payment one, and
       // its own notes — set when the refund was requested.
       const refundEntity = body?.payload?.refund?.entity;
 
+      const paymentEntity = body?.payload?.payment?.entity;
+      const orderEntity = body?.payload?.order?.entity;
+
       const jobId =
-        body?.payload?.payment?.entity?.notes?.jobId ||
-        refundEntity?.notes?.jobId ||
-        (body as PaymentWebhookDto).jobId;
+        paymentEntity?.notes?.jobId ||
+        orderEntity?.notes?.jobId ||
+        refundEntity?.notes?.jobId;
 
-      const paymentRef =
-        body?.payload?.payment?.entity?.id ||
-        refundEntity?.payment_id ||
-        (body as PaymentWebhookDto).paymentId;
+      const paymentRef = paymentEntity?.id || refundEntity?.payment_id;
 
-      if (!jobId || !signature) {
-        return res.status(400).json({ error: 'A job reference and signature are required.' });
-      }
-
-      const rawBody = (req as any).rawBody || JSON.stringify(body);
-      if (!razorpayService.verifyWebhookSignature(rawBody, signature)) {
-        return res.status(400).json({ error: 'Invalid HMAC payment webhook signature.' });
+      if (!jobId) {
+        return res.status(400).json({ error: 'A job reference is required.' });
       }
 
       // Which event this is decides whether money actually arrived. Nothing
@@ -4060,9 +4509,6 @@ export function createApp(
       // event subscribed, a declined card marked the job paid and sent it to
       // the printer — the customer got their document and nobody was charged.
       //
-      // A webhook with no event is the legacy flat body, which only ever meant
-      // a confirmation; live Razorpay traffic always carries one.
-      const event: string | undefined = body?.event;
 
       // Refund lifecycle. A refund is created 'pending' and becomes 'processed'
       // when the bank has actually taken the money, days later — or it fails.
@@ -4109,7 +4555,7 @@ export function createApp(
         });
       }
 
-      if (event && !PAYMENT_CONFIRMING_EVENTS.has(event)) {
+      if (!PAYMENT_CONFIRMING_EVENTS.has(event)) {
         // Answered 200 deliberately: a non-2xx makes Razorpay retry the same
         // event for hours, and this one was understood — it just is not a
         // payment.
@@ -4129,9 +4575,8 @@ export function createApp(
       // different questions, and the code below used to answer the first with
       // the second. A refund landing between a delivery and its retry made the
       // second answer "no", so the retry walked a refunded job back to Paid.
-      const eventId = req.headers['x-razorpay-event-id'] as string | undefined;
       if (eventId) {
-        const first = await storage.markWebhookEventProcessed(eventId, event || 'legacy', jobId);
+        const first = await storage.markWebhookEventProcessed(eventId, event, jobId);
         if (!first) {
           return res.json({ success: true, message: 'This delivery has already been processed.' });
         }
@@ -4153,9 +4598,42 @@ export function createApp(
         return res.json({ success: true, ignored: event, message: blocked });
       }
 
-      // Idempotency: If job is already paid, return existing status
+      // The notes name a job, but notes alone prove nothing about money. The
+      // payment must be for the gateway order this job opened, and for exactly
+      // what that order was opened for — which is the job's total. A signed
+      // delivery that fails either is acknowledged (resending will not change
+      // it) and left for a person, never applied.
+      const gatewayOrderId = paymentEntity?.order_id || orderEntity?.id;
+      const paidAmount = Number(paymentEntity?.amount ?? orderEntity?.amount_paid);
+      const mismatch =
+        !job.razorpayOrderId ? 'no payment order was opened for this job'
+        : gatewayOrderId !== job.razorpayOrderId ? 'the payment belongs to a different order'
+        : paidAmount !== job.razorpayOrderAmountCents || paidAmount !== job.totalPriceInCents
+          ? 'the amount paid does not match the order total'
+        : undefined;
+      if (mismatch) {
+        logOps('error', 'payment.webhook_mismatch', {
+          jobId, event, paymentRef, reason: mismatch, needsHuman: true,
+        });
+        return res.json({ success: true, ignored: event, message: `Not applied: ${mismatch}.` });
+      }
+
+      // Already paid — usually because the checkout confirmation got here
+      // first. That path only knows the published fee estimate; this delivery
+      // carries what Razorpay actually charged, so the ledger is trued up here,
+      // and a Route transfer the checkout path could not make is retried.
       if (job.paymentState === PaymentState.Paid) {
-        return res.json({ success: true, message: 'Payment already processed.', job });
+        if (paymentRef && job.razorpayPaymentId === String(paymentRef)) {
+          if (Number.isFinite(Number(paymentEntity?.fee))) {
+            const plan = await storage.getShopPlan(job.shopId);
+            await freezeFeeLedger(
+              storage, job, job.commissionBpsUsed ?? plan?.commissionBps ?? DEFAULT_PLATFORM_FEE_BPS,
+              { feeCents: paymentEntity?.fee, taxCents: paymentEntity?.tax }
+            );
+          }
+          await settleRouteTransfer(job.id, 'webhook');
+        }
+        return res.json({ success: true, message: 'Payment already processed.', job: customerJobView(job) });
       }
 
       // Records which gateway payment settled the job, the same way the browser
@@ -4179,12 +4657,12 @@ export function createApp(
         // This is the only place the real numbers arrive. Razorpay puts `fee`
         // and `tax` on the captured payment entity, and `fee` is inclusive of
         // `tax`.
-        const entity = body?.payload?.payment?.entity;
         const plan = await storage.getShopPlan(paymentResult.job.shopId);
         await freezeFeeLedger(storage, paymentResult.job, plan?.commissionBps ?? DEFAULT_PLATFORM_FEE_BPS, {
-          feeCents: entity?.fee,
-          taxCents: entity?.tax,
+          feeCents: paymentEntity?.fee,
+          taxCents: paymentEntity?.tax,
         });
+        await settleRouteTransfer(paymentResult.job.id, 'webhook');
       }
       if (!paymentResult.ok) {
         const status = paymentResult.code === 'NOT_FOUND' ? 404 : 409;
@@ -4197,7 +4675,7 @@ export function createApp(
         wsServer.notifyJobQueued(updatedJob);
       }
 
-      return res.json({ success: true, message: 'Payment confirmed & job queued.', job: updatedJob });
+      return res.json({ success: true, message: 'Payment confirmed & job queued.', job: customerJobView(updatedJob) });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -4216,7 +4694,7 @@ export function createApp(
       // Projected, not returned whole: this endpoint has no authentication, so
       // the job id must not be authority over the customer's PII or their
       // document. See customerJobView.
-      return res.json({ job: customerJobView(job) });
+      return res.json({ job: customerJobView(job, await storage.getShop(job.shopId)) });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -4411,6 +4889,10 @@ export function createApp(
         return res.status(409).json({ error: result.reason, job: result.job });
       }
 
+      // Printed: the shop has fulfilled the order, so its held share (if any)
+      // is released for settlement. Nothing happens with Route off.
+      if (PRINTED_STATES.has(result.job.printState)) await releaseRouteTransfer(result.job.id);
+
       return res.json({ job: result.job });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -4450,7 +4932,7 @@ export function createApp(
         bankAccountLast4: account ? account.slice(-4) : '',
         bankAccountSet: Boolean(account),
         bankIfsc: shop.bankIfsc || '',
-        settlement: describeSettlement(shop),
+        settlement: describeSettlement(shop, routeService.isEnabled),
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -4518,7 +5000,7 @@ export function createApp(
         bankAccountLast4: account ? account.slice(-4) : '',
         bankAccountSet: Boolean(account),
         bankIfsc: updated.bankIfsc || '',
-        settlement: describeSettlement(updated),
+        settlement: describeSettlement(updated, routeService.isEnabled),
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -4696,13 +5178,46 @@ export function createApp(
         // Development: behave as the activation webhook would.
       }
 
+      // ---- Leaving a paid plan that Razorpay is billing ---------------------
+      // The Refund Policy promises that a cancelled plan runs to the end of the
+      // period already paid for. So the subscription is cancelled at cycle end:
+      // the shop keeps its current plan until then, and Razorpay's
+      // subscription.cancelled webhook moves it to Free when the period ends
+      // (applySubscriptionEvent). Nothing changes here but the status.
+      if (target.monthlyPriceCents === 0 && plan?.razorpaySubscriptionId && razorpayService.isConfigured) {
+        if (plan.planStatus === 'cancelling') {
+          return res.status(409).json({
+            error: `Your ${current?.name ?? 'paid'} plan is already set to end at the close of this billing period.`,
+          });
+        }
+        const cancelled = await razorpayService.cancelSubscription(plan.razorpaySubscriptionId, { atCycleEnd: true });
+        if (!cancelled.ok) {
+          return res.status(502).json({
+            error: `Razorpay could not cancel the subscription, so your plan is unchanged: ${cancelled.error}`,
+          });
+        }
+        await storage.updateShopPlan(shopId, { planStatus: 'cancelling' });
+        logOps('info', 'plan.limit_reached', {
+          shopId, from: currentTier, to: target.tier, action: 'cancel_at_period_end',
+        });
+        return res.status(202).json({
+          applied: false,
+          cancelsAtPeriodEnd: true,
+          tier: currentTier,
+          message:
+            `Your ${current?.name ?? 'paid'} plan will not renew. It stays active until the end of the ` +
+            `period you have paid for, and the shop then moves to ${target.name}. Nothing is refunded ` +
+            'for the rest of the current month, and nothing more is charged.',
+        });
+      }
+
       // ---- Free, or a simulated paid tier: applied now ---------------------
       // Deliberately does NOT remove anything. A shop dropping to a smaller
       // plan keeps its printers, staff and orders; it simply cannot add more,
       // and is told where it stands. Silently disabling staff accounts because
       // a plan shrank would lock real people out of a till mid-shift.
       if (plan?.razorpaySubscriptionId) {
-        await razorpayService.cancelSubscription(plan.razorpaySubscriptionId);
+        await razorpayService.cancelSubscription(plan.razorpaySubscriptionId, { atCycleEnd: false });
       }
       const updated = await storage.updateShopPlan(shopId, {
         planTier: target.tier,
@@ -4778,7 +5293,7 @@ export function createApp(
       );
 
       const { totals } = summariseShopEarnings(todaysPaid, commissionBps);
-      const settlement = shop ? describeSettlement(shop) : null;
+      const settlement = shop ? describeSettlement(shop, routeService.isEnabled) : null;
 
       return res.json({
         shopId,
@@ -4855,10 +5370,10 @@ export function createApp(
       const { rows, totals } = summariseShopEarnings(earned, commissionBps);
 
       return res.json({
-        settlement: shop.razorpayAccountStatus === 'activated' ? 'automatic' : 'pending-route',
+        settlement: routeService.isEnabled && shop.razorpayAccountStatus === 'activated' ? 'automatic' : 'pending-route',
         // The same explanation the payout summary returns, from the same
         // function, so the two screens cannot describe settlement differently.
-        settlementDetail: describeSettlement(shop),
+        settlementDetail: describeSettlement(shop, routeService.isEnabled),
         commissionBps,
         gatewayFeeBps: PAYMENT_GATEWAY_FEE_BPS,
         // True only while some row is still an estimate. It used to be
@@ -4885,19 +5400,19 @@ export function createApp(
       // successfully" while moving no money and recording nothing. Telling a
       // shop owner their money has been sent when it has not is worse than
       // having no button at all, so it now reports the truth.
-      if (shop.razorpayAccountStatus === 'activated') {
+      if (routeService.isEnabled && shop.razorpayAccountStatus === 'activated') {
         return res.status(409).json({
           error:
             'This shop settles automatically. Each paid order is transferred to your own ' +
-            'Razorpay account at the time of payment, so there is nothing to withdraw here.',
+            'Razorpay account and released once it prints, so there is nothing to withdraw here.',
           settlement: 'automatic',
         });
       }
 
       return res.status(501).json({
         error:
-          'Manual withdrawal is not available yet. Connect your shop to Razorpay from the ' +
-          'dashboard to receive each order directly, or contact support for a manual payout.',
+          'Self-service withdrawal is not available yet. Online payments are received by PrintOk ' +
+          'and paid out to you separately; contact support about a payout.',
         settlement: 'manual',
       });
     } catch (err: any) {

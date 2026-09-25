@@ -217,10 +217,20 @@ export interface Shop extends ShopContactDetails {
   payoutStatus?: string;
   /** Razorpay Route linked account, when the shop settles automatically. */
   razorpayAccountId?: string;
-  /** not_linked | created | needs_kyc | activated | suspended */
+  /**
+   * Razorpay's own status, verbatim: not_linked before any account exists,
+   * created once the account exists, then the Route product's activation_status
+   * (requested | needs_clarification | under_review | activated | suspended, or
+   * any further value Razorpay sends). Legacy rows may read needs_kyc.
+   */
   razorpayAccountStatus?: string;
   razorpayLinkedAt?: string;
   razorpayAccountError?: string;
+  razorpayStakeholderId?: string;
+  razorpayProductId?: string;
+  /** What Razorpay still needs before activating the account, as it reported it. */
+  razorpayAccountRequirements?: unknown;
+  razorpayStatusUpdatedAt?: string;
   createdAt: string;
 }
 
@@ -809,8 +819,20 @@ export interface PrintJob {
   refundAmountCents?: number;
   refundedAt?: string;
 
-  /** Razorpay Route settlement for this job, when split at payment time. */
+  /**
+   * Razorpay Route settlement for this job. Empty on every order taken while
+   * Route is off. See the PrintJob model in schema.prisma for each field.
+   */
+  payeeAccountId?: string;
   transferId?: string;
+  transferStatus?: string;
+  transferSettlementStatus?: string;
+  transferOnHold?: boolean;
+  transferReleasedAt?: string;
+  transferReversalId?: string;
+  transferReversedAt?: string;
+  transferFailureReason?: string;
+  settledAt?: string;
   transferAmountCents?: number;
   serviceFeeCents?: number;
 
@@ -1045,6 +1067,14 @@ export interface PlanDefinition {
  */
 export const PAYMENT_GATEWAY_FEE_BPS = 236;
 export const PAYMENT_GATEWAY_LABEL = 'Razorpay 2% + 18% GST';
+
+/**
+ * The edition of the Terms & Conditions a shop owner accepts at signup — the
+ * "Last updated" date printed at the top of /terms. Stored with the acceptance,
+ * so it stays provable which wording someone agreed to after the terms change.
+ * Change it whenever terms.html changes materially.
+ */
+export const TERMS_VERSION = '2026-09-25';
 
 export const PLAN_CATALOGUE: readonly PlanDefinition[] = [
   {

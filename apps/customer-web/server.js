@@ -41,7 +41,7 @@ const PAGES = {
   '/privacy': 'privacy.html',
   '/terms': 'terms.html',
   '/refund': 'refund.html',
-  '/example': 'example.html',
+  '/contact': 'contact.html',
   '/setup': 'setup.html',
   '/404': '404.html',
 };

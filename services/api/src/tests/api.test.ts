@@ -14,12 +14,51 @@ process.env.RAZORPAY_WEBHOOK_SECRET = TEST_WEBHOOK_SECRET;
 // suite needs one to exercise it at all.
 //
 // RAZORPAY_KEY_ID is deliberately left unset. verifyCheckoutSignature needs
-// only the secret, while isLive needs both — so with the id absent the suite
+// only the secret, while isConfigured needs both — so with the id absent the suite
 // can sign a genuine checkout triple while createOrder still returns a
 // simulated order and never reaches the network, and the live gateway
 // cross-check in /verify stays switched off.
 const TEST_KEY_SECRET = 'printok_test_key_secret';
 process.env.RAZORPAY_KEY_SECRET = TEST_KEY_SECRET;
+
+// Pinned empty, not merely left unset. A later test imports env.ts, which
+// loads the developer's .env — and dotenv fills in any variable that does not
+// exist yet, so an unset key id became the real one for every app built after
+// that point. dotenv never overrides a variable that exists, even as ''.
+process.env.RAZORPAY_KEY_ID = '';
+
+// And a backstop: no test may reach Razorpay. A test that needs its API
+// replaces fetch with a stand-in first; anything that gets here is a bug.
+{
+  const guardedFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: any, init?: any) => {
+    const url = String(typeof input === 'string' || input instanceof URL ? input : input?.url);
+    if (url.startsWith('https://api.razorpay.com')) {
+      throw new Error(`Test attempted a real Razorpay request: ${url}`);
+    }
+    return guardedFetch(input, init);
+  }) as typeof fetch;
+}
+
+/**
+ * Stands in for the Razorpay SDK (`require('razorpay')`, loaded at call time
+ * by RazorpayService) for the duration of `fn`, so no test reaches the network.
+ */
+async function withFakeRazorpaySdk<T>(fake: Record<string, unknown>, fn: () => Promise<T>): Promise<T> {
+  const Module = require('module');
+  const originalLoad = Module._load;
+  Module._load = function (request: string, ...rest: unknown[]) {
+    if (request === 'razorpay') {
+      return function FakeRazorpay(this: any) { Object.assign(this, fake); };
+    }
+    return originalLoad.call(this, request, ...rest);
+  };
+  try {
+    return await fn();
+  } finally {
+    Module._load = originalLoad;
+  }
+}
 
 // This suite imports ../app directly rather than booting the server, so it
 // deliberately never loads .env and never touches real credentials. That also
@@ -87,6 +126,39 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
   const address = server.address() as { port: number };
   const baseUrl = `http://localhost:${address.port}`;
 
+  /** Opens (or reuses) the gateway order for a job, as checkout does. */
+  async function openOrder(jobId: string): Promise<{ orderId: string; amountInCents: number }> {
+    const res = await fetch(`${baseUrl}/api/payments/create-order`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jobId }),
+    });
+    const body = (await res.json()) as any;
+    assert.ok(res.ok, `create-order: ${JSON.stringify(body)}`);
+    return { orderId: body.orderId, amountInCents: body.amountInCents };
+  }
+
+  /**
+   * A payment webhook as Razorpay sends it: naming the gateway order the job
+   * opened and that order's amount, with the job in the notes. The webhook
+   * refuses anything less, so the tests must send the real shape.
+   */
+  async function paymentWebhookRaw(
+    jobId: string, paymentId: string, extra: Record<string, unknown> = {}, event = 'payment.captured'
+  ): Promise<string> {
+    const order = await openOrder(jobId);
+    return JSON.stringify({
+      event,
+      payload: {
+        payment: {
+          entity: {
+            id: paymentId, order_id: order.orderId, amount: order.amountInCents,
+            notes: { jobId }, ...extra,
+          },
+        },
+      },
+    });
+  }
+
   let createdPrinterId = '';
   let createdShopId = '';
   let agentApiKey = '';
@@ -122,7 +194,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const res = await fetch(`${baseUrl}/api/merchant/claim`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body: JSON.stringify({ acceptTerms: true,
         shopId: createdShopId,
         ownerEmail: 'owner@metrocopy.com',
         password: 'ShopOwner99xy',
@@ -143,7 +215,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const again = await fetch(`${baseUrl}/api/merchant/claim`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body: JSON.stringify({ acceptTerms: true,
         shopId: createdShopId, ownerEmail: 'owner@metrocopy.com', password: 'Attacker99xy',
       }),
     });
@@ -279,11 +351,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(createData.job.printState, PrintState.AwaitingPayment);
 
     // Call Payment Webhook
-    const webhookRaw = JSON.stringify({
-      paymentId: 'pay_9988776655',
-      jobId: pendingJobId,
-      amountInCents: 2000,
-    });
+    const webhookRaw = await paymentWebhookRaw(pendingJobId, 'pay_9988776655');
 
     const webhookRes = await fetch(`${baseUrl}/api/payments/webhook`, {
       method: 'POST',
@@ -434,7 +502,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const other = await fetch(`${baseUrl}/api/merchant/signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body: JSON.stringify({ acceptTerms: true,
         shopName: 'Rival Prints', ownerEmail: 'rival@example.com',
         printerName: 'HP', password: 'RivalOwner99xy',
       }),
@@ -791,7 +859,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
       'a rejected webhook must not mark the job paid');
 
     // A correctly signed webhook is accepted.
-    const goodRaw = JSON.stringify({ paymentId: 'pay_real', jobId: job.id, amountInCents: 200 });
+    const goodRaw = await paymentWebhookRaw(job.id, 'pay_real');
     const ok = await fetch(`${baseUrl}/api/payments/webhook`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-razorpay-signature': signWebhook(goodRaw) },
@@ -1187,27 +1255,45 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(route.isEnabled, false, 'Route is off without explicit opt-in');
 
     const attempt = await route.createLinkedAccount({
-      shopId: 'shop_x', shopName: 'X', ownerEmail: 'x@y.com', phone: '9876543210',
+      shopId: 'shop_x', legalBusinessName: 'X Prints', customerFacingName: 'X Prints',
+      email: 'x@y.com', phone: '9876543210', businessType: 'proprietorship', contactName: 'Xavier',
+      address: { street1: '1 Road', city: 'Mumbai', state: 'Maharashtra', postalCode: '400001' },
+      settlement: { accountNumber: '1234567890', ifsc: 'HDFC0000001', beneficiaryName: 'X Prints' },
+      tncAccepted: true,
     });
     assert.strictEqual(attempt.ok, false);
     assert.strictEqual(attempt.routeUnavailable, true);
 
-    // ₹100 on Business (2%): both fees come off the shop's share, exactly as
-    // the published terms say. Shop gets ₹95.64, PrintOk retains ₹4.36 and pays
-    // ₹2.36 of that to Razorpay.
-    const { transfer, serviceFeeCents, gatewayFeeCents } =
-      route.buildTransfer('acc_test', 10000, 200, 'job_1');
-    assert.strictEqual(transfer.account, 'acc_test');
-    assert.strictEqual(transfer.amount, 9564);
-    assert.strictEqual(serviceFeeCents, 200);
-    assert.strictEqual(gatewayFeeCents, 236);
+    // Nothing that moves money answers "done" while Route is off.
+    assert.strictEqual((await route.getPaymentTransfers('pay_x')).ok, false);
+    assert.strictEqual((await route.releaseTransfer('trf_x')).ok, false);
+    assert.strictEqual((await route.reverseTransfer('trf_x')).ok, false);
+
+    // ₹100 on Free (2%), paid by card with Razorpay charging ₹2.36: both fees
+    // come off the shop's share, exactly as the published terms say.
+    const card = route.buildTransfer('acc_test', 10000, 200, 236, 'job_1');
+    assert.strictEqual(card.transfer.account, 'acc_test');
+    assert.strictEqual(card.transfer.amount, 9564);
+    assert.strictEqual(card.serviceFeeCents, 200);
+    assert.strictEqual(card.gatewayFeeCents, 236);
     assert.strictEqual(
-      transfer.amount + serviceFeeCents + gatewayFeeCents, 10000,
+      card.transfer.amount + card.serviceFeeCents + card.gatewayFeeCents, 10000,
       'the split must account for every paisa'
     );
+    // Held until the job prints.
+    assert.strictEqual(card.transfer.on_hold, true);
+
+    // The same order paid by UPI, where Razorpay charged nothing: the shop is
+    // not docked a fee nobody took. This is what a flat 2.36% estimate got wrong.
+    const upi = route.buildTransfer('acc_test', 10000, 200, 0, 'job_1');
+    assert.strictEqual(upi.transfer.amount, 9800);
+    assert.strictEqual(upi.gatewayFeeCents, 0);
+
+    // The fee is required; it is never estimated.
+    assert.throws(() => route.buildTransfer('acc_test', 10000, 200, NaN, 'job_1'));
 
     // A transfer can never go negative, even at the highest permitted fee.
-    const maxFee = route.buildTransfer('acc_test', 100, 5000, 'job_2');
+    const maxFee = route.buildTransfer('acc_test', 100, 5000, 236, 'job_2');
     assert.ok(maxFee.transfer.amount >= 0);
   });
 
@@ -1216,29 +1302,21 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const route = new RazorpayRouteService();
 
     // The published terms, the payout summary and the actual Route transfer
-    // must agree. They did not: the summary deducted both fees while the
-    // transfer deducted only the service fee, so a shop was paid more than it
-    // was told and PrintOk lost the difference.
+    // must agree. When Razorpay charges exactly the published rate, the
+    // transfer equals the payout summary's figure on every plan.
     for (const plan of PLAN_CATALOGUE) {
       const gross = 10000;
       const told = calculateShopNetCents(gross, plan.platformFeeBps);
-      const { transfer } = route.buildTransfer('acc_test', gross, plan.platformFeeBps, 'job_x');
+      const { transfer, serviceFeeCents } =
+        route.buildTransfer('acc_test', gross, plan.platformFeeBps, told.gatewayFeeCents, 'job_x');
 
       assert.strictEqual(
         transfer.amount, told.netCents,
         `${plan.tier}: the transfer must equal what the payout summary states`
       );
+      // PrintOk's own fee is always the plan's rate, whatever the gateway took.
+      assert.strictEqual(serviceFeeCents, told.serviceFeeCents);
     }
-
-    // PrintOk retains both fees and pays the gateway out of that, so its margin
-    // is the service fee on every tier — including Enterprise at 0.5%.
-    const enterprise = route.estimatePlatformMargin(10000, 50);
-    assert.strictEqual(enterprise.marginCents, enterprise.serviceFeeCents);
-    assert.strictEqual(
-      enterprise.retainedCents,
-      enterprise.serviceFeeCents + enterprise.gatewayFeeCents
-    );
-    assert.ok(enterprise.marginCents > 0, 'no tier should lose money per order');
   });
 
   await t.test('13. An unknown device token is rejected', async () => {
@@ -1791,7 +1869,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const claim = await fetch(`${baseUrl}/api/merchant/claim`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shopId: shop.shop.id, ownerEmail: 'disc@example.com', password: 'DiscountPass1', name: 'D' }),
+      body: JSON.stringify({ acceptTerms: true, shopId: shop.shop.id, ownerEmail: 'disc@example.com', password: 'DiscountPass1', name: 'D' }),
     });
     const auth = {
       Authorization: `Bearer ${((await claim.json()) as any).token}`,
@@ -1877,7 +1955,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const claim = await fetch(`${baseUrl}/api/merchant/claim`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shopId: shop.shop.id, ownerEmail: 'wt@example.com', password: 'WriteThru123', name: 'W' }),
+      body: JSON.stringify({ acceptTerms: true, shopId: shop.shop.id, ownerEmail: 'wt@example.com', password: 'WriteThru123', name: 'W' }),
     });
     const auth = {
       Authorization: `Bearer ${((await claim.json()) as any).token}`,
@@ -1959,7 +2037,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
 
     const claimRes = await fetch(`${baseUrl}/api/merchant/claim`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shopId: reg.shop.id, ownerEmail: 'mono@example.com', password: 'MonoPassword1', name: 'M' }),
+      body: JSON.stringify({ acceptTerms: true, shopId: reg.shop.id, ownerEmail: 'mono@example.com', password: 'MonoPassword1', name: 'M' }),
     });
     const claim = (await claimRes.json()) as any;
     assert.strictEqual(claimRes.status, 201, `claim must succeed: ${JSON.stringify(claim)}`);
@@ -2012,7 +2090,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
 
     const claimRes = await fetch(`${baseUrl}/api/merchant/claim`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shopId: reg.shop.id, ownerEmail: 'ro@example.com', password: 'RatesOffPass1', name: 'R' }),
+      body: JSON.stringify({ acceptTerms: true, shopId: reg.shop.id, ownerEmail: 'ro@example.com', password: 'RatesOffPass1', name: 'R' }),
     });
     const claim = (await claimRes.json()) as any;
     assert.strictEqual(claimRes.status, 201, `claim must succeed: ${JSON.stringify(claim)}`);
@@ -2051,7 +2129,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
       })).json() as any;
       const claimRes = await fetch(`${baseUrl}/api/merchant/claim`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shopId: reg.shop.id, ownerEmail: email, password: 'AutoPrintPass1', name: 'A' }),
+        body: JSON.stringify({ acceptTerms: true, shopId: reg.shop.id, ownerEmail: email, password: 'AutoPrintPass1', name: 'A' }),
       });
       const claim = (await claimRes.json()) as any;
       assert.strictEqual(claimRes.status, 201, `claim must succeed: ${JSON.stringify(claim)}`);
@@ -2130,7 +2208,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     })).json() as any;
     const claimRes = await fetch(`${baseUrl}/api/merchant/claim`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shopId: reg.shop.id, ownerEmail: 'rg@example.com', password: 'ReleaseGuard1', name: 'R' }),
+      body: JSON.stringify({ acceptTerms: true, shopId: reg.shop.id, ownerEmail: 'rg@example.com', password: 'ReleaseGuard1', name: 'R' }),
     });
     const claim = (await claimRes.json()) as any;
     assert.strictEqual(claimRes.status, 201, `claim must succeed: ${JSON.stringify(claim)}`);
@@ -2181,7 +2259,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     })).json() as any;
     const claimRes = await fetch(`${baseUrl}/api/merchant/claim`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shopId: reg.shop.id, ownerEmail: 'queue@example.com', password: 'QueueShopPass1', name: 'Q' }),
+      body: JSON.stringify({ acceptTerms: true, shopId: reg.shop.id, ownerEmail: 'queue@example.com', password: 'QueueShopPass1', name: 'Q' }),
     });
     const claim = (await claimRes.json()) as any;
     assert.strictEqual(claimRes.status, 201, `claim must succeed: ${JSON.stringify(claim)}`);
@@ -2276,7 +2354,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     })).json() as any;
     const claimRes = await fetch(`${baseUrl}/api/merchant/claim`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shopId: reg.shop.id, ownerEmail: 'prof@example.com', password: 'ProfileShop12', name: 'P' }),
+      body: JSON.stringify({ acceptTerms: true, shopId: reg.shop.id, ownerEmail: 'prof@example.com', password: 'ProfileShop12', name: 'P' }),
     });
     const claim = (await claimRes.json()) as any;
     assert.strictEqual(claimRes.status, 201, `claim must succeed: ${JSON.stringify(claim)}`);
@@ -2322,7 +2400,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     })).json() as any;
     const claimRes = await fetch(`${baseUrl}/api/merchant/claim`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shopId: reg.shop.id, ownerEmail: 'pw@example.com', password: 'OriginalPass1', name: 'P' }),
+      body: JSON.stringify({ acceptTerms: true, shopId: reg.shop.id, ownerEmail: 'pw@example.com', password: 'OriginalPass1', name: 'P' }),
     });
     const claim = (await claimRes.json()) as any;
     assert.strictEqual(claimRes.status, 201, `claim must succeed: ${JSON.stringify(claim)}`);
@@ -2363,7 +2441,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     })).json() as any;
     const claimRes = await fetch(`${baseUrl}/api/merchant/claim`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shopId: reg.shop.id, ownerEmail: 'boss@example.com', password: 'BossPassword1', name: 'Boss' }),
+      body: JSON.stringify({ acceptTerms: true, shopId: reg.shop.id, ownerEmail: 'boss@example.com', password: 'BossPassword1', name: 'Boss' }),
     });
     const claim = (await claimRes.json()) as any;
     assert.strictEqual(claimRes.status, 201, `claim must succeed: ${JSON.stringify(claim)}`);
@@ -2431,7 +2509,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     })).json() as any;
     const claimRes = await fetch(`${baseUrl}/api/merchant/claim`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shopId: reg.shop.id, ownerEmail: 'money@example.com', password: 'MoneyShopPass1', name: 'M' }),
+      body: JSON.stringify({ acceptTerms: true, shopId: reg.shop.id, ownerEmail: 'money@example.com', password: 'MoneyShopPass1', name: 'M' }),
     });
     const claim = (await claimRes.json()) as any;
     assert.strictEqual(claimRes.status, 201, `claim must succeed: ${JSON.stringify(claim)}`);
@@ -2503,7 +2581,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const signup = await fetch(`${baseUrl}/api/merchant/signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body: JSON.stringify({ acceptTerms: true,
         shopName: 'Fresh Prints', ownerEmail: 'fresh@example.com',
         printerName: 'Brother HL-L2350DW', password: 'FreshOwner77xy',
       }),
@@ -2604,7 +2682,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const merchant = await fetch(`${baseUrl}/api/merchant/claim`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body: JSON.stringify({ acceptTerms: true,
         shopId: pennyShop.id, ownerEmail: 'penny@example.com', password: 'PennyOwner55xy',
       }),
     });
@@ -2782,10 +2860,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
       'a failed payment must never queue the job for printing');
 
     // The captured event for the same job still works.
-    const capturedRaw = JSON.stringify({
-      event: 'payment.captured',
-      payload: { payment: { entity: { id: 'pay_ok', notes: { jobId: whJob.id } } } },
-    });
+    const capturedRaw = await paymentWebhookRaw(whJob.id, 'pay_ok');
     const captured = await fetch(`${baseUrl}/api/payments/webhook`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-razorpay-signature': signWebhook(capturedRaw) },
@@ -2812,7 +2887,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const claim = await fetch(`${baseUrl}/api/merchant/claim`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body: JSON.stringify({ acceptTerms: true,
         shopId: dShop.id, ownerEmail: 'decline@example.com', password: 'DeclineOwner88xy',
       }),
     });
@@ -2858,7 +2933,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const other = await fetch(`${baseUrl}/api/merchant/signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body: JSON.stringify({ acceptTerms: true,
         shopName: 'Nosy Prints', ownerEmail: 'nosy@example.com',
         printerName: 'HP', password: 'NosyOwner77xy',
       }),
@@ -2874,10 +2949,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
 
     // --- a paid job: declining owes the customer money back ---
     const paid = await makeJob();
-    const confirmRaw = JSON.stringify({
-      event: 'payment.captured',
-      payload: { payment: { entity: { id: 'pay_for_refund', notes: { jobId: paid.id } } } },
-    });
+    const confirmRaw = await paymentWebhookRaw(paid.id, 'pay_for_refund');
     await fetch(`${baseUrl}/api/payments/webhook`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-razorpay-signature': signWebhook(confirmRaw) },
@@ -2913,7 +2985,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const res = await fetch(`${baseUrl}/api/merchant/signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body: JSON.stringify({ acceptTerms: true,
         shopName: 'Route Ready Prints', ownerEmail: 'routeready@example.com',
         printerName: 'HP', password: 'RouteOwner99xy',
         contactPhone: '9876543210',
@@ -2952,7 +3024,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     const res = await fetch(`${baseUrl}/api/merchant/signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body: JSON.stringify({ acceptTerms: true,
         shopName: 'No Phone Prints', ownerEmail: 'nophone@example.com',
         printerName: 'HP', password: 'NoPhoneOwner77xy',
       }),
@@ -3054,7 +3126,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
 
     const claimRes = await fetch(`${baseUrl}/api/merchant/claim`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shopId: reg.shop.id, ownerEmail: email, password, name }),
+      body: JSON.stringify({ acceptTerms: true, shopId: reg.shop.id, ownerEmail: email, password, name }),
     });
     const claim = (await claimRes.json()) as any;
 
@@ -3483,7 +3555,11 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     // Nor may a signed webhook, which is the path Razorpay actually retries.
     const raw = JSON.stringify({
       event: 'payment.captured',
-      payload: { payment: { entity: { id: pay, notes: { jobId: job.id } } } },
+      payload: {
+        payment: {
+          entity: { id: pay, order_id: orderId, amount: job.totalPriceInCents, notes: { jobId: job.id } },
+        },
+      },
     });
     const hook = await fetch(`${baseUrl}/api/payments/webhook`, {
       method: 'POST',
@@ -3515,10 +3591,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     });
     const job = ((await res.json()) as any).job;
 
-    const raw = JSON.stringify({
-      event: 'payment.captured',
-      payload: { payment: { entity: { id: 'pay_webhook_once', notes: { jobId: job.id } } } },
-    });
+    const raw = await paymentWebhookRaw(job.id, 'pay_webhook_once');
     const deliver = () => fetch(`${baseUrl}/api/payments/webhook`, {
       method: 'POST',
       headers: {
@@ -4123,7 +4196,10 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     // It explains the settlement mode rather than just naming it.
     assert.strictEqual(before.settlement.mode, 'manual');
     assert.match(before.settlement.headline, /paid out to you/i);
-    assert.match(before.settlement.detail, /Razorpay account in your own name/i);
+    // And says plainly where the money goes today: to PrintOk, then to the shop.
+    assert.match(before.settlement.detail, /received into PrintOk's Razorpay account/i);
+    assert.doesNotMatch(before.settlement.detail, /never holds|straight to|instant/i,
+      'no direct-settlement claim while Route is off');
     assert.match(before.settlement.action, /Add a UPI ID or bank account/i);
 
     const save = (body: Record<string, unknown>) =>
@@ -4155,8 +4231,10 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(saved.bankAccountLast4, '9012', 'only the tail comes back');
     assert.ok(!JSON.stringify(saved).includes('123456789012'), 'the whole number is not echoed');
 
-    // The advice changes now that there is somewhere to send money.
-    assert.match(saved.settlement.action, /Connect a Razorpay account/i);
+    // Nothing left to do now that there is somewhere to send money. It is not
+    // invited to "connect Razorpay for automatic settlement": Route is off, so
+    // that would be a promise the platform cannot keep.
+    assert.strictEqual(saved.settlement.action, null);
 
     // The payout summary sees it too, which it could not before.
     const summary = await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/payout-summary`, {
@@ -4734,14 +4812,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     // The webhook is the only path carrying Razorpay's real numbers. Here it
     // reports a fee far below the 2.36% estimate — which is what a UPI order
     // actually looks like.
-    const raw = JSON.stringify({
-      event: 'payment.captured',
-      payload: {
-        payment: {
-          entity: { id: pay, fee: 118, tax: 18, notes: { jobId: job.id } },
-        },
-      },
-    });
+    const raw = await paymentWebhookRaw(job.id, pay, { fee: 118, tax: 18 });
     const hook = await fetch(`${baseUrl}/api/payments/webhook`, {
       method: 'POST',
       headers: {
@@ -4947,7 +5018,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
       const plan = planOf(tier);
       const gross = 10000; // ₹100
       const { transfer, serviceFeeCents } = route.buildTransfer(
-        'acc_test', gross, plan.platformFeeBps, 'job_seat'
+        'acc_test', gross, plan.platformFeeBps, 236, 'job_seat'
       );
       assert.strictEqual(serviceFeeCents, fee(gross, plan.platformFeeBps),
         `${tier}: Route must charge the plan's fee`);
@@ -4960,7 +5031,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     }
 
     assert.strictEqual(
-      route.buildTransfer('acc_test', 10000, planOf('pro').platformFeeBps, 'j').serviceFeeCents, 0,
+      route.buildTransfer('acc_test', 10000, planOf('pro').platformFeeBps, 0, 'j').serviceFeeCents, 0,
       'Pro pays PrintOk nothing per order'
     );
 
@@ -5143,7 +5214,7 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
 
       const claimed = await fetch(`${mailUrl}/api/merchant/claim`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: JSON.stringify({ acceptTerms: true,
           shopId: reg.shop.id, ownerEmail: email, password: 'OriginalPass1234', name: 'Relinked Co',
         }),
       });
@@ -5589,6 +5660,608 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(parsed.nested.apiKey, '[redacted]');
     // And a payload is summarised rather than printed.
     assert.match(String(parsed.fileBase64), /redacted|chars/);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Marketplace transparency and Route readiness (25 Sep 2026)
+  // ---------------------------------------------------------------------------
+
+  await t.test('120. The customer is shown the shop, and only what is public about it', async () => {
+    const shop = await shopWithAuth('Anand Xerox', 'anand@example.com', 'AnandXerox1234');
+    await storage.updateShopProfile(shop.shopId, {
+      addressCity: 'Chembur', addressState: 'Maharashtra', addressStreet1: '4 Home Lane',
+      contactPhone: '9820000000', gstin: '27AAAAA0000A1Z5',
+    });
+
+    const lookup = (await (await fetch(`${baseUrl}/api/printers/${shop.printerId}`)).json()) as any;
+    assert.deepStrictEqual(lookup.shop, {
+      id: shop.shopId, name: 'Anand Xerox', city: 'Chembur', state: 'Maharashtra',
+    });
+    const text = JSON.stringify(lookup);
+    for (const privateValue of ['4 Home Lane', '9820000000', '27AAAAA0000A1Z5', 'anand@example.com']) {
+      assert.ok(!text.includes(privateValue), `the public printer lookup must not carry '${privateValue}'`);
+    }
+
+    // The job the customer creates names that shop — whatever the body claims.
+    const other = await shopWithAuth('Someone Else', 'else@example.com', 'SomeoneElse1234');
+    const created = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        printerId: shop.printerId, shopId: other.shopId, shop: { name: 'Fake' },
+        fileName: 'a.pdf', fileBase64: makePdf(2).toString('base64'), copies: 1,
+        totalPriceInCents: 1, serviceFeeCents: 0, payeeAccountId: 'acc_evil',
+      }),
+    });
+    assert.strictEqual(created.status, 201);
+    const { job } = (await created.json()) as any;
+    assert.strictEqual(job.shop.name, 'Anand Xerox');
+    const stored = await storage.getPrintJob(job.id);
+    assert.strictEqual(stored?.shopId, shop.shopId, 'the shop comes from the printer, not the body');
+    assert.ok(stored!.totalPriceInCents > 1, 'the price is the server\'s');
+    assert.strictEqual(stored?.payeeAccountId, undefined);
+
+    // The order names the payee, and charges exactly the server's total.
+    const orderRes = await fetch(`${baseUrl}/api/payments/create-order`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jobId: job.id, amountInCents: 100, shopName: 'Fake' }),
+    });
+    const order = (await orderRes.json()) as any;
+    assert.strictEqual(order.payee.shopName, 'Anand Xerox');
+    assert.strictEqual(order.amountInCents, stored!.totalPriceInCents);
+
+    // Confirmation shows the shop, the order reference and the payment reference.
+    const pay = 'pay_transparency_1';
+    const verified = await fetch(`${baseUrl}/api/payments/verify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jobId: job.id, razorpayOrderId: order.orderId, razorpayPaymentId: pay,
+        razorpaySignature: signCheckout(order.orderId, pay),
+      }),
+    });
+    const v = (await verified.json()) as any;
+    assert.strictEqual(verified.status, 200, JSON.stringify(v));
+    assert.strictEqual(v.job.shop.name, 'Anand Xerox');
+    assert.strictEqual(v.job.shop.city, 'Chembur');
+    assert.strictEqual(v.job.paymentReference, pay);
+    assert.ok(v.job.orderId);
+    assert.strictEqual(v.job.customerPhone, undefined, 'the projection, not the raw row');
+  });
+
+  await t.test('121. A payment webhook must match the order and amount, not just the notes', async () => {
+    const shop = await shopWithAuth('Binding Co', 'binding@example.com', 'BindingPass1234');
+    const makeJob = async () => ((await (await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ printerId: shop.printerId, fileName: 'b.pdf', fileBase64: makePdf(3).toString('base64') }),
+    })).json()) as any).job;
+    const send = (raw: string) => fetch(`${baseUrl}/api/payments/webhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-razorpay-signature': signWebhook(raw) },
+      body: raw,
+    });
+    const stateOf = async (id: string) => (await storage.getPrintJob(id))!.paymentState;
+
+    // Right job in the notes, but a different gateway order.
+    const a = await makeJob();
+    const orderA = await openOrder(a.id);
+    const wrongOrder = JSON.stringify({ event: 'payment.captured', payload: { payment: { entity: {
+      id: 'pay_wrong_order', order_id: 'order_someone_else', amount: orderA.amountInCents, notes: { jobId: a.id },
+    } } } });
+    assert.strictEqual((await send(wrongOrder)).status, 200, 'acknowledged, so Razorpay stops retrying');
+    assert.strictEqual(await stateOf(a.id), PaymentState.Pending, 'but never applied');
+
+    // Right order, wrong amount.
+    const wrongAmount = JSON.stringify({ event: 'payment.captured', payload: { payment: { entity: {
+      id: 'pay_wrong_amount', order_id: orderA.orderId, amount: 100, notes: { jobId: a.id },
+    } } } });
+    await send(wrongAmount);
+    assert.strictEqual(await stateOf(a.id), PaymentState.Pending);
+
+    // A job that never opened an order cannot be confirmed by a webhook.
+    const b = await makeJob();
+    const noOrder = JSON.stringify({ event: 'payment.captured', payload: { payment: { entity: {
+      id: 'pay_no_order', order_id: orderA.orderId, amount: orderA.amountInCents, notes: { jobId: b.id },
+    } } } });
+    await send(noOrder);
+    assert.strictEqual(await stateOf(b.id), PaymentState.Pending);
+
+    // The old flat body, which carried no order at all, is refused.
+    const legacy = JSON.stringify({ paymentId: 'pay_legacy', jobId: a.id });
+    assert.strictEqual((await send(legacy)).status, 400);
+
+    // The genuine delivery works.
+    await send(await paymentWebhookRaw(a.id, 'pay_right'));
+    assert.strictEqual(await stateOf(a.id), PaymentState.Paid);
+  });
+
+  await t.test('122. Copies must be a whole number in range', async () => {
+    const shop = await shopWithAuth('Copies Co', 'copies@example.com', 'CopiesPass1234');
+    const attempt = (copies: unknown) => fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ printerId: shop.printerId, fileName: 'c.pdf', fileBase64: makePdf(1).toString('base64'), copies }),
+    });
+    for (const bad of [0, -2, 1.5, 1000, 1e9, '2abc', 'NaN', 'Infinity', '', true, [2], { n: 2 }]) {
+      const res = await attempt(bad);
+      assert.strictEqual(res.status, 400, `copies=${JSON.stringify(bad)} must be refused`);
+    }
+    for (const good of [1, 3, 999, '4']) {
+      const res = await attempt(good);
+      assert.strictEqual(res.status, 201, `copies=${JSON.stringify(good)} must be accepted`);
+      assert.strictEqual(((await res.json()) as any).job.copies, Number(good));
+    }
+    // Absent still means one copy, as every older page sent it.
+    const res = await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ printerId: shop.printerId, fileName: 'c.pdf', fileBase64: makePdf(1).toString('base64') }),
+    });
+    assert.strictEqual(((await res.json()) as any).job.copies, 1);
+  });
+
+  await t.test('123. A shop account needs the Terms accepted, and records which', async () => {
+    const { TERMS_VERSION } = await import('@printok/shared-types');
+    const body = {
+      shopName: 'Terms Prints', ownerEmail: 'terms@example.com', printerName: 'HP', password: 'TermsOwner77xy',
+    };
+    for (const acceptTerms of [undefined, false, 'true', 1]) {
+      const refused = await fetch(`${baseUrl}/api/merchant/signup`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...body, acceptTerms }),
+      });
+      assert.strictEqual(refused.status, 400, `acceptTerms=${JSON.stringify(acceptTerms)} must be refused`);
+      assert.match(((await refused.json()) as any).error, /Terms/);
+    }
+    assert.strictEqual(await storage.getMerchantByEmail('terms@example.com'), undefined, 'nothing was created');
+
+    const ok = await fetch(`${baseUrl}/api/merchant/signup`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, acceptTerms: true }),
+    });
+    assert.strictEqual(ok.status, 201);
+    const user = await storage.getMerchantByEmail('terms@example.com');
+    assert.ok(user?.termsAcceptedAt, 'the acceptance time is stored');
+    assert.strictEqual(user?.termsVersion, TERMS_VERSION);
+
+    // Claiming an existing shop is the other way in, and asks the same.
+    const reg = (await (await fetch(`${baseUrl}/api/shops/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopName: 'Claim Terms', ownerEmail: 'claimterms@example.com', printerName: 'HP' }),
+    })).json()) as any;
+    const claim = await fetch(`${baseUrl}/api/merchant/claim`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId: reg.shop.id, ownerEmail: 'claimterms@example.com', password: 'ClaimTerms1234' }),
+    });
+    assert.strictEqual(claim.status, 400);
+  });
+
+  await t.test('124. Production refuses test keys, and never logs a secret', async () => {
+    const { razorpayConfigurationError, razorpayKeyMode } = await import('../razorpayService');
+    assert.strictEqual(razorpayKeyMode('rzp_live_abc'), 'live');
+    assert.strictEqual(razorpayKeyMode('rzp_test_abc'), 'test');
+    assert.strictEqual(razorpayKeyMode('something'), 'unknown');
+    assert.strictEqual(razorpayKeyMode(''), 'none');
+
+    const prod = { NODE_ENV: 'production' } as NodeJS.ProcessEnv;
+    assert.strictEqual(razorpayConfigurationError('rzp_live_abc', 'sec', prod), undefined);
+    assert.match(String(razorpayConfigurationError('rzp_test_abc', 'sec', prod)), /test key/);
+    assert.match(String(razorpayConfigurationError('abc', 'sec', prod)), /neither/);
+    assert.strictEqual(
+      razorpayConfigurationError('rzp_test_abc', 'sec', { ...prod, RAZORPAY_ALLOW_TEST_KEYS: 'true' }), undefined,
+      'a staging deployment may opt in explicitly'
+    );
+    assert.strictEqual(razorpayConfigurationError('rzp_test_abc', 'sec', { NODE_ENV: 'development' } as NodeJS.ProcessEnv), undefined);
+    assert.ok(!String(razorpayConfigurationError('rzp_test_abc', 'topsecret', prod)).includes('topsecret'));
+
+    // End to end: a production service with a test key takes no payment.
+    const saved = { ...process.env };
+    const realError = console.error;
+    const logged: string[] = [];
+    console.error = (...args: unknown[]) => { logged.push(args.map(String).join(' ')); };
+    try {
+      process.env.NODE_ENV = 'production';
+      process.env.RAZORPAY_KEY_ID = 'rzp_test_prodmistake';
+      process.env.RAZORPAY_KEY_SECRET = 'shhh_do_not_print';
+      const { RazorpayService } = await import('../razorpayService');
+      const svc = new RazorpayService();
+      assert.strictEqual(svc.isConfigured, false);
+      assert.strictEqual(svc.keyMode, 'test');
+      await assert.rejects(() => svc.createOrder('job_x', 1000), /test key/);
+      assert.ok(logged.length > 0, 'the misconfiguration is logged');
+      assert.ok(logged.every((l) => !l.includes('shhh_do_not_print')), 'the secret is never logged');
+    } finally {
+      console.error = realError;
+      for (const k of ['NODE_ENV', 'RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET']) {
+        if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
+      }
+    }
+  });
+
+  await t.test('125. Route stays off unless explicitly enabled', async () => {
+    const shop = await shopWithAuth('Off Route', 'offroute@example.com', 'OffRoutePass12');
+    // Even an activated linked account settles to PrintOk while Route is off.
+    await storage.updateShopRazorpayAccount(shop.shopId, { accountId: 'acc_off', status: 'activated' });
+    const job = ((await (await fetch(`${baseUrl}/api/print-jobs?autoApprove=false`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ printerId: shop.printerId, fileName: 'o.pdf', fileBase64: makePdf(1).toString('base64') }),
+    })).json()) as any).job;
+    await openOrder(job.id);
+    assert.strictEqual((await storage.getPrintJob(job.id))?.payeeAccountId, undefined,
+      'no payee is snapshotted while Route is off');
+
+    const details = (await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/payout-details`, { headers: shop.auth })).json()) as any;
+    assert.strictEqual(details.settlement.mode, 'manual', 'nothing is called automatic while Route is off');
+    const earnings = (await (await fetch(`${baseUrl}/api/shops/${shop.shopId}/earnings`, { headers: shop.auth })).json()) as any;
+    assert.strictEqual(earnings.settlement, 'pending-route');
+
+    const onboard = await fetch(`${baseUrl}/api/shops/${shop.shopId}/razorpay-account`, {
+      method: 'POST', headers: shop.auth, body: JSON.stringify({ phone: '9820000001' }),
+    });
+    // It already has an account in this test, so it reports status instead.
+    assert.ok([200, 503].includes(onboard.status));
+    assert.notStrictEqual(process.env.RAZORPAY_ROUTE_ENABLED, 'true');
+  });
+
+  await t.test('126. With Route on: hold, release on print, reverse before refund, once each', async () => {
+    // A second app with Route switched on, against a stand-in for Razorpay's
+    // API. No request leaves this process: global fetch is intercepted for
+    // api.razorpay.com, and the Razorpay SDK used for refunds is replaced.
+    const saved = { ...process.env };
+    const realFetch = globalThis.fetch;
+    const calls: Array<{ method: string; path: string; body: any }> = [];
+    const transfers: any[] = [];
+    let paymentFee = 0; // a UPI payment: Razorpay charged nothing
+    const TOTAL = { value: 0 };
+
+    const reply = (status: number, data: unknown) =>
+      new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
+
+    globalThis.fetch = (async (input: any, init: any = {}) => {
+      const url = String(typeof input === 'string' || input instanceof URL ? input : input.url);
+      if (!url.startsWith('https://api.razorpay.com')) return realFetch(input, init);
+      const method = String(init.method || (input as any).method || 'GET').toUpperCase();
+      const path = new URL(url).pathname;
+      const rawBody = init.body ?? (typeof input === 'object' && 'text' in input ? await input.text() : undefined);
+      const body = rawBody ? JSON.parse(String(rawBody)) : undefined;
+      calls.push({ method, path, body });
+
+      if (method === 'GET' && path === '/v1/payments/pay_route_1') {
+        return reply(200, { id: 'pay_route_1', status: 'captured', order_id: 'order_route_1', amount: TOTAL.value, fee: paymentFee, tax: 0 });
+      }
+      if (method === 'GET' && path === '/v1/payments/pay_route_1/transfers') {
+        return reply(200, { entity: 'collection', count: transfers.length, items: transfers });
+      }
+      if (method === 'POST' && path === '/v1/payments/pay_route_1/transfers') {
+        const t0 = body.transfers[0];
+        const created = {
+          id: `trf_route_${transfers.length + 1}`, entity: 'transfer', source: 'pay_route_1',
+          recipient: t0.account, amount: t0.amount, currency: 'INR', status: 'created',
+          on_hold: t0.on_hold, settlement_status: t0.on_hold ? 'on_hold' : 'pending', notes: t0.notes,
+        };
+        transfers.push(created);
+        return reply(200, { entity: 'collection', count: 1, items: [created] });
+      }
+      if (method === 'PATCH' && path === '/v1/transfers/trf_route_1') {
+        transfers[0] = { ...transfers[0], on_hold: false, settlement_status: 'pending' };
+        return reply(200, transfers[0]);
+      }
+      if (method === 'POST' && path.startsWith('/v1/transfers/') && path.endsWith('/reversals')) {
+        return reply(200, { id: 'rvrsl_route_1', entity: 'reversal', transfer_id: path.split('/')[3], amount: 1 });
+      }
+      return reply(404, { error: { description: `unmocked ${method} ${path}` } });
+    }) as typeof fetch;
+    process.env.RAZORPAY_KEY_ID = 'rzp_test_route_suite';
+    process.env.RAZORPAY_ROUTE_ENABLED = 'true';
+
+    const routeStorage = new MemoryStorage();
+    const routeServer = http.createServer(createApp(routeStorage));
+    await new Promise<void>((resolve) => routeServer.listen(0, resolve));
+    const routeUrl = `http://localhost:${(routeServer.address() as { port: number }).port}`;
+    const hook = (raw: string, eventId?: string) => realFetch(`${routeUrl}/api/payments/webhook`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json', 'x-razorpay-signature': signWebhook(raw),
+        ...(eventId ? { 'x-razorpay-event-id': eventId } : {}),
+      },
+      body: raw,
+    });
+
+    try {
+      const reg = (await (await realFetch(`${routeUrl}/api/shops/register`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shopName: 'Route Prints', ownerEmail: 'route@example.com', printerName: 'HP' }),
+      })).json()) as any;
+      const shopId = reg.shop.id;
+      await routeStorage.updateShopRazorpayAccount(shopId, { accountId: 'acc_route_shop', status: 'activated' });
+
+      const newJob = async () => ((await (await realFetch(`${routeUrl}/api/print-jobs?autoApprove=false`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ printerId: reg.printer.id, fileName: 'r.pdf', fileBase64: makePdf(50).toString('base64') }),
+      })).json()) as any).job;
+
+      // ---- payment captured → transfer on hold, at the real fee ----
+      const job = await newJob();
+      TOTAL.value = job.totalPriceInCents;
+      // The order would be opened through the SDK; recorded directly here,
+      // with the payee snapshot create-order takes when Route is on.
+      await routeStorage.attachGatewayOrder(job.id, 'order_route_1', job.totalPriceInCents, 'acc_route_shop');
+
+      const captured = JSON.stringify({ event: 'payment.captured', payload: { payment: { entity: {
+        id: 'pay_route_1', order_id: 'order_route_1', amount: job.totalPriceInCents, fee: paymentFee, tax: 0,
+        notes: { jobId: job.id },
+      } } } });
+      assert.strictEqual((await hook(captured, 'evt_route_cap')).status, 200);
+
+      let stored = (await routeStorage.getPrintJob(job.id))!;
+      assert.strictEqual(stored.paymentState, PaymentState.Paid);
+      assert.strictEqual(stored.transferId, 'trf_route_1');
+      assert.strictEqual(stored.transferOnHold, true, 'held until the job prints');
+      const fee = Math.round((job.totalPriceInCents * 200) / 10_000); // Free plan, 2%
+      assert.strictEqual(stored.serviceFeeCents, fee);
+      assert.strictEqual(stored.transferAmountCents, job.totalPriceInCents - fee,
+        'a UPI payment Razorpay charged nothing on docks the shop nothing for the gateway');
+      assert.strictEqual(stored.gatewayFeeCents, 0, 'the ledger holds the real fee');
+      assert.strictEqual(stored.feesAreActual, true);
+
+      // ---- a retried delivery and a late checkout confirmation: still one transfer ----
+      await hook(captured, 'evt_route_cap_retry');
+      await hook(captured);
+      assert.strictEqual(transfers.length, 1, 'the shop is never paid twice');
+
+      // ---- transfer.processed from Razorpay ----
+      const processed = JSON.stringify({ event: 'transfer.processed', payload: { transfer: { entity: {
+        ...transfers[0], status: 'processed',
+      } } } });
+      assert.strictEqual((await hook(processed, 'evt_trf_processed')).status, 200);
+      assert.strictEqual((await routeStorage.getPrintJob(job.id))!.transferStatus, 'processed');
+
+      // A transfer to someone else is not applied to this job.
+      const forged = JSON.stringify({ event: 'transfer.failed', payload: { transfer: { entity: {
+        ...transfers[0], recipient: 'acc_attacker', status: 'failed',
+      } } } });
+      await hook(forged);
+      assert.strictEqual((await routeStorage.getPrintJob(job.id))!.transferStatus, 'processed');
+
+      // ---- printed → released ----
+      await routeStorage.updateJobPrintState(job.id, PrintState.Assigned, undefined, { actor: 'test' });
+      const report = await realFetch(`${routeUrl}/api/agent/jobs/${job.id}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-agent-api-key': reg.printer.apiKey },
+        body: JSON.stringify({ printState: PrintState.Completed }),
+      });
+      assert.strictEqual(report.status, 200, await report.clone().text());
+      stored = (await routeStorage.getPrintJob(job.id))!;
+      assert.strictEqual(stored.transferOnHold, false, 'released once printed');
+      assert.ok(stored.transferReleasedAt);
+      assert.strictEqual(calls.filter((c) => c.method === 'PATCH').length, 1);
+
+      // ---- a second order, declined: reversed once, then refunded ----
+      const claimed = (await (await realFetch(`${routeUrl}/api/merchant/claim`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ acceptTerms: true, shopId, ownerEmail: 'route@example.com', password: 'RoutePrints1234' }),
+      })).json()) as any;
+      const auth = { Authorization: `Bearer ${claimed.token}`, 'Content-Type': 'application/json' };
+
+      const job2 = await newJob();
+      await routeStorage.attachGatewayOrder(job2.id, 'order_route_2', job2.totalPriceInCents, 'acc_route_shop');
+      await routeStorage.claimGatewayPayment(job2.id, 'pay_route_2');
+      await routeStorage.confirmPaymentAndQueueJob(job2.id, { actor: 'test', detail: { paymentRef: 'pay_route_2' } });
+      await routeStorage.updateJobRouteSettlement(job2.id, {
+        transferId: 'trf_route_2', transferStatus: 'processed', transferOnHold: true, transferAmountCents: 100,
+      });
+
+      const sdk = {
+        payments: {
+          refund: async (paymentId: string, body: any) => {
+            calls.push({ method: 'POST', path: `/v1/payments/${paymentId}/refund`, body });
+            return { id: 'rfnd_route_2', amount: body.amount, status: 'pending' };
+          },
+        },
+      };
+      const declined = await withFakeRazorpaySdk(sdk, () =>
+        realFetch(`${routeUrl}/api/shops/${shopId}/jobs/${job2.id}/decline`, {
+          method: 'POST', headers: auth, body: JSON.stringify({ reason: 'Printer broke' }),
+        }));
+      assert.ok([200, 202].includes(declined.status), await declined.clone().text());
+      stored = (await routeStorage.getPrintJob(job2.id))!;
+      assert.strictEqual(stored.transferReversalId, 'rvrsl_route_1', 'reversed before the refund');
+      assert.strictEqual(stored.transferStatus, 'reversed');
+      const reversalAt = calls.findIndex((c) => c.path.endsWith('/reversals'));
+      const refundAt = calls.findIndex((c) => c.path === '/v1/payments/pay_route_2/refund');
+      assert.ok(reversalAt >= 0 && refundAt > reversalAt, 'the refund follows the reversal');
+
+      // Never reversed twice, however it is asked.
+      assert.strictEqual(await routeStorage.claimTransferReversal(job2.id), false);
+      assert.strictEqual(calls.filter((c) => c.path.endsWith('/reversals')).length, 1);
+
+      // ---- Razorpay's review of the linked account is stored verbatim ----
+      const product = JSON.stringify({
+        event: 'product.route.needs_clarification', account_id: 'acc_route_shop', contains: ['merchant_product'],
+        payload: { merchant_product: {
+          entity: { id: 'acc_prd_route', merchant_id: 'acc_route_shop', activation_status: 'needs_clarification' },
+          data: { requirements: [{ field_reference: 'settlements.ifsc_code', reason_code: 'field_missing', status: 'required' }] },
+        } },
+      });
+      assert.strictEqual((await hook(product, 'evt_product_1')).status, 200);
+      const updated = await routeStorage.getShop(shopId);
+      assert.strictEqual(updated?.razorpayAccountStatus, 'needs_clarification');
+      assert.strictEqual((updated?.razorpayAccountRequirements as any[])[0].field_reference, 'settlements.ifsc_code');
+    } finally {
+      routeServer.close();
+      globalThis.fetch = realFetch;
+      for (const k of ['RAZORPAY_KEY_ID', 'RAZORPAY_ROUTE_ENABLED']) {
+        if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
+      }
+    }
+  });
+
+  await t.test('127. Linked-account onboarding follows Razorpay\'s v2 steps and resumes', async () => {
+    const saved = { ...process.env };
+    const realFetch = globalThis.fetch;
+    const calls: Array<{ method: string; path: string; body: any }> = [];
+    let failProductOnce = true;
+    globalThis.fetch = (async (input: any, init: any = {}) => {
+      const url = String(input);
+      if (!url.startsWith('https://api.razorpay.com')) return realFetch(input, init);
+      const method = String(init.method || 'GET');
+      const path = new URL(url).pathname;
+      const body = init.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ method, path, body });
+      const ok = (data: unknown) => new Response(JSON.stringify(data), { status: 200 });
+      if (method === 'POST' && path === '/v2/accounts') return ok({ id: 'acc_onb', status: 'created' });
+      if (method === 'POST' && path === '/v2/accounts/acc_onb/stakeholders') return ok({ id: 'sth_onb' });
+      if (method === 'POST' && path === '/v2/accounts/acc_onb/products') {
+        if (failProductOnce) {
+          failProductOnce = false;
+          return new Response(JSON.stringify({ error: { description: 'temporary' } }), { status: 500 });
+        }
+        return ok({ id: 'acc_prd_onb', activation_status: 'requested', requirements: [] });
+      }
+      if (method === 'PATCH' && path === '/v2/accounts/acc_onb/products/acc_prd_onb') {
+        return ok({ id: 'acc_prd_onb', activation_status: 'under_review', requirements: [] });
+      }
+      return new Response(JSON.stringify({ error: { description: `unmocked ${method} ${path}` } }), { status: 404 });
+    }) as typeof fetch;
+    process.env.RAZORPAY_KEY_ID = 'rzp_test_onboarding';
+    process.env.RAZORPAY_ROUTE_ENABLED = 'true';
+
+    const onbStorage = new MemoryStorage();
+    const onbServer = http.createServer(createApp(onbStorage));
+    await new Promise<void>((resolve) => onbServer.listen(0, resolve));
+    const onbUrl = `http://localhost:${(onbServer.address() as { port: number }).port}`;
+    try {
+      const signup = (await (await realFetch(`${onbUrl}/api/merchant/signup`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          acceptTerms: true, shopName: 'Onboard Prints', ownerEmail: 'onb@example.com', printerName: 'HP',
+          password: 'OnboardPrints12', contactPhone: '9820000002', addressStreet1: '5 Market Rd',
+          addressCity: 'Mumbai', addressState: 'Maharashtra', addressPostalCode: '400071',
+          bankAccountNumber: '123456789012', bankIfsc: 'HDFC0001234',
+        }),
+      })).json()) as any;
+      const auth = { Authorization: `Bearer ${signup.token}`, 'Content-Type': 'application/json' };
+      const onboard = (body: unknown) => realFetch(`${onbUrl}/api/shops/${signup.shop.id}/razorpay-account`, {
+        method: 'POST', headers: auth, body: JSON.stringify(body),
+      });
+
+      // Unknown business types and missing consent are refused before Razorpay is called.
+      assert.strictEqual((await onboard({ businessType: 'sole_trader', contactName: 'Onboard Owner', tncAccepted: true })).status, 400);
+      assert.strictEqual((await onboard({ businessType: 'proprietorship', contactName: 'Onboard Owner' })).status, 400);
+      assert.strictEqual(calls.length, 0);
+
+      const valid = { businessType: 'proprietorship', contactName: 'Onboard Owner', tncAccepted: true };
+      const first = await onboard(valid);
+      assert.strictEqual(first.status, 400, 'the product step failed this time');
+      const partial = await onbStorage.getShop(signup.shop.id);
+      assert.strictEqual(partial?.razorpayAccountId, 'acc_onb', 'what was created is kept');
+      assert.strictEqual(partial?.razorpayStakeholderId, 'sth_onb');
+
+      const second = await onboard(valid);
+      assert.strictEqual(second.status, 201, await second.clone().text());
+      assert.strictEqual(calls.filter((c) => c.path === '/v2/accounts').length, 1, 'no second account');
+      assert.strictEqual(calls.filter((c) => c.path.endsWith('/stakeholders')).length, 1, 'no second stakeholder');
+
+      const created = calls.find((c) => c.path === '/v2/accounts')!.body;
+      assert.strictEqual(created.type, 'route');
+      assert.strictEqual(created.reference_id, signup.shop.id);
+      assert.strictEqual(created.profile.category, 'services');
+      assert.strictEqual(created.profile.subcategory, 'copying_and_blueprinting_services');
+      assert.strictEqual(created.profile.addresses.registered.postal_code, '400071');
+      const settlement = calls.find((c) => c.method === 'PATCH')!.body;
+      assert.deepStrictEqual(settlement.settlements, {
+        account_number: '123456789012', ifsc_code: 'HDFC0001234', beneficiary_name: 'Onboard Prints',
+      });
+
+      const done = await onbStorage.getShop(signup.shop.id);
+      assert.strictEqual(done?.razorpayProductId, 'acc_prd_onb');
+      assert.strictEqual(done?.razorpayAccountStatus, 'under_review', 'Razorpay\'s status, verbatim');
+    } finally {
+      onbServer.close();
+      globalThis.fetch = realFetch;
+      for (const k of ['RAZORPAY_KEY_ID', 'RAZORPAY_ROUTE_ENABLED']) {
+        if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
+      }
+    }
+  });
+
+  await t.test('128. Leaving a paid plan keeps it to the end of the period', async () => {
+    const { RazorpayService } = await import('../razorpayService');
+    const seen: unknown[] = [];
+    const sdk = {
+      subscriptions: {
+        cancel: async (id: string, atEnd: unknown) => { seen.push([id, atEnd]); return {}; },
+        create: async () => ({ id: 'sub_new', short_url: 'https://rzp.io/x' }),
+      },
+    };
+
+    // Without billing configured nothing is cancelled.
+    assert.deepStrictEqual(
+      await new RazorpayService().cancelSubscription('sub_x', { atCycleEnd: true }),
+      { ok: false, error: 'Razorpay is not configured.' }
+    );
+
+    const saved = process.env.RAZORPAY_KEY_ID;
+    process.env.RAZORPAY_KEY_ID = 'rzp_test_cancel';
+    const planStorage = new MemoryStorage();
+    const planServer = http.createServer(createApp(planStorage));
+    await new Promise<void>((resolve) => planServer.listen(0, resolve));
+    const planUrl = `http://localhost:${(planServer.address() as { port: number }).port}`;
+    try {
+      // The SDK receives a plain boolean: an object would be truthy even as
+      // { cancel_at_cycle_end: false }.
+      await withFakeRazorpaySdk(sdk, async () => {
+        const svc = new RazorpayService();
+        assert.deepStrictEqual(await svc.cancelSubscription('sub_end', { atCycleEnd: true }), { ok: true });
+        assert.deepStrictEqual(await svc.cancelSubscription('sub_now', { atCycleEnd: false }), { ok: true });
+      });
+      assert.deepStrictEqual(seen, [['sub_end', true], ['sub_now', false]]);
+      seen.length = 0;
+
+      // A shop on Starter, billed by a live subscription, chooses Free.
+      const signup = (await (await fetch(`${planUrl}/api/merchant/signup`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          acceptTerms: true, shopName: 'Plan Prints', ownerEmail: 'plan@example.com',
+          printerName: 'HP', password: 'PlanPrints1234',
+        }),
+      })).json()) as any;
+      await planStorage.updateShopPlan(signup.shop.id, {
+        planTier: 'starter', commissionBps: 100, planStatus: 'active', razorpaySubscriptionId: 'sub_starter',
+      });
+      const auth = { Authorization: `Bearer ${signup.token}`, 'Content-Type': 'application/json' };
+      const toFree = () => withFakeRazorpaySdk(sdk, () => fetch(`${planUrl}/api/shops/${signup.shop.id}/plan`, {
+        method: 'POST', headers: auth, body: JSON.stringify({ tier: 'free' }),
+      }));
+
+      const res = await toFree();
+      const body = (await res.json()) as any;
+      assert.strictEqual(res.status, 202, JSON.stringify(body));
+      assert.strictEqual(body.cancelsAtPeriodEnd, true);
+      assert.match(body.message, /stays active until the end/);
+      assert.deepStrictEqual(seen, [['sub_starter', true]], 'cancelled at cycle end, not now');
+
+      const plan = await planStorage.getShopPlan(signup.shop.id);
+      assert.strictEqual(plan?.planTier, 'starter', 'the paid plan runs to the end of its period');
+      assert.strictEqual(plan?.planStatus, 'cancelling');
+      assert.strictEqual(plan?.razorpaySubscriptionId, 'sub_starter');
+
+      // Asking again does not cancel twice.
+      assert.strictEqual((await toFree()).status, 409);
+      assert.strictEqual(seen.length, 1);
+
+      // At period end Razorpay sends subscription.cancelled, and only then is it Free.
+      const raw = JSON.stringify({
+        event: 'subscription.cancelled',
+        payload: { subscription: { entity: { id: 'sub_starter', notes: { shopId: signup.shop.id, tier: 'starter' } } } },
+      });
+      await fetch(`${planUrl}/api/payments/webhook`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-razorpay-signature': signWebhook(raw) },
+        body: raw,
+      });
+      const after = await planStorage.getShopPlan(signup.shop.id);
+      assert.strictEqual(after?.planTier, 'free');
+      assert.strictEqual(after?.planStatus, 'active');
+    } finally {
+      planServer.close();
+      if (saved === undefined) delete process.env.RAZORPAY_KEY_ID; else process.env.RAZORPAY_KEY_ID = saved;
+    }
   });
 
   server.close();

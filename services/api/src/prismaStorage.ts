@@ -14,7 +14,7 @@ import {
   AdminUserRecord, ShopPlan, AdminShopSummary, AdminOverview,
   ShopRemovalSafety, ShopRemovalResult, AdminAuditEntry,
   ContactEnquiryRecord, CreateContactEnquiryInput, MerchantUserRecord, ShopProfileUpdate,
-  AgentReleaseRecord, AgentFleetEntry,
+  AgentReleaseRecord, AgentFleetEntry, ShopRazorpayAccountUpdate, RouteSettlementPatch,
 } from './storage';
 import { S3StorageService } from './s3Storage';
 import { calculateJobPriceBreakdown, calculateGridPriceBreakdown, buildDefaultRateCard, DEFAULT_PRICING_CONFIG } from './pricing';
@@ -1260,6 +1260,7 @@ export class PrismaStorage implements IStorageProvider {
   public async createMerchantUser(input: {
     shopId: string; email: string; passwordHash: string;
     name?: string; phone?: string; role?: string;
+    termsAcceptedAt?: string; termsVersion?: string;
   }): Promise<MerchantUserRecord> {
     const user = await this.prisma.merchantUser.create({
       data: {
@@ -1270,6 +1271,8 @@ export class PrismaStorage implements IStorageProvider {
         name: input.name,
         phone: input.phone,
         role: input.role || 'owner',
+        termsAcceptedAt: input.termsAcceptedAt ? new Date(input.termsAcceptedAt) : null,
+        termsVersion: input.termsVersion ?? null,
       },
     });
     return this.mapMerchant(user);
@@ -1350,6 +1353,7 @@ export class PrismaStorage implements IStorageProvider {
   private mapMerchant(m: {
     id: string; shopId: string; email: string; name: string | null; phone: string | null;
     role: string; status: string; lastLoginAt: Date | null; createdAt: Date;
+    termsAcceptedAt?: Date | null; termsVersion?: string | null;
   }): MerchantUserRecord {
     return {
       id: m.id,
@@ -1360,31 +1364,79 @@ export class PrismaStorage implements IStorageProvider {
       role: m.role,
       status: m.status,
       lastLoginAt: m.lastLoginAt?.toISOString(),
+      termsAcceptedAt: m.termsAcceptedAt?.toISOString(),
+      termsVersion: m.termsVersion ?? undefined,
       createdAt: m.createdAt.toISOString(),
     };
   }
 
-  public async updateShopRazorpayAccount(shopId: string, update: {
-    accountId?: string; status: string; error?: string | null;
-  }): Promise<void> {
+  public async updateShopRazorpayAccount(shopId: string, update: ShopRazorpayAccountUpdate): Promise<void> {
     await this.prisma.shop.updateMany({
       where: { id: shopId },
       data: {
         ...(update.accountId ? { razorpayAccountId: update.accountId } : {}),
+        ...(update.stakeholderId ? { razorpayStakeholderId: update.stakeholderId } : {}),
+        ...(update.productId ? { razorpayProductId: update.productId } : {}),
+        ...(update.requirements !== undefined
+          ? { razorpayAccountRequirements: update.requirements === null ? Prisma.DbNull : (update.requirements as Prisma.InputJsonValue) }
+          : {}),
         razorpayAccountStatus: update.status,
         razorpayAccountError: update.error ?? null,
-        ...(update.status === 'activated' ? { razorpayLinkedAt: new Date() } : {}),
+        razorpayStatusUpdatedAt: new Date(),
       },
     });
+    // Only the first activation is the link date; a later re-report of
+    // "activated" must not move it.
+    if (update.status === 'activated') {
+      await this.prisma.shop.updateMany({
+        where: { id: shopId, razorpayLinkedAt: null },
+        data: { razorpayLinkedAt: new Date() },
+      });
+    }
   }
 
-  public async recordJobSettlement(
-    jobId: string, transferAmountCents: number, serviceFeeCents: number
-  ): Promise<void> {
-    await this.prisma.printJob.updateMany({
-      where: { id: jobId },
-      data: { transferAmountCents, serviceFeeCents },
+  public async getShopByRazorpayAccountId(accountId: string): Promise<Shop | undefined> {
+    if (!accountId) return undefined;
+    const shop = await this.prisma.shop.findFirst({ where: { razorpayAccountId: accountId } });
+    return shop ? this.mapShop(shop) : undefined;
+  }
+
+  public async updateJobRouteSettlement(jobId: string, patch: RouteSettlementPatch): Promise<void> {
+    const dates = new Set(['transferReleasedAt', 'transferReversedAt', 'settledAt']);
+    const data: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined) continue;
+      data[key] = dates.has(key) && typeof value === 'string' ? new Date(value) : value;
+    }
+    if (Object.keys(data).length === 0) return;
+    await this.prisma.printJob.updateMany({ where: { id: jobId }, data });
+  }
+
+  public async claimRouteTransfer(jobId: string): Promise<boolean> {
+    const claimed = await this.prisma.printJob.updateMany({
+      where: { id: jobId, transferId: null, transferStatus: null },
+      data: { transferStatus: 'creating' },
     });
+    return claimed.count === 1;
+  }
+
+  public async claimTransferReversal(jobId: string): Promise<boolean> {
+    const claimed = await this.prisma.printJob.updateMany({
+      where: {
+        id: jobId,
+        transferId: { not: null },
+        transferReversalId: null,
+        NOT: { transferStatus: { in: ['reversing', 'reversed'] } },
+      },
+      data: { transferStatus: 'reversing' },
+    });
+    return claimed.count === 1;
+  }
+
+  public async getJobByTransferId(transferId: string): Promise<PrintJob | undefined> {
+    if (!transferId) return undefined;
+    const job = await this.prisma.printJob.findUnique({ where: { transferId } });
+    return job ? this.mapPrintJob(job) : undefined;
   }
 
   public async purgeAbandonedDocuments(now: Date = new Date()): Promise<{ purged: string[] }> {
@@ -1582,11 +1634,15 @@ export class PrismaStorage implements IStorageProvider {
   }
 
   public async attachGatewayOrder(
-    jobId: string, gatewayOrderId: string, amountCents: number
+    jobId: string, gatewayOrderId: string, amountCents: number, payeeAccountId?: string
   ): Promise<void> {
     await this.prisma.printJob.updateMany({
       where: { id: jobId },
-      data: { razorpayOrderId: gatewayOrderId, razorpayOrderAmountCents: amountCents },
+      data: {
+        razorpayOrderId: gatewayOrderId,
+        razorpayOrderAmountCents: amountCents,
+        payeeAccountId: payeeAccountId ?? null,
+      },
     });
   }
 
@@ -2034,6 +2090,18 @@ export class PrismaStorage implements IStorageProvider {
     razorpayAccountStatus?: string | null;
     razorpayLinkedAt?: Date | null;
     razorpayAccountError?: string | null;
+    razorpayStakeholderId?: string | null;
+    razorpayProductId?: string | null;
+    razorpayAccountRequirements?: Prisma.JsonValue | null;
+    razorpayStatusUpdatedAt?: Date | null;
+    contactPhone?: string | null;
+    addressStreet1?: string | null;
+    addressStreet2?: string | null;
+    addressCity?: string | null;
+    addressState?: string | null;
+    addressPostalCode?: string | null;
+    addressCountry?: string | null;
+    gstin?: string | null;
   }): Shop {
     return {
       id: s.id,
@@ -2049,6 +2117,22 @@ export class PrismaStorage implements IStorageProvider {
       razorpayAccountStatus: s.razorpayAccountStatus ?? 'not_linked',
       razorpayLinkedAt: s.razorpayLinkedAt?.toISOString(),
       razorpayAccountError: s.razorpayAccountError ?? undefined,
+      razorpayStakeholderId: s.razorpayStakeholderId ?? undefined,
+      razorpayProductId: s.razorpayProductId ?? undefined,
+      razorpayAccountRequirements: s.razorpayAccountRequirements ?? undefined,
+      razorpayStatusUpdatedAt: s.razorpayStatusUpdatedAt?.toISOString(),
+      // These were written at signup and by the profile screen but never read
+      // back, so on Postgres every shop looked as though it had no phone and
+      // no address — which the profile form, Route onboarding and the
+      // customer page's shop location all depend on.
+      contactPhone: s.contactPhone ?? undefined,
+      addressStreet1: s.addressStreet1 ?? undefined,
+      addressStreet2: s.addressStreet2 ?? undefined,
+      addressCity: s.addressCity ?? undefined,
+      addressState: s.addressState ?? undefined,
+      addressPostalCode: s.addressPostalCode ?? undefined,
+      addressCountry: s.addressCountry ?? undefined,
+      gstin: s.gstin ?? undefined,
       createdAt: s.createdAt.toISOString(),
     };
   }
@@ -2118,6 +2202,22 @@ export class PrismaStorage implements IStorageProvider {
       refundId: j.refundId ?? undefined,
       refundAmountCents: j.refundAmountCents ?? undefined,
       refundedAt: j.refundedAt?.toISOString(),
+
+      // Route settlement. Previously not mapped at all, so on Postgres every
+      // job read back with no transfer id — and the refund guard that checks
+      // for one could never see it.
+      payeeAccountId: j.payeeAccountId ?? undefined,
+      transferId: j.transferId ?? undefined,
+      transferStatus: j.transferStatus ?? undefined,
+      transferSettlementStatus: j.transferSettlementStatus ?? undefined,
+      transferOnHold: j.transferOnHold ?? undefined,
+      transferReleasedAt: j.transferReleasedAt?.toISOString(),
+      transferReversalId: j.transferReversalId ?? undefined,
+      transferReversedAt: j.transferReversedAt?.toISOString(),
+      transferFailureReason: j.transferFailureReason ?? undefined,
+      settledAt: j.settledAt?.toISOString(),
+      transferAmountCents: j.transferAmountCents ?? undefined,
+      serviceFeeCents: j.serviceFeeCents ?? undefined,
 
       printState: j.printState as PrintState,
 

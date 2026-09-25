@@ -442,6 +442,57 @@ test('PrismaStorage (PostgreSQL) integration', async (t) => {
     }
   });
 
+  await t.test('shop contact details and Route fields read back from Postgres', async () => {
+    // mapShop never read these columns, so on Postgres every shop looked as if
+    // it had no phone or address — breaking the profile screen, Route
+    // onboarding and the customer page's shop location.
+    const contactShop = await storage.createShop(
+      `Contact Shop ${suffix}`, `contact-${suffix}@example.com`, undefined, undefined, undefined,
+      { contactPhone: '9820000003', addressCity: 'Chembur', addressState: 'Maharashtra', gstin: '27AAAAA0000A1Z5' }
+    );
+    const read = await storage.getShop(contactShop.id);
+    assert.strictEqual(read?.contactPhone, '9820000003');
+    assert.strictEqual(read?.addressCity, 'Chembur');
+    assert.strictEqual(read?.addressState, 'Maharashtra');
+    assert.strictEqual(read?.gstin, '27AAAAA0000A1Z5');
+
+    await storage.updateShopRazorpayAccount(contactShop.id, {
+      accountId: `acc_${suffix}`, stakeholderId: `sth_${suffix}`, productId: `acc_prd_${suffix}`,
+      status: 'needs_clarification', requirements: [{ field_reference: 'kyc.pan' }],
+    });
+    const linked = await storage.getShopByRazorpayAccountId(`acc_${suffix}`);
+    assert.strictEqual(linked?.id, contactShop.id);
+    assert.strictEqual(linked?.razorpayAccountStatus, 'needs_clarification', 'stored verbatim');
+    assert.strictEqual(linked?.razorpayProductId, `acc_prd_${suffix}`);
+    assert.deepStrictEqual(linked?.razorpayAccountRequirements, [{ field_reference: 'kyc.pan' }]);
+  });
+
+  await t.test('a Route transfer is claimed once, recorded, and reversed once', async () => {
+    // mapPrintJob never read transferId, so the refund guard that checks for
+    // one could not see it on Postgres.
+    const job = await storage.createPrintJob(
+      printer.id, 'route.pdf', Buffer.from('%PDF-1.4 route').toString('base64'), 1, 1, false, false, false, 'A4'
+    );
+    await storage.attachGatewayOrder(job.id, `order_${suffix}`, job.totalPriceInCents, `acc_${suffix}`);
+    assert.strictEqual((await storage.getPrintJob(job.id))?.payeeAccountId, `acc_${suffix}`);
+
+    const claims = await Promise.all([storage.claimRouteTransfer(job.id), storage.claimRouteTransfer(job.id)]);
+    assert.deepStrictEqual(claims.filter(Boolean).length, 1, 'exactly one caller may create the transfer');
+
+    await storage.updateJobRouteSettlement(job.id, {
+      transferId: `trf_${suffix}`, transferStatus: 'created', transferOnHold: true,
+      transferAmountCents: 150, serviceFeeCents: 4, settledAt: new Date().toISOString(),
+    });
+    const recorded = await storage.getJobByTransferId(`trf_${suffix}`);
+    assert.strictEqual(recorded?.id, job.id);
+    assert.strictEqual(recorded?.transferOnHold, true);
+    assert.strictEqual(recorded?.transferAmountCents, 150);
+    assert.ok(recorded?.settledAt);
+
+    const reversals = await Promise.all([storage.claimTransferReversal(job.id), storage.claimTransferReversal(job.id)]);
+    assert.strictEqual(reversals.filter(Boolean).length, 1, 'a transfer is reversed at most once');
+  });
+
   await t.test('concurrent admin bootstrap produces exactly one owner', async () => {
     // This is the test that needs a real database. The old code counted admins
     // and then inserted, with no transaction and no lock: under READ COMMITTED

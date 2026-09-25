@@ -5,15 +5,13 @@
     || (location.hostname === 'localhost' ? 'http://localhost:4000' : 'https://prinok-api.onrender.com');
 
   // ===========================================================================
-  // CONTACT EMAIL — PLACEHOLDER, REPLACE BEFORE LAUNCH
+  // CONTACT EMAIL
   //
-  // Deliberately an example.com address: a made-up address on a real domain
-  // would look genuine while silently dropping every message sent to it.
-  // Set CONTACT_EMAIL_IS_PLACEHOLDER to false once this is a real inbox.
-  // Enquiries are stored by the API regardless, so nothing is lost meanwhile.
+  // From site-config.js, the one place the public support address is set — the
+  // same address the Terms and Privacy Policy publish. When it is missing the
+  // contact card links to /contact rather than showing an address nobody reads.
   // ===========================================================================
-  const CONTACT_EMAIL = 'your-support-address@example.com';
-  const CONTACT_EMAIL_IS_PLACEHOLDER = true;
+  const CONTACT_EMAIL = (window.PRINTOK_SUPPORT && window.PRINTOK_SUPPORT.email) || '';
 
   // ===========================================================================
   // PRICING
@@ -144,26 +142,20 @@
     }
   }
 
-  /** Renders the contact address from the single constant above. */
+  /** Renders the contact address from the shared site config. */
   function renderContactEmail() {
+    if (!CONTACT_EMAIL) return; // the markup already links to /contact
     document.querySelectorAll('[data-contact-email]').forEach((el) => {
       el.textContent = CONTACT_EMAIL;
       if (el.tagName === 'A') el.setAttribute('href', `mailto:${CONTACT_EMAIL}`);
     });
-
-    const note = document.getElementById('contactEmailNote');
-    if (note && CONTACT_EMAIL_IS_PLACEHOLDER) {
-      note.textContent = 'Placeholder address — messages sent here are not monitored. Use the form.';
-      note.hidden = false;
-    }
   }
 
   /**
    * Contact form.
    *
    * Posts to the API, which stores the enquiry. Storing rather than emailing
-   * means a message cannot be lost to an unconfigured mail provider, and the
-   * placeholder address above stays harmless until it is replaced.
+   * means a message cannot be lost to an unconfigured mail provider.
    */
   function wireContactForm() {
     const form = document.getElementById('contactForm');

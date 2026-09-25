@@ -35,7 +35,7 @@ test('customer web routing', async (t) => {
     // this covers both: there is no client-side router to fall out of step.
     const routes = [
       '/register', '/registration', '/print', '/admin', '/dashboard',
-      '/privacy', '/terms', '/refund', '/404', '/p/prn_example', '/setup',
+      '/privacy', '/terms', '/refund', '/contact', '/404', '/p/prn_example', '/setup',
     ];
 
     for (const route of routes) {
@@ -399,6 +399,97 @@ test('customer web routing', async (t) => {
       assert.match(html, /id="btnSignOut"/, `${page} needs a sign-out control`);
       assert.match(html, /src="\/session\.js"/, `${page} must load session.js`);
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // Marketplace transparency (Razorpay payer–payee disclosure)
+  // -------------------------------------------------------------------------
+
+  const fs = require('fs');
+  const path = require('path');
+  const readPublic = (file) => fs.readFileSync(path.join(__dirname, '..', 'public', file), 'utf8');
+  const stripComments = (html) => html.replace(/<!--[\s\S]*?-->/g, '');
+
+  await t.test('the ordering page names the shop, the fee and the total before payment', async () => {
+    const markup = stripComments(readPublic('print.html'));
+
+    // The shop identity card, filled from the API.
+    assert.match(markup, /id="shopIdentityCard"/);
+    assert.match(markup, /You are ordering from/);
+    assert.match(markup, /Fulfils your order/);
+    assert.match(markup, /Ordering and payments by PrintOk/);
+
+    // The review box sits before the pay buttons and answers the four questions.
+    const review = markup.indexOf('id="orderReview"');
+    const payButton = markup.indexOf('id="btnPayRazorpay"');
+    assert.ok(review > 0 && payButton > review, 'the review must come immediately before the pay buttons');
+    const box = markup.slice(review, payButton);
+    for (const text of ['Shop', 'Fulfilled by', 'Printing charge', 'PrintOk fee to you', 'Total payable']) {
+      assert.ok(box.includes(text), `the review must show '${text}'`);
+    }
+    assert.match(box, /PrintOk fee to you<\/span>\s*<strong>₹0\.00<\/strong>/);
+    assert.match(box, /PrintOk's service fee is paid by the shop and\s+is not added to your bill/);
+    assert.match(box, /href="\/terms"/);
+    assert.match(box, /href="\/refund"/);
+
+    // No shop name or amount is written into the page itself.
+    assert.doesNotMatch(markup, /PrintOk Shop/);
+  });
+
+  await t.test('no invented rates, no dead demo printer, no PrintOk-as-printer wording', async () => {
+    const markup = stripComments(readPublic('print.html'));
+    assert.doesNotMatch(markup, /Standard Printing Rates/);
+    assert.doesNotMatch(markup, /prn_test/);
+    for (const price of ['₹2.00', '₹1.50', '₹10.00', '₹8.00']) {
+      assert.ok(!markup.includes(price), `print.html must not hardcode ${price}`);
+    }
+    for (const page of ['print.html', 'index.html', 'register.html', '404.html']) {
+      const html = stripComments(readPublic(page));
+      for (const phrase of [/Instant Mobile Printing/i, /Hardware-Free Printing/i, /prints automatically/i,
+                            /PrintOk never holds/i, /instant direct payments/i]) {
+        assert.doesNotMatch(html, phrase, `${page} must not say ${phrase}`);
+      }
+    }
+    const app = readPublic('app.js');
+    assert.doesNotMatch(app, /'PrintOk Shop'/, 'a missing shop must not be shown as a PrintOk shop');
+    assert.match(app, /Print order from \$\{payeeName\}, via PrintOk/, 'checkout names the shop');
+  });
+
+  await t.test('the ordering page links every policy and names the operator', async () => {
+    const markup = stripComments(readPublic('print.html'));
+    const footer = markup.slice(markup.indexOf('<footer'));
+    for (const href of ['/terms', '/privacy', '/refund', '/contact']) {
+      assert.ok(footer.includes(`href="${href}"`), `the ordering page footer must link ${href}`);
+      const res = await get(href);
+      assert.strictEqual(res.status, 200, `${href} must load`);
+    }
+    assert.match(footer, /PrintOk is operated by BitWise/);
+  });
+
+  await t.test('one real support address, everywhere, and no placeholder', async () => {
+    const config = readPublic('site-config.js');
+    const email = (config.match(/email:\s*'([^']+)'/) || [])[1];
+    assert.ok(email && !/example\.com/.test(email), 'site-config.js must hold a real address');
+    for (const page of ['terms.html', 'privacy.html', 'contact.html']) {
+      assert.ok(readPublic(page).includes(email), `${page} must publish the same support address`);
+    }
+    for (const file of ['index.html', 'landing.js', 'print.html', 'contact.html']) {
+      assert.doesNotMatch(readPublic(file), /your-support-address@example\.com|not monitored/i, `${file} must not show a placeholder`);
+    }
+    assert.match(readPublic('landing.js'), /PRINTOK_SUPPORT/, 'the landing page reads the shared config');
+  });
+
+  await t.test('the design mock-up is not on the public site', async () => {
+    const res = await get('/example');
+    assert.strictEqual(res.status, 404);
+    assert.ok(!fs.existsSync(path.join(__dirname, '..', 'public', 'example.html')));
+  });
+
+  await t.test('shop sign-up requires accepting the Terms', async () => {
+    const register = stripComments(readPublic('register.html'));
+    assert.match(register, /id="regAcceptTerms"[^>]*required/);
+    assert.match(register, /href="\/terms"/);
+    assert.match(readPublic('app.js'), /acceptTerms:/);
   });
 
   await new Promise((resolve) => server.close(resolve));

@@ -72,7 +72,7 @@
         <div class="hero-banner">
           <span class="badge badge-success">4-Step Quick Onboarding</span>
           <h1 class="hero-title" style="margin-top: 6px;">Start Accepting Mobile Print Jobs at Your Shop</h1>
-          <p class="hero-sub">Select your shop plan, pair your printer agent, generate your QR code, and receive instant direct payments.</p>
+          <p class="hero-sub">Select your shop plan, pair your printer agent and generate your QR code. Customers see your shop's name when they order and pay; PrintOk collects the payment and pays you out.</p>
         </div>
 
         <!-- Registration Card Container -->
@@ -277,6 +277,14 @@
                 Create my shop
               </button>
             </div>
+
+            <!-- Checked by the API as well: a shop cannot be created without it. -->
+            <label class="form-check" for="regAcceptTerms" style="display: flex; gap: 8px; align-items: flex-start; margin-top: 14px; font-size: 13px;">
+              <input type="checkbox" id="regAcceptTerms" required style="margin-top: 3px;">
+              <span>I agree to the PrintOk <a href="/terms" target="_blank" rel="noopener">Terms &amp; Conditions</a>
+                and applicable policies, including the <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>
+                and <a href="/refund" target="_blank" rel="noopener">Refund Policy</a>.</span>
+            </label>
           </div>
 
           <!-- STEP 4 RESULT: QR Code & Agent Downloads -->
@@ -348,10 +356,13 @@
 
       <!-- Footer -->
       <footer class="app-footer">
-        <div>PrintOk Hardware-Free Printing System</div>
+        <div>PrintOk — ordering and payments for independent print shops. Operated by BitWise.</div>
         <div style="margin-top: 4px;">
-          <a href="/" style="color: var(--color-primary); font-weight:600;">Customer Interface</a> • 
-          <a href="/dashboard" style="color: var(--color-primary); font-weight:600;">Merchant Dashboard</a>
+          <a href="/" style="color: var(--color-primary); font-weight:600;">About PrintOk</a> •
+          <a href="/dashboard" style="color: var(--color-primary); font-weight:600;">Merchant Dashboard</a> •
+          <a href="/terms" style="color: var(--color-primary); font-weight:600;">Terms</a> •
+          <a href="/privacy" style="color: var(--color-primary); font-weight:600;">Privacy</a> •
+          <a href="/contact" style="color: var(--color-primary); font-weight:600;">Contact</a>
         </div>
       </footer>
 

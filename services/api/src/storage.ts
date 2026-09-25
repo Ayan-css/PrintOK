@@ -118,7 +118,42 @@ export interface MerchantUserRecord {
   role: string;
   status: string;
   lastLoginAt?: string;
+  /** When the Terms were accepted, and which edition (TERMS_VERSION). */
+  termsAcceptedAt?: string;
+  termsVersion?: string;
   createdAt: string;
+}
+
+/** A Shop's Route onboarding state, as Razorpay last reported it. */
+export interface ShopRazorpayAccountUpdate {
+  accountId?: string;
+  /** Razorpay's status, verbatim — see Shop.razorpayAccountStatus. */
+  status: string;
+  error?: string | null;
+  stakeholderId?: string;
+  productId?: string;
+  /** Razorpay's outstanding requirements; null clears them. */
+  requirements?: unknown;
+}
+
+/**
+ * A change to one order's Route settlement. Only the fields given are written.
+ * Timestamps are ISO strings, as everywhere else in the shared types.
+ */
+export interface RouteSettlementPatch {
+  payeeAccountId?: string;
+  transferId?: string;
+  transferStatus?: string | null;
+  transferSettlementStatus?: string | null;
+  transferOnHold?: boolean;
+  transferReleasedAt?: string;
+  transferReversalId?: string;
+  transferReversedAt?: string;
+  transferFailureReason?: string | null;
+  settledAt?: string;
+  transferAmountCents?: number;
+  serviceFeeCents?: number;
+  routeFeeCents?: number;
 }
 
 /** Platform operator account (PRD 21). */
@@ -136,7 +171,11 @@ export interface AdminUserRecord {
 export interface ShopPlan {
   planTier: PlanTier;
   commissionBps: number;
-  planStatus: 'active' | 'suspended' | 'cancelled';
+  /**
+   * cancelling: a paid plan the owner cancelled, still active until the end of
+   * the period paid for, when Razorpay's subscription.cancelled moves it to Free.
+   */
+  planStatus: 'active' | 'suspended' | 'cancelled' | 'cancelling';
   /** The Razorpay subscription paying for a paid tier; null once cancelled. */
   razorpaySubscriptionId?: string | null;
 }
@@ -417,11 +456,28 @@ export interface IStorageProvider {
   restoreShop(shopId: string): Promise<ShopRemovalResult>;
   recordAdminAudit(entry: Omit<AdminAuditEntry, 'id' | 'createdAt'>): Promise<void>;
   /** Records a shop's Razorpay Route linkage state. */
-  updateShopRazorpayAccount(shopId: string, update: {
-    accountId?: string; status: string; error?: string | null;
-  }): Promise<void>;
-  /** Stores what was split to the shop and retained by PrintOk for one job. */
-  recordJobSettlement(jobId: string, transferAmountCents: number, serviceFeeCents: number): Promise<void>;
+  updateShopRazorpayAccount(shopId: string, update: ShopRazorpayAccountUpdate): Promise<void>;
+  /** The shop a linked account (acc_...) belongs to, for Route webhooks. */
+  getShopByRazorpayAccountId(accountId: string): Promise<Shop | undefined>;
+  /** Writes the given Route settlement fields on one order. */
+  updateJobRouteSettlement(jobId: string, patch: RouteSettlementPatch): Promise<void>;
+  /**
+   * Claims the right to create this order's Route transfer.
+   *
+   * True for exactly one caller: the order has no transfer and no claim yet,
+   * and this marks it `creating`. The browser confirmation and the webhook both
+   * reach settlement for the same payment, often within a second of each
+   * other, and without this both would create a transfer — paying the shop
+   * twice. Decided by a conditional write, not a preceding read.
+   */
+  claimRouteTransfer(jobId: string): Promise<boolean>;
+  /**
+   * Claims the right to reverse this order's transfer, once. False when there
+   * is no transfer, it is already reversed, or a reversal is in flight.
+   */
+  claimTransferReversal(jobId: string): Promise<boolean>;
+  /** The order a transfer (trf_...) was made for. */
+  getJobByTransferId(transferId: string): Promise<PrintJob | undefined>;
 
   /**
    * Freezes what this order's money actually did.
@@ -515,7 +571,9 @@ export interface IStorageProvider {
    * confirm endpoint has nothing to bind a claimed payment to, and any real
    * payment can be applied to any job.
    */
-  attachGatewayOrder(jobId: string, gatewayOrderId: string, amountCents: number): Promise<void>;
+  attachGatewayOrder(
+    jobId: string, gatewayOrderId: string, amountCents: number, payeeAccountId?: string
+  ): Promise<void>;
 
   /**
    * Claims a gateway payment for exactly one job.
@@ -592,6 +650,7 @@ export interface IStorageProvider {
   createMerchantUser(input: {
     shopId: string; email: string; passwordHash: string;
     name?: string; phone?: string; role?: string;
+    termsAcceptedAt?: string; termsVersion?: string;
   }): Promise<MerchantUserRecord>;
   getMerchantByEmail(email: string): Promise<(MerchantUserRecord & { passwordHash: string }) | undefined>;
   getMerchantUser(id: string): Promise<MerchantUserRecord | undefined>;
@@ -956,6 +1015,8 @@ export class MemoryStorage implements IStorageProvider {
     const previousPrintState = job.printState;
 
     job.paymentState = PaymentState.Paid;
+    // As the Postgres store does: the confirming payment's reference.
+    if (meta.detail?.paymentRef) job.paymentRef = String(meta.detail.paymentRef);
     if (printCheck.allowed) {
       job.printState = target;
       if (target === PrintState.Queued) {
@@ -1422,6 +1483,7 @@ export class MemoryStorage implements IStorageProvider {
   public async createMerchantUser(input: {
     shopId: string; email: string; passwordHash: string;
     name?: string; phone?: string; role?: string;
+    termsAcceptedAt?: string; termsVersion?: string;
   }): Promise<MerchantUserRecord> {
     const record: MerchantUserRecord & { passwordHash: string } = {
       id: `mch_${crypto.randomBytes(8).toString('hex')}`,
@@ -1432,6 +1494,8 @@ export class MemoryStorage implements IStorageProvider {
       phone: input.phone,
       role: input.role || 'owner',
       status: 'active',
+      termsAcceptedAt: input.termsAcceptedAt,
+      termsVersion: input.termsVersion,
       createdAt: new Date().toISOString(),
     };
     this.merchantUsers.set(record.email, record);
@@ -1465,29 +1529,60 @@ export class MemoryStorage implements IStorageProvider {
     }
   }
 
-  public async updateShopRazorpayAccount(shopId: string, update: {
-    accountId?: string; status: string; error?: string | null;
-  }): Promise<void> {
+  public async updateShopRazorpayAccount(shopId: string, update: ShopRazorpayAccountUpdate): Promise<void> {
     const shop = this.shops.get(shopId);
     if (!shop) return;
 
     if (update.accountId) shop.razorpayAccountId = update.accountId;
+    if (update.stakeholderId) shop.razorpayStakeholderId = update.stakeholderId;
+    if (update.productId) shop.razorpayProductId = update.productId;
+    if (update.requirements !== undefined) {
+      shop.razorpayAccountRequirements = update.requirements ?? undefined;
+    }
     shop.razorpayAccountStatus = update.status;
     shop.razorpayAccountError = update.error ?? undefined;
+    shop.razorpayStatusUpdatedAt = new Date().toISOString();
     if (update.status === 'activated' && !shop.razorpayLinkedAt) {
       shop.razorpayLinkedAt = new Date().toISOString();
     }
     this.shops.set(shopId, shop);
   }
 
-  public async recordJobSettlement(
-    jobId: string, transferAmountCents: number, serviceFeeCents: number
-  ): Promise<void> {
+  public async getShopByRazorpayAccountId(accountId: string): Promise<Shop | undefined> {
+    if (!accountId) return undefined;
+    return [...this.shops.values()].find((s) => s.razorpayAccountId === accountId);
+  }
+
+  public async updateJobRouteSettlement(jobId: string, patch: RouteSettlementPatch): Promise<void> {
     const job = this.printJobs.get(jobId);
     if (!job) return;
-    job.transferAmountCents = transferAmountCents;
-    job.serviceFeeCents = serviceFeeCents;
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined) continue;
+      (job as any)[key] = value === null ? undefined : value;
+    }
     this.printJobs.set(jobId, job);
+  }
+
+  public async claimRouteTransfer(jobId: string): Promise<boolean> {
+    const job = this.printJobs.get(jobId);
+    if (!job || job.transferId || job.transferStatus) return false;
+    job.transferStatus = 'creating';
+    this.printJobs.set(jobId, job);
+    return true;
+  }
+
+  public async claimTransferReversal(jobId: string): Promise<boolean> {
+    const job = this.printJobs.get(jobId);
+    if (!job || !job.transferId || job.transferReversalId) return false;
+    if (job.transferStatus === 'reversing' || job.transferStatus === 'reversed') return false;
+    job.transferStatus = 'reversing';
+    this.printJobs.set(jobId, job);
+    return true;
+  }
+
+  public async getJobByTransferId(transferId: string): Promise<PrintJob | undefined> {
+    if (!transferId) return undefined;
+    return [...this.printJobs.values()].find((j) => j.transferId === transferId);
   }
 
   public async purgeAbandonedDocuments(now: Date = new Date()): Promise<{ purged: string[] }> {
@@ -1577,12 +1672,13 @@ export class MemoryStorage implements IStorageProvider {
   }
 
   public async attachGatewayOrder(
-    jobId: string, gatewayOrderId: string, amountCents: number
+    jobId: string, gatewayOrderId: string, amountCents: number, payeeAccountId?: string
   ): Promise<void> {
     const job = this.printJobs.get(jobId);
     if (!job) return;
     job.razorpayOrderId = gatewayOrderId;
     job.razorpayOrderAmountCents = amountCents;
+    job.payeeAccountId = payeeAccountId;
     this.printJobs.set(jobId, job);
   }
 

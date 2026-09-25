@@ -603,9 +603,41 @@
               <div class="razorpay-account" id="razorpayAccountPanel" hidden>
                 <h5 style="margin: 0 0 6px 0;">Automatic settlement</h5>
                 <p class="meta-text" id="razorpayAccountStatus"></p>
+                <ul class="meta-text" id="razorpayRequirements" hidden></ul>
                 <button type="button" class="btn btn-outline btn-sm" id="btnLinkRazorpay" hidden>
                   Set up automatic settlement
                 </button>
+
+                <!--
+                  What Razorpay's linked-account onboarding needs beyond what
+                  the shop already gave: the business type, the person Razorpay
+                  verifies, and consent to Razorpay's terms. Phone, address and
+                  bank details come from the profile and payout details above.
+                -->
+                <form id="razorpayOnboardForm" hidden style="margin-top: 10px;">
+                  <label class="form-label" for="rzpBusinessType">Business type</label>
+                  <select id="rzpBusinessType" class="form-select" required>
+                    <option value="proprietorship">Sole proprietorship</option>
+                    <option value="individual">Individual</option>
+                    <option value="partnership">Partnership</option>
+                    <option value="llp">LLP</option>
+                    <option value="private_limited">Private limited company</option>
+                    <option value="public_limited">Public limited company</option>
+                    <option value="not_yet_registered">Not yet registered</option>
+                    <option value="other">Other</option>
+                  </select>
+                  <label class="form-label" for="rzpContactName" style="margin-top: 8px;">Owner's full name (as on PAN)</label>
+                  <input type="text" id="rzpContactName" class="form-input" minlength="4" maxlength="255" required>
+                  <label class="form-label" for="rzpLegalName" style="margin-top: 8px;">Legal business name (if different from the shop name)</label>
+                  <input type="text" id="rzpLegalName" class="form-input" maxlength="200">
+                  <label style="display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; font-size: 12px;">
+                    <input type="checkbox" id="rzpTnc" required style="margin-top: 2px;">
+                    <span>I accept Razorpay's terms for receiving payments through Razorpay Route.</span>
+                  </label>
+                  <button type="submit" class="btn btn-primary btn-sm" id="btnSubmitRazorpay" style="margin-top: 10px;">
+                    Submit to Razorpay
+                  </button>
+                </form>
               </div>
             </div>
 

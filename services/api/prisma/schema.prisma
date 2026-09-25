@@ -73,11 +73,23 @@ model Shop {
   // --- Razorpay Route (automatic split settlement) ---
   /// Linked account id (acc_...). Present once the shop is onboarded to Route.
   razorpayAccountId     String?
-  /// not_linked | created | needs_kyc | activated | suspended
+  /// Razorpay's own status, stored verbatim rather than collapsed. Before a
+  /// linked account exists: not_linked. Account created, product not yet
+  /// requested: created. After that, the Route product's activation_status:
+  /// requested | needs_clarification | under_review | activated | suspended —
+  /// or whatever further value Razorpay sends. Legacy rows may read needs_kyc.
   razorpayAccountStatus String    @default("not_linked")
   razorpayLinkedAt      DateTime?
   /// Last error Razorpay returned, so a stuck onboarding is explainable.
   razorpayAccountError  String?
+  /// Stakeholder (sth_...) created on the linked account during onboarding.
+  razorpayStakeholderId String?
+  /// The Route product configuration (acc_prd_...) on the linked account.
+  razorpayProductId     String?
+  /// What Razorpay still needs before it will activate the account, as it
+  /// reported it (field_reference, reason_code, resolution_url, ...).
+  razorpayAccountRequirements Json?
+  razorpayStatusUpdatedAt     DateTime?
 
   /// Soft delete. An archived shop is hidden from normal listings but keeps its
   /// jobs and payment records, which is the only safe option once real money
@@ -346,7 +358,6 @@ model PrintJob {
   refundedAt        DateTime?
 
   // --- Route settlement ---
-  /// Razorpay transfer id (trf_...) for the shop's share of this payment.
   // ---- Per-order fee ledger ----
   //
   // What the money actually did, recorded once and never recomputed. The
@@ -370,8 +381,36 @@ model PrintJob {
   /// Whether the fee figures came from the gateway or from the published rate.
   feesAreActual     Boolean @default(false)
 
-  transferId          String?
-  /// What the shop is owed from this order, after the PrintOk service fee.
+  // ---- Razorpay Route settlement ----
+  //
+  // Null throughout on any order taken while Route is off, which is every
+  // order so far. Nothing here is ever inferred: a transfer id is only written
+  // from Razorpay's own response or a signed webhook about that transfer.
+
+  /// The linked account (acc_...) this order's money is for, snapshotted when
+  /// the gateway order is opened. A shop that later relinks must not re-point
+  /// the payee of orders already taken.
+  payeeAccountId          String?
+  /// Razorpay transfer id (trf_...) for the shop's share of this payment.
+  transferId              String? @unique
+  /// creating (our claim, before Razorpay answers) | created | pending |
+  /// processed | failed | reversed | partially_reversed — Razorpay's transfer
+  /// status, verbatim, once it exists.
+  transferStatus          String?
+  /// Razorpay's settlement_status: pending | on_hold | settled.
+  transferSettlementStatus String?
+  /// Whether the shop's share is held back from settlement. Held from payment
+  /// until the job prints; released then, reversed if the order is refunded.
+  transferOnHold          Boolean?
+  transferReleasedAt      DateTime?
+  /// Reversal id (rvrsl_...) when the transfer was pulled back for a refund.
+  transferReversalId      String? @unique
+  transferReversedAt      DateTime?
+  transferFailureReason   String?
+  /// When Razorpay reported the shop's share as settled.
+  settledAt               DateTime?
+  /// What the shop is owed from this order: gross less the PrintOk service fee
+  /// and the gateway fee Razorpay actually charged on this payment.
   transferAmountCents Int?
   /// What PrintOk retained. Stored per job so payouts reconcile without
   /// recomputing against a commission rate that may have changed since.
@@ -387,7 +426,6 @@ model PrintJob {
   @@index([shopId, createdAt])
   @@index([printState, createdAt])
   @@index([paymentRef])
-  @@index([transferId])
   @@index([refundId])
 }
 
@@ -587,6 +625,12 @@ model MerchantUser {
   phone        String?
   /// owner | staff — staff cannot change pricing or withdraw (PRD 20).
   role         String  @default("owner")
+
+  /// When this person accepted the Terms & Conditions, and which edition.
+  /// Null on accounts created before acceptance was asked for, and on staff,
+  /// who are added by the owner rather than signing up.
+  termsAcceptedAt DateTime?
+  termsVersion    String?
   /// active | disabled
   status       String  @default("active")
 

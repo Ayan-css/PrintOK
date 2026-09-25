@@ -27,14 +27,14 @@
       <article class="legal">
         <h1>Terms &amp; Conditions</h1>
         <p class="legal-meta">
-          Last updated: <strong>12 September 2026</strong> · Effective from the same date.
+          Last updated: <strong>25 September 2026</strong> · Effective from the same date.
         </p>
 
         <div class="legal-callout" role="note">
           <p>
             <strong>In plain terms.</strong> PrintOk connects you to a print shop; the shop does the
-            printing and sets its own prices. We take a service fee on paid orders. Your document is
-            deleted once the job is done.
+            printing and sets its own prices. PrintOk adds no fee to your bill — the shop pays us a
+            platform fee out of the price you pay. Your document is deleted once the job is done.
           </p>
         </div>
 
@@ -96,6 +96,15 @@
             <strong>The shop sets its own rates</strong> per page, by colour, single or double sided,
             and paper size. The total is calculated from the shop's current rate card and shown to
             you in full before you pay. There are no fees added at the counter.
+          </li>
+          <li>
+            <strong>You pay the shop's price and nothing more.</strong> PrintOk adds no fee to your
+            bill. PrintOk's platform fee is paid by the shop, out of the amount you pay.
+          </li>
+          <li>
+            The order page names the shop you are ordering from — the shop that will print and hand
+            over your order — before you pay, and again on your confirmation. Online payments are
+            collected by PrintOk on that shop's behalf through Razorpay.
           </li>
           <li>
             The page count is verified on our servers from the document itself, so you are charged
@@ -162,9 +171,10 @@
         </table>
         <p>
           <strong>Payment gateway charges are separate</strong> and are deducted before settlement.
-          Razorpay's charge is currently <strong>2.36%</strong> of the order value (inclusive of GST)
-          and is set by Razorpay, not by us. On a ₹100 order on the Business plan you therefore
-          receive <strong>₹97.14</strong>: ₹100 less the ₹0.50 platform fee and the ₹2.36 gateway
+          They are set by Razorpay, not by us, and depend on how the customer paid; the deduction is
+          the charge Razorpay actually applies to that payment. At Razorpay's standard rate of
+          <strong>2.36%</strong> of the order value (2% plus GST), a ₹100 order on the Business plan
+          returns <strong>₹97.14</strong>: ₹100 less the ₹0.50 platform fee and the ₹2.36 gateway
           charge. On the Free plan the same order returns <strong>₹95.64</strong>, because the
           platform fee is ₹2.00 rather than ₹0.50. Note that on Pro, where the PrintOk platform
           fee is nil, Razorpay's charge still applies — a 0% platform fee does not mean nothing is
@@ -178,19 +188,30 @@
         <h3>4.3 How you are paid</h3>
         <ul>
           <li>
-            <strong>Where direct settlement is enabled</strong>, Razorpay splits each payment when it
-            is captured and settles your share to your own linked account on Razorpay's settlement
-            cycle. We never hold your money.
+            <strong>Today</strong>, online payments are received into PrintOk's Razorpay account on
+            your behalf and paid out to you separately, less the platform fee and the gateway charge.
+            Self-service withdrawal is not available yet and the dashboard says so rather than
+            pretending otherwise.
           </li>
           <li>
-            <strong>Until then</strong>, payments are received into our account and settled to you
-            separately. Automated withdrawal is not available yet and the dashboard says so rather
-            than pretending otherwise.
+            <strong>Where direct settlement is enabled</strong> (Razorpay Route) and Razorpay has
+            activated your linked account, your share of each online payment — the order total less
+            the platform fee and the gateway charge on that payment — is transferred to your linked
+            account when the payment is captured. It is held until the job has printed, then
+            released for Razorpay to settle to your bank on its settlement cycle. If the order is
+            declined or refunded before that, the transfer is reversed and the customer refunded.
+            Razorpay's fee for the transfer itself is paid by PrintOk, not deducted from your share.
           </li>
-          <li>Cash taken at your counter is yours in full; no service fee applies to it.</li>
+          <li>
+            <strong>Cash orders.</strong> A customer who pays cash pays you directly, so no gateway
+            charge applies. The PrintOk platform fee at your plan's rate does apply to cash orders:
+            it is deducted from the online payments PrintOk pays out to you, and where those are not
+            enough to cover it, the balance is owed to PrintOk. It is never added to the
+            customer's bill.
+          </li>
           <li>
             Direct settlement requires you to complete Razorpay's KYC. Until Razorpay marks your
-            account active, nothing can be split to it.
+            account active, nothing can be transferred to it.
           </li>
         </ul>
 
@@ -274,13 +295,13 @@
       <footer class="landing-footer">
         <div>
           <strong><img src="/favicon.svg" alt="" width="16" height="16" class="icon"> PrintOk</strong>
-          <p class="meta-text">Hardware-free printing for neighbourhood shops.</p>
+          <p class="meta-text">Ordering and payments for independent print shops. Operated by BitWise.</p>
         </div>
         <nav class="landing-footer-links" aria-label="Footer">
           <a href="/">Home</a>
           <a href="/privacy">Privacy</a>
           <a href="/refund">Refunds</a>
-          <a href="/#contact">Contact</a>
+          <a href="/contact">Contact</a>
         </nav>
       </footer>
 
