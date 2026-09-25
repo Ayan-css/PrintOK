@@ -463,7 +463,7 @@ test('customer web routing', async (t) => {
       const res = await get(href);
       assert.strictEqual(res.status, 200, `${href} must load`);
     }
-    assert.match(footer, /PrintOk is operated by BitWise/);
+    assert.match(footer, /PrintOk is operated by Mohd Ayan Nasruddin Ansari, trading as BitWise/);
   });
 
   await t.test('one real support address, everywhere, and no placeholder', async () => {
