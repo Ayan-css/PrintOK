@@ -26,9 +26,9 @@ import type { CorsOptions } from 'cors';
 
 /** Frontend origins that are always allowed. */
 const DEFAULT_ORIGINS = [
+  'https://printok.store',
+  'https://www.printok.store',
   'https://printok.vercel.app',
-  // Kept alongside the new domain: QR posters already printed and stuck to
-  // shop counters encode this host, and those must keep working.
   'https://print-ok-customer-web.vercel.app',
 ];
 
