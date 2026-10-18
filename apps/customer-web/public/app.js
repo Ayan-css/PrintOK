@@ -1317,7 +1317,8 @@ document.addEventListener('DOMContentLoaded', () => {
             qrImg.src = data.printer.qrCodeDataUrl;
           }
           if (data.printer?.qrTargetUrl) {
-            set('dashQrTargetUrl', data.printer.qrTargetUrl);
+            const urlEl = document.getElementById('dashQrTargetUrl');
+            if (urlEl) urlEl.textContent = data.printer.qrTargetUrl;
           }
 
           showToast('success', 'QR Code Updated', `Now pointing to ${domain}. Please download and print your new poster.`);
