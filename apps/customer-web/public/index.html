@@ -94,16 +94,27 @@
 
     <!-- HOW IT WORKS -->
     <section class="landing-section" id="how">
-      <h2>How it works</h2>
-      <p class="section-lede">
-        Every screen your customer sees, from scanning the QR on your counter to collecting
-        the printout. No app to install and no account to make.
-      </p>
+      <div class="walkthrough-pin-container">
+        <div class="walkthrough-header">
+          <div>
+            <h2>How it works</h2>
+            <p class="section-lede">
+              Every screen your customer sees, from scanning the QR on your counter to collecting
+              the printout. No app to install and no account to make.
+            </p>
+          </div>
+          <div class="walkthrough-nav-status" aria-hidden="true">
+            <span class="walkthrough-step-counter" id="walkthroughStepCounter">Step 1 of 6</span>
+            <div class="walkthrough-progress-track">
+              <div class="walkthrough-progress-bar" id="walkthroughProgressBar"></div>
+            </div>
+          </div>
+        </div>
 
-      <!-- Real screens from the running app, not mock-ups. Each is a phone-sized
-           capture, so they are given their intrinsic size to reserve layout space
-           and lazy-loaded: six images below the fold should not delay the hero. -->
-      <ol class="walkthrough">
+        <!-- Real screens from the running app, scrolling horizontally across steps.
+             Degrades gracefully to a native touch snap-scroll track if GSAP is unavailable. -->
+        <div class="walkthrough-slider-wrap">
+          <ol class="walkthrough">
         <li class="walk-step">
           <figure class="walk-shot">
             <img src="/images/how-it-works/01-upload.webp?v=2" width="400" height="711"
@@ -184,6 +195,8 @@
           </div>
         </li>
       </ol>
+        </div>
+      </div>
 
       <!-- The owner-side setup, which the customer screens above never show. -->
       <div class="setup-strip">

@@ -1398,23 +1398,58 @@ a { color: inherit; }
 }
 
 /* ============================================================
-   PRINT MOTIF BACKGROUND TEXTURE
+   LIVE TACTILE BACKGROUND TEXTURE & PATTERN
    ============================================================ */
 
 body::before {
   content: '';
   position: fixed;
-  inset: 0;
+  inset: -60px;
+  width: calc(100% + 120px);
+  height: calc(100% + 120px);
   background-image:
+    radial-gradient(var(--color-grain) 1.2px, transparent 1.2px),
     repeating-linear-gradient(
       0deg,
       transparent,
       transparent 39px,
       var(--color-grain) 39px,
       var(--color-grain) 40px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent,
+      transparent 39px,
+      var(--color-grain) 39px,
+      var(--color-grain) 40px
     );
+  background-size: 20px 20px, 40px 40px, 40px 40px;
   pointer-events: none;
   z-index: 0;
+  animation: liveBackgroundDrift 45s linear infinite;
+  will-change: transform;
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(circle at 18% 22%, rgba(14, 94, 111, 0.05) 0%, transparent 48%),
+    radial-gradient(circle at 82% 78%, rgba(217, 154, 30, 0.04) 0%, transparent 48%);
+  pointer-events: none;
+  z-index: 0;
+  animation: liveAmbientGlow 18s ease-in-out infinite alternate;
+}
+
+@keyframes liveBackgroundDrift {
+  0%   { transform: translate3d(0, 0, 0); }
+  100% { transform: translate3d(40px, 40px, 0); }
+}
+
+@keyframes liveAmbientGlow {
+  0%   { opacity: 0.45; transform: scale(1); }
+  100% { opacity: 0.85; transform: scale(1.05); }
 }
 
 .app-wrapper { position: relative; z-index: 1; }
@@ -3036,26 +3071,89 @@ body::before {
 .benefit p { margin: 0; color: var(--color-text-secondary); line-height: 1.55; font-size: 0.92rem; }
 .feature-icon { font-size: 1.9rem; }
 
-/* --- "How it works" screenshot walkthrough ---------------------------------
-   Real captures of the customer's phone, so the frames are sized by the
-   screenshots' own aspect ratio rather than a fixed height: a future capture
-   at a different size must not crop or letterbox itself. */
+/* --- "How it works" horizontal scroll walkthrough --------------------------
+   Real captures of the customer's phone, scrolling horizontally through each step.
+   Degrades gracefully to a native touch snap-scroll track if GSAP is unavailable. */
+
+.walkthrough-pin-container {
+  width: 100%;
+  position: relative;
+}
+
+.walkthrough-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.walkthrough-header > div:first-child {
+  flex: 1 1 320px;
+}
+
+.walkthrough-nav-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.walkthrough-step-counter {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--color-primary);
+  background: var(--color-primary-light);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-primary);
+}
+
+.walkthrough-progress-track {
+  width: 140px;
+  height: 6px;
+  background: var(--color-border-muted);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.walkthrough-progress-bar {
+  width: 16.66%;
+  height: 100%;
+  background: var(--color-primary);
+  border-radius: 999px;
+  transition: width 0.2s ease-out;
+}
+
+.walkthrough-slider-wrap {
+  width: 100%;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  padding: 8px 4px 28px;
+  margin-bottom: 24px;
+}
 
 .walkthrough {
   list-style: none;
-  margin: 0 0 36px;
+  margin: 0;
   padding: 0;
-  display: grid;
-  /* Fixed three across rather than auto-fit: six steps land as a clean 3 + 3,
-     where auto-fit gives a lopsided 4 + 2 at common desktop widths. */
-  grid-template-columns: repeat(3, 1fr);
-  gap: 32px 24px;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 28px;
+  will-change: transform;
 }
 
 .walk-step {
+  flex: 0 0 clamp(260px, 30vw, 320px);
+  scroll-snap-align: center;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.35s ease;
 }
 
 /* Smartphone handset frame with sleek bezel, rounded corners, and subtle top pill */
@@ -3070,7 +3168,7 @@ body::before {
   background: var(--color-paper);
   box-shadow: 6px 6px 0 var(--color-border);
   overflow: hidden;
-  transition: transform 0.22s ease, box-shadow 0.22s ease;
+  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
 }
 
 /* Modern handset speaker/camera pill */
@@ -3105,6 +3203,7 @@ body::before {
 .walk-copy {
   position: relative;
   padding-left: 44px;
+  transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.35s ease;
 }
 
 .walk-num {
@@ -3138,6 +3237,7 @@ body::before {
   font-weight: 800;
   font-family: var(--font-display);
   color: var(--color-text-primary);
+  transition: color 0.25s ease;
 }
 
 .walk-copy p {
@@ -3145,6 +3245,54 @@ body::before {
   color: var(--color-text-secondary);
   line-height: 1.55;
   font-size: 0.92rem;
+}
+
+/* Pin-driven animation enhancements when JS and GSAP ScrollTrigger are active */
+.js-walkthrough .walkthrough-slider-wrap {
+  overflow: visible;
+}
+
+.js-walkthrough .walk-step {
+  opacity: 0.42;
+  transform: scale(0.94);
+}
+
+.js-walkthrough .walk-step.is-active {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.js-walkthrough .walk-step.is-active .walk-shot {
+  border-color: var(--color-primary);
+  box-shadow: 8px 8px 0 var(--color-primary);
+  transform: translateY(-4px);
+}
+
+.js-walkthrough .walk-step.is-active .walk-num {
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary-hover);
+  transform: scale(1.1);
+}
+
+.js-walkthrough .walk-step.is-active .walk-copy h3 {
+  color: var(--color-primary);
+  animation: walkTextSlideIn 0.35s ease-out;
+}
+
+.js-walkthrough .walk-step.is-active .walk-copy p {
+  color: var(--color-text-primary);
+}
+
+@keyframes walkTextSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 /* The owner-side steps, deliberately quieter than the screenshots above. */
@@ -3177,16 +3325,6 @@ body::before {
 }
 
 .setup-steps strong { color: var(--color-text-primary); }
-
-@media (max-width: 900px) {
-  .walkthrough { grid-template-columns: repeat(2, 1fr); }
-}
-
-@media (max-width: 560px) {
-  /* One wide screenshot per row on a phone reads better than two cramped ones,
-     and the captures are phone-shaped to begin with. */
-  .walkthrough { grid-template-columns: 1fr; max-width: 340px; margin-inline: auto; }
-}
 
 .price-card {
   position: relative;
@@ -4185,6 +4323,114 @@ body::before {
   .queue-row-actions {
     justify-content: space-between;
     flex-wrap: wrap;
+  }
+}
+
+/* --- Merchant Dashboard mobile responsiveness --- */
+@media (max-width: 768px) {
+  .dash-shop-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .dash-header-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .dash-header-actions > .btn {
+    flex: 1 1 calc(50% - 6px);
+    justify-content: center;
+    text-align: center;
+    font-size: 11px;
+    padding: 7px 10px;
+  }
+
+  .dash-tabs-bar {
+    padding: 4px;
+    gap: 4px;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
+  }
+
+  .dash-tab-btn {
+    scroll-snap-align: start;
+    padding: 8px 12px;
+    font-size: 11.5px;
+    flex-shrink: 0;
+  }
+
+  .dash-tab-pane {
+    padding: 14px 12px !important;
+  }
+}
+
+@media (max-width: 520px) {
+  .dash-header-actions > .btn {
+    flex: 1 1 100%;
+  }
+
+  .dash-shop-title {
+    font-size: 1.35rem;
+  }
+
+  .dash-tab-pane {
+    padding: 12px 8px !important;
+  }
+
+  .kpi-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .kpi-card {
+    padding: 10px 8px;
+  }
+
+  .kpi-icon {
+    font-size: 16px;
+    margin-bottom: 4px;
+  }
+
+  .kpi-value {
+    font-size: 1.15rem;
+  }
+
+  .kpi-sub {
+    font-size: 9px;
+  }
+
+  .queue-filters {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .queue-search,
+  .queue-month {
+    width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .pairing-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .pairing-code-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .pairing-code-value {
+    width: 100%;
+    text-align: center;
+    font-size: 1.15rem;
   }
 }
 

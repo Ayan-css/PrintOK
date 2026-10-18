@@ -31,6 +31,7 @@
 
     heroEntrance(gsap);
     if (ScrollTrigger) {
+      walkthroughHorizontal(gsap);
       fileJourney(gsap);
       revealSections(gsap);
     }
@@ -71,6 +72,58 @@
         tl.from(steps, { x: -12, opacity: 0, stagger: 0.09, duration: 0.5 }, 0.45);
       }
     }
+  }
+
+  /**
+   * Pinned horizontal walkthrough for "How it works".
+   * As the user scrolls vertically through #how, the container pins and scrolls
+   * horizontally across the 6 customer journey screens.
+   * Dynamic progress indicator and active states trigger animated text entrance.
+   */
+  function walkthroughHorizontal(gsap) {
+    var section = document.querySelector('#how');
+    if (!section) return;
+    var pinContainer = section.querySelector('.walkthrough-pin-container');
+    var sliderWrap = section.querySelector('.walkthrough-slider-wrap');
+    var track = section.querySelector('.walkthrough');
+    var steps = section.querySelectorAll('.walk-step');
+    if (!pinContainer || !sliderWrap || !track || steps.length < 2) return;
+
+    section.classList.add('js-walkthrough');
+
+    var counter = document.getElementById('walkthroughStepCounter');
+    var bar = document.getElementById('walkthroughProgressBar');
+
+    function getDistance() {
+      return Math.max(0, track.scrollWidth - sliderWrap.clientWidth + 48);
+    }
+
+    var tween = gsap.to(track, {
+      x: function () { return -getDistance(); },
+      ease: 'none',
+    });
+
+    ScrollTrigger.create({
+      trigger: pinContainer,
+      start: 'top 12%',
+      end: function () { return '+=' + (getDistance() + 450); },
+      pin: pinContainer,
+      pinSpacing: true,
+      animation: tween,
+      scrub: 0.7,
+      invalidateOnRefresh: true,
+      onUpdate: function (self) {
+        var progress = self.progress;
+        if (bar) bar.style.width = Math.min(100, Math.max(12, progress * 100)) + '%';
+        var idx = Math.min(steps.length - 1, Math.floor(progress * steps.length));
+        if (counter) counter.textContent = 'Step ' + (idx + 1) + ' of ' + steps.length;
+        steps.forEach(function (step, i) {
+          step.classList.toggle('is-active', i === idx);
+        });
+      },
+    });
+
+    steps[0].classList.add('is-active');
   }
 
   /**
@@ -148,7 +201,7 @@
    */
   function revealSections(gsap) {
     var targets = document.querySelectorAll(
-      '.walk-step, .price-card, .benefit, .faq-item, .journey-step'
+      '.price-card, .benefit, .faq-item, .journey-step'
     );
     if (!targets.length) return;
 
