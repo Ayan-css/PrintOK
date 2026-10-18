@@ -13,7 +13,7 @@ import { RazorpayRouteService, LINKED_ACCOUNT_BUSINESS_TYPES, toTransferSnapshot
 import { parsePrintState } from './jobStateMachine';
 import { classifyFailure } from './jobRecovery';
 import { buildDefaultRateCard, calculateGridPriceBreakdown } from './pricing';
-import { corsOptions } from './corsPolicy';
+import { corsOptions, isOriginAllowed } from './corsPolicy';
 import {
   issueConfigDownloadToken,
   verifyConfigDownloadToken,
@@ -973,6 +973,31 @@ export function createApp(
     return '';
   }
 
+  /**
+   * Resolves the customer-facing frontend URL for generating printer QR codes.
+   * Prioritizes a validated caller origin (matching allowedOrigins, e.g. printok.store)
+   * so custom domain switches work immediately without getting trapped on a stale
+   * PUBLIC_WEB_URL, while safely falling back to PUBLIC_WEB_URL.
+   */
+  function resolvePublicWebUrl(req: Request): string | null {
+    let candidate = typeof req.body?.baseUrl === 'string' ? req.body.baseUrl.trim().replace(/\/+$/, '') : '';
+    if (!candidate && req.headers.origin) {
+      candidate = String(req.headers.origin).replace(/\/+$/, '');
+    }
+    if (candidate && isOriginAllowed(candidate)) {
+      if (process.env.NODE_ENV !== 'production' || !candidate.includes('localhost')) {
+        return candidate;
+      }
+    }
+    if (process.env.PUBLIC_WEB_URL) {
+      return process.env.PUBLIC_WEB_URL.replace(/\/+$/, '');
+    }
+    if (process.env.NODE_ENV !== 'production') {
+      return 'http://localhost:3000';
+    }
+    return null;
+  }
+
   app.post('/api/merchant/signup', async (req: Request, res: Response) => {
     try {
       const { shopName, ownerEmail, printerName, password, name, phone } = req.body || {};
@@ -1007,18 +1032,18 @@ export function createApp(
         return res.status(409).json({ error: 'An account already exists for that email. Sign in instead.' });
       }
 
-      const configuredWebUrl = process.env.PUBLIC_WEB_URL;
-      if (!configuredWebUrl && process.env.NODE_ENV === 'production') {
+      const baseUrl = resolvePublicWebUrl(req);
+      if (!baseUrl && process.env.NODE_ENV === 'production') {
         return res.status(500).json({
           error: 'PUBLIC_WEB_URL is not configured. Refusing to register a shop whose QR code could never be scanned.',
         });
       }
-      const baseUrl = (configuredWebUrl || 'http://localhost:3000').replace(/\/$/, '');
+      const effectiveBase = baseUrl || 'http://localhost:3000';
 
       const shop = await storage.createShop(
         shopName, ownerEmail, upiId, bankAccountNumber, bankIfsc, readShopContact(req.body)
       );
-      const printer = await storage.createPrinter(shop.id, printerName, baseUrl, undefined, generateQrCodeDataUrl);
+      const printer = await storage.createPrinter(shop.id, printerName, effectiveBase, undefined, generateQrCodeDataUrl);
 
       const merchant = await storage.createMerchantUser({
         shopId: shop.id,
@@ -1167,21 +1192,21 @@ export function createApp(
       // A QR poster is printed and physically mounted in a shop. Emitting a
       // localhost URL produces a poster that can never work, and nothing about
       // the successful response would reveal it, so refuse instead of guessing.
-      const configuredWebUrl = process.env.PUBLIC_WEB_URL;
-      if (!configuredWebUrl && process.env.NODE_ENV === 'production') {
+      const baseUrl = resolvePublicWebUrl(req);
+      if (!baseUrl && process.env.NODE_ENV === 'production') {
         return res.status(500).json({
           error:
             'PUBLIC_WEB_URL is not configured. Refusing to register a shop, because its QR code ' +
             'would point at localhost and could never be scanned by a customer.',
         });
       }
-      const baseUrl = (configuredWebUrl || 'http://localhost:3000').replace(/\/$/, '');
+      const effectiveBase = baseUrl || 'http://localhost:3000';
 
       // Pass baseUrl + QR generator so createPrinter builds the correct URL after the ID is known
       const printer = await storage.createPrinter(
         shop.id,
         printerName,
-        baseUrl,
+        effectiveBase,
         undefined,
         generateQrCodeDataUrl
       );
@@ -3337,14 +3362,13 @@ export function createApp(
       if (!ctx) return;
       const printer = ctx.printer;
 
-      const configuredWebUrl = process.env.PUBLIC_WEB_URL;
-      if (!configuredWebUrl) {
+      const baseUrl = resolvePublicWebUrl(req);
+      if (!baseUrl) {
         return res.status(500).json({
           error: 'PUBLIC_WEB_URL is not configured; regenerating would reproduce the same broken URL.',
         });
       }
 
-      const baseUrl = configuredWebUrl.replace(/\/$/, '');
       const updated = await storage.regeneratePrinterQr(printer.id, baseUrl, generateQrCodeDataUrl);
       return res.json({ printer: updated });
     } catch (err: any) {

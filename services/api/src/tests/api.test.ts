@@ -1470,6 +1470,37 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     assert.strictEqual(revoke.status, 401, 'anyone could stop this shop printing');
   });
 
+  await t.test('42b. A merchant owner can regenerate their printer QR code, and allowed origins are honored', async () => {
+    // 1. Regenerate with an allowed origin (e.g. https://printok.store)
+    const regen = await fetch(`${baseUrl}/api/printers/${createdPrinterId}/regenerate-qr`, {
+      method: 'POST',
+      headers: { ...merchantAuth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ baseUrl: 'https://printok.store' }),
+    });
+    assert.strictEqual(regen.status, 200);
+    const body = (await regen.json()) as any;
+    assert.ok(body.printer, 'must return updated printer');
+    assert.strictEqual(body.printer.id, createdPrinterId);
+    assert.ok(
+      body.printer.qrTargetUrl.startsWith(`https://printok.store/?printer=${createdPrinterId}`),
+      `qrTargetUrl should start with https://printok.store/?printer=, got ${body.printer.qrTargetUrl}`
+    );
+    assert.ok(body.printer.qrCodeDataUrl.startsWith('data:image/png;base64,'));
+
+    // 2. An untrusted origin must be rejected/ignored and not baked into the QR code
+    const attack = await fetch(`${baseUrl}/api/printers/${createdPrinterId}/regenerate-qr`, {
+      method: 'POST',
+      headers: { ...merchantAuth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ baseUrl: 'https://attacker-domain.evil.com' }),
+    });
+    assert.strictEqual(attack.status, 200);
+    const attackBody = (await attack.json()) as any;
+    assert.ok(
+      !attackBody.printer.qrTargetUrl.includes('attacker-domain.evil.com'),
+      'untrusted origin must not be stored in QR target URL'
+    );
+  });
+
   await t.test('43. A merchant cannot manage another shop\'s printer', async () => {
     const other = await fetch(`${baseUrl}/api/shops/register`, {
       method: 'POST',

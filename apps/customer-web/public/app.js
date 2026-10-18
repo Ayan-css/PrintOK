@@ -630,6 +630,7 @@ document.addEventListener('DOMContentLoaded', () => {
             body: JSON.stringify({
               acceptTerms: true,
               shopName, ownerEmail, printerName, upiId, password,
+              baseUrl: window.location.origin,
               bankAccountNumber: val('regBankAccount').replace(/\s+/g, ''),
               bankIfsc: val('regBankIfsc').replace(/\s+/g, '').toUpperCase(),
               // Stored on the shop so Route onboarding has them already, rather
@@ -1278,6 +1279,54 @@ document.addEventListener('DOMContentLoaded', () => {
           return;
         }
         window.open(`/?printer=${encodeURIComponent(dashPrinterId)}`, '_blank', 'noopener');
+      });
+    }
+
+    const btnRegenerateQr = document.getElementById('btnRegenerateQr');
+    if (btnRegenerateQr) {
+      btnRegenerateQr.addEventListener('click', async () => {
+        if (!dashPrinterId) {
+          showToast('warning', 'No Printer', 'Connect a shop to manage its QR code.');
+          return;
+        }
+
+        const domain = window.location.origin;
+        const confirmed = window.confirm(
+          `Regenerate QR Code?\n\nThis will update your shop counter QR code to point to ${domain}.\n\nNote: If you have physical posters printed with an older QR code, you will need to re-print and replace them.`
+        );
+        if (!confirmed) return;
+
+        const originalHtml = btnRegenerateQr.innerHTML;
+        btnRegenerateQr.disabled = true;
+        btnRegenerateQr.textContent = 'Regenerating…';
+
+        try {
+          const res = await shopFetch(`/api/printers/${encodeURIComponent(dashPrinterId)}/regenerate-qr`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ baseUrl: domain }),
+          });
+
+          const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data.error || 'Failed to regenerate QR code');
+          }
+
+          const qrImg = document.getElementById('dashQrImg');
+          if (qrImg && data.printer?.qrCodeDataUrl) {
+            qrImg.src = data.printer.qrCodeDataUrl;
+          }
+          if (data.printer?.qrTargetUrl) {
+            set('dashQrTargetUrl', data.printer.qrTargetUrl);
+          }
+
+          showToast('success', 'QR Code Updated', `Now pointing to ${domain}. Please download and print your new poster.`);
+        } catch (err) {
+          showToast('error', 'Update Failed', err.message || 'Could not regenerate QR code.');
+        } finally {
+          btnRegenerateQr.disabled = false;
+          btnRegenerateQr.innerHTML = originalHtml;
+        }
       });
     }
 
