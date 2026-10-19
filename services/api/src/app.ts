@@ -2322,6 +2322,60 @@ export function createApp(
   });
 
   /**
+   * Daily shop earnings breakdown and payout status across all shops.
+   */
+  app.get('/api/admin/daily-earnings', async (req: Request, res: Response) => {
+    const admin = await authenticateAdmin(req, res);
+    if (!admin) return;
+
+    try {
+      const date = typeof req.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
+        ? req.query.date
+        : new Date().toISOString().substring(0, 10);
+
+      const result = await storage.getDailyShopEarnings(date);
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Update daily payout status for a shop on a specific date.
+   */
+  app.post('/api/admin/payouts/status', async (req: Request, res: Response) => {
+    const admin = await authenticateAdmin(req, res);
+    if (!admin) return;
+
+    try {
+      const { shopId, date, status, reference, notes } = req.body || {};
+      if (!shopId || typeof shopId !== 'string') {
+        return res.status(400).json({ error: 'shopId is required.' });
+      }
+      if (!date || typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return res.status(400).json({ error: 'Valid date (YYYY-MM-DD) is required.' });
+      }
+      const validStatuses = ['pending', 'processing', 'settled', 'paid', 'held'];
+      if (!status || !validStatuses.includes(status)) {
+        return res.status(400).json({ error: `status must be one of: ${validStatuses.join(', ')}` });
+      }
+
+      const result = await storage.updateDailyPayoutStatus(
+        shopId,
+        date,
+        status,
+        { id: admin.sub, email: admin.email },
+        reference,
+        notes
+      );
+
+      return res.json({ ok: true, ...result });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
    * Whether a shop can be hard deleted, without changing anything.
    * The console calls this before offering a destructive action.
    */
@@ -2826,6 +2880,19 @@ export function createApp(
           'platform fee, and not absorbed by PrintOk.',
       },
     });
+  });
+
+  /**
+   * Live platform statistics (public, unauthenticated).
+   * Pulls real live counts directly from the database for the landing page.
+   */
+  app.get(['/api/platform/stats', '/api/stats/public'], async (_req: Request, res: Response) => {
+    try {
+      const stats = await storage.getPublicStats();
+      return res.json(stats);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
   });
 
   /**

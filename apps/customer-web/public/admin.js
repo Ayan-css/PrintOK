@@ -519,6 +519,127 @@
     }
   }
 
+  let currentDailyEarnings = null;
+
+  async function loadDailyEarnings() {
+    const dateInput = $('payoutFilterDate');
+    if (!dateInput) return;
+    const selectedDate = dateInput.value || new Date().toISOString().substring(0, 10);
+    dateInput.value = selectedDate;
+
+    const tbody = $('dailyPayoutRows');
+    if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="meta-text" style="padding:16px;">Loading daily earnings…</td></tr>';
+
+    try {
+      const data = await api(`/api/admin/daily-earnings?date=${encodeURIComponent(selectedDate)}`);
+      currentDailyEarnings = data;
+      renderDailyEarnings(data);
+    } catch (err) {
+      if (tbody) tbody.innerHTML = `<tr><td colspan="9" class="meta-text warn-text" style="padding:16px;">${escapeHtml(err.message)}</td></tr>`;
+      toast('danger', 'Daily earnings failed', err.message);
+    }
+  }
+
+  function renderDailyEarnings(data) {
+    if (!data) return;
+    const { summary, shops, date } = data;
+    const filterStatus = $('payoutFilterStatus')?.value || 'all';
+
+    if ($('statDailyActiveShops')) $('statDailyActiveShops').textContent = summary.totalShopsWithOrders;
+    if ($('statDailyTotalShops')) $('statDailyTotalShops').textContent = `of ${summary.totalShops} registered shops`;
+    if ($('statDailyGross')) $('statDailyGross').textContent = rupees(summary.totalGrossCents);
+    if ($('statDailyFees')) $('statDailyFees').textContent = rupees(summary.totalPlatformFeeCents);
+    if ($('statDailyNetPayout')) $('statDailyNetPayout').textContent = rupees(summary.totalNetPayoutCents);
+
+    const filteredShops = filterStatus === 'all'
+      ? shops
+      : shops.filter((s) => s.payoutStatus.toLowerCase() === filterStatus.toLowerCase());
+
+    const tbody = $('dailyPayoutRows');
+    if (!tbody) return;
+
+    if (!filteredShops.length) {
+      tbody.innerHTML = `<tr><td colspan="9" class="meta-text" style="padding:24px;">No shop orders found for ${escapeHtml(date)} (${filterStatus !== 'all' ? 'filtered by ' + escapeHtml(filterStatus) : 'no activity'}).</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = filteredShops.map((s) => {
+      const statusClass = s.payoutStatus === 'settled' || s.payoutStatus === 'paid'
+        ? 'badge-success'
+        : (s.payoutStatus === 'processing' ? 'badge-warning' : (s.payoutStatus === 'held' ? 'badge-danger' : 'badge-muted'));
+
+      const destination = s.payoutUpi
+        ? `<div class="mono" style="font-size:11px;">UPI: ${escapeHtml(s.payoutUpi)}</div>`
+        : (s.payoutBank
+          ? `<div class="meta-text" style="font-size:11px;">${escapeHtml(s.payoutBank)}</div>`
+          : '<div class="meta-text" style="color:var(--color-danger);font-size:11px;">No payout details set</div>');
+
+      return `
+        <tr>
+          <td>
+            <div class="cell-title">${escapeHtml(s.shopName)}</div>
+            <div class="meta-text">${escapeHtml(s.ownerEmail)}</div>
+            <div class="meta-text mono">${escapeHtml(s.shopId)}</div>
+          </td>
+          <td>${destination}</td>
+          <td>
+            <strong>${s.orderCount}</strong> order${s.orderCount === 1 ? '' : 's'}
+            <div class="meta-text">${s.jobsSettled}/${s.totalJobs} settled</div>
+          </td>
+          <td>${rupees(s.grossCents)}</td>
+          <td>${rupees(s.gatewayFeeCents)}</td>
+          <td class="cell-accent">${rupees(s.platformFeeCents)}</td>
+          <td><strong>${rupees(s.netPayoutCents)}</strong></td>
+          <td><span class="badge ${statusClass}">${escapeHtml(s.payoutStatus)}</span></td>
+          <td>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <select class="form-input form-input--compact" data-payout-status="${escapeHtml(s.shopId)}" aria-label="Set status for ${escapeHtml(s.shopName)}">
+                <option value="pending"${s.payoutStatus === 'pending' ? ' selected' : ''}>Pending</option>
+                <option value="processing"${s.payoutStatus === 'processing' ? ' selected' : ''}>Processing</option>
+                <option value="settled"${s.payoutStatus === 'settled' || s.payoutStatus === 'paid' ? ' selected' : ''}>Settled / Paid</option>
+                <option value="held"${s.payoutStatus === 'held' ? ' selected' : ''}>Held</option>
+              </select>
+              <button class="btn btn-outline btn-sm" type="button" data-save-payout="${escapeHtml(s.shopId)}">Update</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    tbody.querySelectorAll('[data-save-payout]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const shopId = btn.getAttribute('data-save-payout');
+        const select = tbody.querySelector(`select[data-payout-status="${shopId}"]`);
+        if (!select) return;
+        const newStatus = select.value;
+        const ref = (newStatus === 'settled' || newStatus === 'paid')
+          ? window.prompt('Optional payment reference or UTR:', '')
+          : null;
+
+        btn.disabled = true;
+        btn.textContent = '…';
+        try {
+          await api('/api/admin/payouts/status', {
+            method: 'POST',
+            body: JSON.stringify({
+              shopId,
+              date: $('payoutFilterDate').value || new Date().toISOString().substring(0, 10),
+              status: newStatus,
+              reference: ref || undefined,
+            }),
+          });
+          toast('success', 'Payout status updated', `Marked ${shopId} as ${newStatus}.`);
+          await loadDailyEarnings();
+        } catch (err) {
+          toast('danger', 'Update failed', err.message);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Update';
+        }
+      });
+    });
+  }
+
   async function loadConsole() {
     try {
       const includeArchived = $('adminShowArchived').checked;
@@ -533,6 +654,7 @@
       allShops = shops;
       renderOverview(overview);
       applyFilter();
+      await loadDailyEarnings();
     } catch (err) {
       toast('danger', 'Could not load', err.message);
     }
@@ -620,6 +742,12 @@
     $('btnLoadAudit').addEventListener('click', loadAudit);
     $('btnLoadEnquiries').addEventListener('click', loadEnquiries);
     $('enquiryFilter').addEventListener('change', loadEnquiries);
+    $('btnLoadDailyEarnings')?.addEventListener('click', loadDailyEarnings);
+    $('payoutFilterDate')?.addEventListener('change', loadDailyEarnings);
+    $('payoutFilterStatus')?.addEventListener('change', () => renderDailyEarnings(currentDailyEarnings));
+    if ($('payoutFilterDate') && !$('payoutFilterDate').value) {
+      $('payoutFilterDate').value = new Date().toISOString().substring(0, 10);
+    }
 
     $('adminEnquiryList').addEventListener('click', async (event) => {
       const button = event.target.closest('[data-enquiry]');

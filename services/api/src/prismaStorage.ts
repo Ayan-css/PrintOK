@@ -7,6 +7,7 @@ import {
   ShopContactDetails, ShopPortalConfig, DEFAULT_PORTAL_CONFIG, ShopRateCard,
   parseOrientation,
   platformFeeFor, DEFAULT_PLATFORM_FEE_BPS,
+  calculateShopNetCents, wasPaidThroughGateway,
 } from '@printok/shared-types';
 import {
   IStorageProvider, CreateJobOptions, TransitionMeta, StateChangeResult, StoredIdempotencyRecord,
@@ -15,6 +16,7 @@ import {
   ShopRemovalSafety, ShopRemovalResult, AdminAuditEntry,
   ContactEnquiryRecord, CreateContactEnquiryInput, MerchantUserRecord, ShopProfileUpdate,
   AgentReleaseRecord, AgentFleetEntry, ShopRazorpayAccountUpdate, RouteSettlementPatch,
+  PublicPlatformStats, DailyShopEarningsRow, DailyShopEarningsResult,
 } from './storage';
 import { S3StorageService } from './s3Storage';
 import { calculateJobPriceBreakdown, calculateGridPriceBreakdown, buildDefaultRateCard, DEFAULT_PRICING_CONFIG } from './pricing';
@@ -1844,6 +1846,187 @@ export class PrismaStorage implements IStorageProvider {
       commissionCents,
       jobsRequiringAction: requiresAction,
       shopsByTier: Object.fromEntries(tierGroups.map((g) => [g.planTier, g._count._all])),
+    };
+  }
+
+  public async getPublicStats(): Promise<PublicPlatformStats> {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const [registeredShops, shopsWithJobs] = await Promise.all([
+      this.prisma.shop.count({ where: { archivedAt: null } }),
+      this.prisma.printJob.groupBy({
+        by: ['shopId'],
+        where: { createdAt: { gte: thirtyDaysAgo } },
+        _count: { _all: true },
+      }),
+    ]);
+    return {
+      registeredShops,
+      activeShopsMonthly: shopsWithJobs.length,
+    };
+  }
+
+  public async getDailyShopEarnings(date: string): Promise<DailyShopEarningsResult> {
+    const start = new Date(`${date}T00:00:00.000Z`);
+    const end = new Date(`${date}T23:59:59.999Z`);
+
+    const [shops, jobs] = await Promise.all([
+      this.prisma.shop.findMany({
+        where: { archivedAt: null },
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.printJob.findMany({
+        where: {
+          createdAt: { gte: start, lte: end },
+          paymentState: PaymentState.Paid,
+        },
+      }),
+    ]);
+
+    const jobsByShop = new Map<string, PrintJob[]>();
+    for (const job of jobs) {
+      const mapped = this.mapPrintJob(job);
+      const list = jobsByShop.get(mapped.shopId) || [];
+      list.push(mapped);
+      jobsByShop.set(mapped.shopId, list);
+    }
+
+    const rows: DailyShopEarningsRow[] = [];
+    let totalGrossCents = 0;
+    let totalNetPayoutCents = 0;
+    let totalPlatformFeeCents = 0;
+    let totalShopsWithOrders = 0;
+
+    for (const shop of shops) {
+      const shopJobs = jobsByShop.get(shop.id) || [];
+      if (shopJobs.length > 0) totalShopsWithOrders++;
+
+      const commissionBps = shop.commissionBps ?? DEFAULT_PLATFORM_FEE_BPS;
+      let grossCents = 0;
+      let gatewayFeeCents = 0;
+      let platformFeeCents = 0;
+      let netPayoutCents = 0;
+      let jobsSettled = 0;
+
+      for (const job of shopJobs) {
+        const gross = job.grossCents ?? job.totalPriceInCents ?? 0;
+        const paidOnline = wasPaidThroughGateway(job);
+        const rateUsed = job.commissionBpsUsed ?? commissionBps;
+        const hasLedger = job.gatewayFeeCents !== undefined && job.commissionBpsUsed !== undefined;
+        const derived = calculateShopNetCents(gross, rateUsed, { gatewayFeeApplies: paidOnline });
+
+        const gwFee = hasLedger
+          ? (job.gatewayFeeCents ?? 0) + (job.gatewayTaxCents ?? 0)
+          : derived.gatewayFeeCents;
+        const srvFee = derived.serviceFeeCents;
+        const net = Math.max(0, gross - gwFee - srvFee);
+
+        grossCents += gross;
+        gatewayFeeCents += gwFee;
+        platformFeeCents += srvFee;
+        netPayoutCents += net;
+
+        if (job.transferSettlementStatus === 'settled') {
+          jobsSettled++;
+        }
+      }
+
+      totalGrossCents += grossCents;
+      totalNetPayoutCents += netPayoutCents;
+      totalPlatformFeeCents += platformFeeCents;
+
+      let payoutStatus = shop.payoutStatus || 'pending';
+      if (shopJobs.length > 0) {
+        if (jobsSettled === shopJobs.length) {
+          payoutStatus = 'settled';
+        } else if (jobsSettled > 0 || shopJobs.some((j) => j.transferSettlementStatus === 'processing')) {
+          payoutStatus = 'processing';
+        } else {
+          payoutStatus = 'pending';
+        }
+      }
+
+      rows.push({
+        shopId: shop.id,
+        shopName: shop.name,
+        ownerEmail: shop.ownerEmail,
+        payoutUpi: shop.upiId || null,
+        payoutBank: shop.bankAccountNumber ? `Account ending in ${shop.bankAccountNumber.slice(-4)} (${shop.bankIfsc || ''})` : null,
+        orderCount: shopJobs.length,
+        grossCents,
+        gatewayFeeCents,
+        platformFeeCents,
+        netPayoutCents,
+        payoutStatus,
+        jobsSettled,
+        totalJobs: shopJobs.length,
+      });
+    }
+
+    rows.sort((a, b) => b.grossCents - a.grossCents);
+
+    return {
+      date,
+      summary: {
+        totalShops: shops.length,
+        totalShopsWithOrders,
+        totalGrossCents,
+        totalNetPayoutCents,
+        totalPlatformFeeCents,
+      },
+      shops: rows,
+    };
+  }
+
+  public async updateDailyPayoutStatus(
+    shopId: string,
+    date: string,
+    status: string,
+    adminActor: { id: string; email: string },
+    reference?: string,
+    notes?: string
+  ): Promise<{ updatedJobs: number; status: string }> {
+    const start = new Date(`${date}T00:00:00.000Z`);
+    const end = new Date(`${date}T23:59:59.999Z`);
+
+    const isSettled = status === 'settled' || status === 'paid';
+    const settlementStatus = isSettled ? 'settled' : status;
+
+    const updateResult = await this.prisma.printJob.updateMany({
+      where: {
+        shopId,
+        createdAt: { gte: start, lte: end },
+        paymentState: PaymentState.Paid,
+      },
+      data: {
+        transferSettlementStatus: settlementStatus,
+        ...(isSettled ? { settledAt: new Date() } : {}),
+      },
+    });
+
+    await this.prisma.shop.update({
+      where: { id: shopId },
+      data: { payoutStatus: status },
+    });
+
+    await this.recordAdminAudit({
+      actorId: adminActor.id,
+      actorEmail: adminActor.email,
+      action: 'shop.payout_status_updated',
+      targetType: 'shop',
+      targetId: shopId,
+      detail: {
+        date,
+        status,
+        settlementStatus,
+        reference: reference || null,
+        notes: notes || null,
+        jobsUpdated: updateResult.count,
+      },
+    });
+
+    return {
+      updatedJobs: updateResult.count,
+      status,
     };
   }
 

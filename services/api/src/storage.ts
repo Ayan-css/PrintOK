@@ -5,6 +5,7 @@ import {
   DEFAULT_PLAN_TIER, platformFeeFor,
   ShopContactDetails, ShopPortalConfig, DEFAULT_PORTAL_CONFIG, ShopRateCard, ShopRate,
   PrintOrientation,
+  DEFAULT_PLATFORM_FEE_BPS, calculateShopNetCents, wasPaidThroughGateway,
 } from '@printok/shared-types';
 import { S3StorageService } from './s3Storage';
 import { calculateJobPriceBreakdown, calculateGridPriceBreakdown, buildDefaultRateCard, DEFAULT_PRICING_CONFIG } from './pricing';
@@ -268,6 +269,42 @@ export interface AdminOverview {
   commissionCents: number;
   jobsRequiringAction: number;
   shopsByTier: Record<string, number>;
+}
+
+/** Platform-wide public stats for landing page & marketing */
+export interface PublicPlatformStats {
+  registeredShops: number;
+  activeShopsMonthly: number;
+}
+
+/** Daily earnings breakdown for one shop on a specific date */
+export interface DailyShopEarningsRow {
+  shopId: string;
+  shopName: string;
+  ownerEmail: string;
+  payoutUpi: string | null;
+  payoutBank: string | null;
+  orderCount: number;
+  grossCents: number;
+  gatewayFeeCents: number;
+  platformFeeCents: number;
+  netPayoutCents: number;
+  payoutStatus: string;
+  jobsSettled: number;
+  totalJobs: number;
+}
+
+/** Result of daily earnings query */
+export interface DailyShopEarningsResult {
+  date: string;
+  summary: {
+    totalShops: number;
+    totalShopsWithOrders: number;
+    totalGrossCents: number;
+    totalNetPayoutCents: number;
+    totalPlatformFeeCents: number;
+  };
+  shops: DailyShopEarningsRow[];
 }
 
 /** Outcome of one sweep for abandoned jobs (PRD 12, 13). */
@@ -675,6 +712,16 @@ export interface IStorageProvider {
   countRecentEnquiriesFrom(email: string, sinceMs: number): Promise<number>;
   listAdminAudit(limit?: number): Promise<AdminAuditEntry[]>;
   getAdminOverview(): Promise<AdminOverview>;
+  getPublicStats(): Promise<PublicPlatformStats>;
+  getDailyShopEarnings(date: string): Promise<DailyShopEarningsResult>;
+  updateDailyPayoutStatus(
+    shopId: string,
+    date: string,
+    status: string,
+    adminActor: { id: string; email: string },
+    reference?: string,
+    notes?: string
+  ): Promise<{ updatedJobs: number; status: string }>;
 
   recordHeartbeat(printerId: string, paperStatus?: string, deviceId?: string, agentVersion?: string): Promise<PrinterTelemetry>;
   getPrinterTelemetry(printerId: string): Promise<PrinterTelemetry>;
@@ -1394,6 +1441,166 @@ export class MemoryStorage implements IStorageProvider {
       jobsRequiringAction: summaries.reduce((n, s) => n + s.jobsRequiringAction, 0),
       shopsByTier,
     };
+  }
+
+  public async getPublicStats(): Promise<PublicPlatformStats> {
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const nonArchived = [...this.shops.values()].filter((s) => !this.archivedShops.has(s.id));
+    const activeShopIds = new Set(
+      [...this.printJobs.values()]
+        .filter((j) => new Date(j.createdAt).getTime() >= cutoff)
+        .map((j) => j.shopId)
+    );
+    return {
+      registeredShops: nonArchived.length,
+      activeShopsMonthly: activeShopIds.size,
+    };
+  }
+
+  public async getDailyShopEarnings(date: string): Promise<DailyShopEarningsResult> {
+    const nonArchived = [...this.shops.values()].filter((s) => !this.archivedShops.has(s.id));
+    const paidJobsOnDate = [...this.printJobs.values()].filter(
+      (j) => j.paymentState === PaymentState.Paid && j.createdAt.startsWith(date)
+    );
+
+    const jobsByShop = new Map<string, PrintJob[]>();
+    for (const job of paidJobsOnDate) {
+      const list = jobsByShop.get(job.shopId) || [];
+      list.push(job);
+      jobsByShop.set(job.shopId, list);
+    }
+
+    const rows: DailyShopEarningsRow[] = [];
+    let totalGrossCents = 0;
+    let totalNetPayoutCents = 0;
+    let totalPlatformFeeCents = 0;
+    let totalShopsWithOrders = 0;
+
+    for (const shop of nonArchived) {
+      const shopJobs = jobsByShop.get(shop.id) || [];
+      if (shopJobs.length > 0) totalShopsWithOrders++;
+
+      const plan = await this.getShopPlan(shop.id);
+      const commissionBps = plan?.commissionBps ?? DEFAULT_PLATFORM_FEE_BPS;
+
+      let grossCents = 0;
+      let gatewayFeeCents = 0;
+      let platformFeeCents = 0;
+      let netPayoutCents = 0;
+      let jobsSettled = 0;
+
+      for (const job of shopJobs) {
+        const gross = job.grossCents ?? job.totalPriceInCents ?? 0;
+        const paidOnline = wasPaidThroughGateway(job);
+        const rateUsed = job.commissionBpsUsed ?? commissionBps;
+        const hasLedger = job.gatewayFeeCents !== undefined && job.commissionBpsUsed !== undefined;
+        const derived = calculateShopNetCents(gross, rateUsed, { gatewayFeeApplies: paidOnline });
+
+        const gwFee = hasLedger
+          ? (job.gatewayFeeCents ?? 0) + (job.gatewayTaxCents ?? 0)
+          : derived.gatewayFeeCents;
+        const srvFee = derived.serviceFeeCents;
+        const net = Math.max(0, gross - gwFee - srvFee);
+
+        grossCents += gross;
+        gatewayFeeCents += gwFee;
+        platformFeeCents += srvFee;
+        netPayoutCents += net;
+
+        if (job.transferSettlementStatus === 'settled') {
+          jobsSettled++;
+        }
+      }
+
+      totalGrossCents += grossCents;
+      totalNetPayoutCents += netPayoutCents;
+      totalPlatformFeeCents += platformFeeCents;
+
+      let payoutStatus = shop.payoutStatus || 'pending';
+      if (shopJobs.length > 0) {
+        if (jobsSettled === shopJobs.length) {
+          payoutStatus = 'settled';
+        } else if (jobsSettled > 0 || shopJobs.some((j) => j.transferSettlementStatus === 'processing')) {
+          payoutStatus = 'processing';
+        } else {
+          payoutStatus = 'pending';
+        }
+      }
+
+      rows.push({
+        shopId: shop.id,
+        shopName: shop.name,
+        ownerEmail: shop.ownerEmail,
+        payoutUpi: shop.upiId || null,
+        payoutBank: shop.bankAccountNumber ? `Account ending in ${shop.bankAccountNumber.slice(-4)} (${shop.bankIfsc || ''})` : null,
+        orderCount: shopJobs.length,
+        grossCents,
+        gatewayFeeCents,
+        platformFeeCents,
+        netPayoutCents,
+        payoutStatus,
+        jobsSettled,
+        totalJobs: shopJobs.length,
+      });
+    }
+
+    rows.sort((a, b) => b.grossCents - a.grossCents);
+
+    return {
+      date,
+      summary: {
+        totalShops: nonArchived.length,
+        totalShopsWithOrders,
+        totalGrossCents,
+        totalNetPayoutCents,
+        totalPlatformFeeCents,
+      },
+      shops: rows,
+    };
+  }
+
+  public async updateDailyPayoutStatus(
+    shopId: string,
+    date: string,
+    status: string,
+    adminActor: { id: string; email: string },
+    reference?: string,
+    notes?: string
+  ): Promise<{ updatedJobs: number; status: string }> {
+    const shop = this.shops.get(shopId);
+    if (!shop) throw new Error('Shop not found.');
+
+    const isSettled = status === 'settled' || status === 'paid';
+    const settlementStatus = isSettled ? 'settled' : status;
+
+    let updatedJobs = 0;
+    for (const job of this.printJobs.values()) {
+      if (job.shopId === shopId && job.paymentState === PaymentState.Paid && job.createdAt.startsWith(date)) {
+        job.transferSettlementStatus = settlementStatus;
+        if (isSettled) job.settledAt = new Date().toISOString();
+        updatedJobs++;
+      }
+    }
+
+    shop.payoutStatus = status;
+
+    await this.recordAdminAudit({
+      actorId: adminActor.id,
+      actorEmail: adminActor.email,
+      action: 'shop.payout_status_updated',
+      targetType: 'shop',
+      targetId: shopId,
+      detail: {
+        date,
+        status,
+        settlementStatus,
+        reference: reference || null,
+        notes: notes || null,
+        jobsUpdated: updatedJobs,
+      },
+    });
+
+    return { updatedJobs, status };
   }
 
   // --- Shop lifecycle (PRD 21) ---

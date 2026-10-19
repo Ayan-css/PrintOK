@@ -257,28 +257,31 @@
     }, 1400);
   }
 
+  function animateCount(el, target) {
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduced || target === 0) {
+      el.textContent = String(target);
+      return;
+    }
+
+    const duration = 900;
+    const start = performance.now();
+    const tick = (now) => {
+      const progress = Math.min((now - start) / duration, 1);
+      el.textContent = String(Math.round(target * progress));
+      if (progress < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+
   /** Counts the hero figures up once, the first time they are scrolled into view. */
   function wireCounters() {
     const counters = [...document.querySelectorAll('[data-count-to]')];
     if (!counters.length) return;
 
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
     const run = (el) => {
       const target = Number(el.getAttribute('data-count-to')) || 0;
-      if (reduced || target === 0) {
-        el.textContent = String(target);
-        return;
-      }
-
-      const duration = 900;
-      const start = performance.now();
-      const tick = (now) => {
-        const progress = Math.min((now - start) / duration, 1);
-        el.textContent = String(Math.round(target * progress));
-        if (progress < 1) requestAnimationFrame(tick);
-      };
-      requestAnimationFrame(tick);
+      animateCount(el, target);
     };
 
     if (typeof IntersectionObserver !== 'function') {
@@ -295,6 +298,33 @@
     }, { threshold: 0.4 });
 
     counters.forEach((el) => observer.observe(el));
+  }
+
+  /**
+   * Pulls real live platform statistics directly from the database:
+   * registered shop count and 30-day active shop count. Never uses assumed figures.
+   */
+  async function loadPublicStats() {
+    const regEl = document.getElementById('statRegisteredShops');
+    const activeEl = document.getElementById('statActiveMonthlyShops');
+    if (!regEl && !activeEl) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/platform/stats`);
+      if (!res.ok) return;
+      const data = await res.json();
+
+      if (regEl && typeof data.registeredShops === 'number') {
+        regEl.setAttribute('data-count-to', String(data.registeredShops));
+        animateCount(regEl, data.registeredShops);
+      }
+      if (activeEl && typeof data.activeShopsMonthly === 'number') {
+        activeEl.setAttribute('data-count-to', String(data.activeShopsMonthly));
+        animateCount(activeEl, data.activeShopsMonthly);
+      }
+    } catch {
+      // Keeps default 0 if API is unreachable.
+    }
   }
 
   /** Reveals sections as they scroll into view. Purely decorative. */
@@ -336,6 +366,7 @@
 
   document.addEventListener('DOMContentLoaded', () => {
     loadPricing();
+    loadPublicStats();
     wireAnchors();
     wireHeroRotator();
     wireHeroFlow();

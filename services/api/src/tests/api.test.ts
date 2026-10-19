@@ -6295,6 +6295,101 @@ test('PrintOk API Endpoints Integration Test', async (t) => {
     }
   });
 
+  await t.test('129. Live platform stats pull real database counts without assumptions', async () => {
+    const res = await fetch(`${baseUrl}/api/platform/stats`);
+    assert.strictEqual(res.status, 200);
+    const body = (await res.json()) as any;
+
+    assert.strictEqual(typeof body.registeredShops, 'number');
+    assert.strictEqual(typeof body.activeShopsMonthly, 'number');
+    assert.ok(body.registeredShops >= 1, 'must count actual registered shops from storage');
+    assert.ok(body.activeShopsMonthly >= 0, 'must count active shops from storage');
+    assert.ok(body.registeredShops >= body.activeShopsMonthly, 'active cannot exceed total registered');
+
+    // /api/stats/public alias responds identically
+    const aliasRes = await fetch(`${baseUrl}/api/stats/public`);
+    assert.strictEqual(aliasRes.status, 200);
+    const aliasBody = (await aliasRes.json()) as any;
+    assert.strictEqual(aliasBody.registeredShops, body.registeredShops);
+    assert.strictEqual(aliasBody.activeShopsMonthly, body.activeShopsMonthly);
+  });
+
+  await t.test('130. Admin daily earnings inspection and payout status updates', async () => {
+    const today = new Date().toISOString().substring(0, 10);
+
+    // Unauthenticated requests are rejected
+    const unauthGet = await fetch(`${baseUrl}/api/admin/daily-earnings?date=${today}`);
+    assert.strictEqual(unauthGet.status, 401);
+
+    const unauthPost = await fetch(`${baseUrl}/api/admin/payouts/status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shopId: 'shop_1', date: today, status: 'settled' }),
+    });
+    assert.strictEqual(unauthPost.status, 401);
+
+    // Authenticate as operator
+    const admin = await (await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'ops@printok.test', password: 'CorrectHorse99x' }),
+    })).json() as any;
+    const adminAuth = { Authorization: `Bearer ${admin.token}`, 'Content-Type': 'application/json' };
+
+    // Fetch daily earnings for today
+    const earningsRes = await fetch(`${baseUrl}/api/admin/daily-earnings?date=${today}`, {
+      headers: adminAuth,
+    });
+    assert.strictEqual(earningsRes.status, 200);
+    const earningsData = (await earningsRes.json()) as any;
+
+    assert.strictEqual(earningsData.date, today);
+    assert.ok(earningsData.summary, 'includes summary');
+    assert.strictEqual(typeof earningsData.summary.totalShops, 'number');
+    assert.strictEqual(typeof earningsData.summary.totalGrossCents, 'number');
+    assert.strictEqual(typeof earningsData.summary.totalNetPayoutCents, 'number');
+    assert.ok(Array.isArray(earningsData.shops), 'includes shops array');
+
+    // Test updating payout status for a shop
+    const allShops = await storage.listAdminShopSummaries();
+    const shopToTest = earningsData.shops[0] || allShops[0];
+    assert.ok(shopToTest, 'a shop should exist from earlier suite tests');
+
+    const updateRes = await fetch(`${baseUrl}/api/admin/payouts/status`, {
+      method: 'POST',
+      headers: adminAuth,
+      body: JSON.stringify({
+        shopId: shopToTest.shopId || shopToTest.id,
+        date: today,
+        status: 'settled',
+        reference: 'UTR_TEST_12345',
+        notes: 'Settled daily batch via UPI',
+      }),
+    });
+    assert.strictEqual(updateRes.status, 200);
+    const updateBody = (await updateRes.json()) as any;
+    assert.strictEqual(updateBody.ok, true);
+    assert.strictEqual(updateBody.status, 'settled');
+
+    // Invalid status is rejected
+    const badStatusRes = await fetch(`${baseUrl}/api/admin/payouts/status`, {
+      method: 'POST',
+      headers: adminAuth,
+      body: JSON.stringify({
+        shopId: shopToTest.shopId || shopToTest.id,
+        date: today,
+        status: 'invalid_status_value',
+      }),
+    });
+    assert.strictEqual(badStatusRes.status, 400);
+
+    // Audit log records the payout status change
+    const auditRes = await fetch(`${baseUrl}/api/admin/audit`, { headers: adminAuth });
+    const auditData = (await auditRes.json()) as any;
+    const entry = (auditData.entries || []).find((e: any) => e.action === 'shop.payout_status_updated');
+    assert.ok(entry, 'audit log must contain shop.payout_status_updated');
+    assert.strictEqual(entry.targetId, shopToTest.shopId || shopToTest.id);
+  });
+
   server.close();
 });
 

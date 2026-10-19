@@ -168,6 +168,73 @@
             </table>
           </div>
         </div>
+
+        <!-- Daily Shop Earnings & Payout Status -->
+        <div class="card card--elevated admin-panel" id="panelDailyPayouts">
+          <div class="card-header admin-panel-header">
+            <div>
+              <h2 class="card-title">Daily Shop Earnings &amp; Payouts</h2>
+              <p class="meta-text">Inspect daily revenue per shop owner and update settlement/payout status.</p>
+            </div>
+            <div class="admin-panel-tools">
+              <input type="date" id="payoutFilterDate" class="form-input form-input--compact" aria-label="Select date for daily earnings">
+              <select id="payoutFilterStatus" class="form-input form-input--compact" aria-label="Filter by payout status">
+                <option value="all">All statuses</option>
+                <option value="pending">Pending</option>
+                <option value="processing">Processing</option>
+                <option value="settled">Settled / Paid</option>
+                <option value="held">Held</option>
+              </select>
+              <button class="btn btn-outline btn-sm" id="btnLoadDailyEarnings" type="button">↻ Load Day</button>
+            </div>
+          </div>
+
+          <!-- Daily totals summary banner -->
+          <div class="stat-grid" id="dailyPayoutsStatGrid" style="margin-bottom: 14px;">
+            <div class="stat-tile">
+              <div class="stat-label">Active Shops</div>
+              <div class="stat-value" id="statDailyActiveShops">0</div>
+              <div class="stat-sub" id="statDailyTotalShops">of 0 total shops</div>
+            </div>
+            <div class="stat-tile">
+              <div class="stat-label">Day Gross Volume</div>
+              <div class="stat-value" id="statDailyGross">₹0.00</div>
+              <div class="stat-sub">Paid orders on this date</div>
+            </div>
+            <div class="stat-tile stat-tile--accent">
+              <div class="stat-label">Platform Fees</div>
+              <div class="stat-value" id="statDailyFees">₹0.00</div>
+              <div class="stat-sub">PrintOk cut</div>
+            </div>
+            <div class="stat-tile">
+              <div class="stat-label">Net Shop Payouts</div>
+              <div class="stat-value" id="statDailyNetPayout">₹0.00</div>
+              <div class="stat-sub">Due to shop owners</div>
+            </div>
+          </div>
+
+          <div class="table-scroll">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th scope="col">Shop Owner</th>
+                  <th scope="col">Payout Destination</th>
+                  <th scope="col">Orders</th>
+                  <th scope="col">Gross Volume</th>
+                  <th scope="col">Gateway Fee</th>
+                  <th scope="col">PrintOk Cut</th>
+                  <th scope="col">Net Payout</th>
+                  <th scope="col">Payout Status</th>
+                  <th scope="col">Update Status</th>
+                </tr>
+              </thead>
+              <tbody id="dailyPayoutRows">
+                <tr><td colspan="9" class="meta-text" style="padding:16px;">Select a date to load daily earnings.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
         <!-- Contact enquiries -->
         <div class="card card--elevated admin-panel">
           <div class="card-header admin-panel-header">
