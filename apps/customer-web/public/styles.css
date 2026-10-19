@@ -2812,11 +2812,229 @@ body::after {
    Platform admin console
    --------------------------------------------------------------------------- */
 
-.admin-auth-view {
+/* ── Auth: shared split-panel login (admin + merchant) ───────── */
+.admin-auth-view,
+.merchant-auth-view {
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  min-height: 100dvh;
+  min-height: 100vh;
+  padding: 24px 16px;
+}
+
+.auth-split {
+  display: flex;
+  width: 100%;
+  max-width: 860px;
+  margin: auto;
+  border: var(--border);
+  box-shadow: var(--shadow-xl);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--color-surface);
+}
+
+/* ── Left: brand panel ─────────────────────────────────────── */
+.auth-brand-panel {
+  flex: 0 0 320px;
+  background: var(--color-primary);
+  color: var(--color-text-on-dark);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 40px 32px;
+  position: relative;
+  overflow: hidden;
+}
+
+.auth-brand-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 10% 90%, rgba(255,255,255,0.07) 0%, transparent 55%),
+    radial-gradient(circle at 90% 10%, rgba(255,255,255,0.04) 0%, transparent 50%),
+    repeating-linear-gradient(
+      45deg,
+      transparent 0px,
+      transparent 18px,
+      rgba(255,255,255,0.03) 18px,
+      rgba(255,255,255,0.03) 19px
+    );
+  pointer-events: none;
+}
+
+.auth-brand-panel__logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  position: relative;
+  text-decoration: none;
+  color: inherit;
+}
+
+.auth-brand-panel__logo img {
+  width: 38px;
+  height: 38px;
+  filter: brightness(0) invert(1);
+}
+
+.auth-brand-panel__logo-name {
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.auth-brand-panel__body {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-block: 36px 0;
+}
+
+.auth-brand-panel__title {
+  font-family: var(--font-display);
+  font-size: 1.45rem;
+  font-weight: 700;
+  line-height: 1.25;
+  margin: 0 0 10px;
+  letter-spacing: -0.02em;
+}
+
+.auth-brand-panel__sub {
+  font-size: 0.875rem;
+  opacity: 0.76;
+  line-height: 1.55;
+  margin: 0 0 28px;
+}
+
+.auth-brand-features {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.auth-brand-features li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.83rem;
+  opacity: 0.88;
+  line-height: 1.4;
+}
+
+.auth-brand-features li::before {
+  content: '';
+  display: inline-block;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.18)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E")
+    center / 11px 11px no-repeat;
+}
+
+.auth-brand-panel__footer {
+  position: relative;
+  font-size: 0.72rem;
+  opacity: 0.45;
+  margin-top: 28px;
+  line-height: 1.5;
+}
+
+/* ── Right: form panel ─────────────────────────────────────── */
+.auth-form-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 48px 44px;
+}
+
+.auth-form-panel__eyebrow {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-primary);
+  margin: 0 0 10px;
+}
+
+.auth-form-panel__title {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 6px;
+  color: var(--color-text-primary);
+}
+
+.auth-form-panel__sub {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  margin: 0 0 30px;
+  line-height: 1.5;
+}
+
+.auth-form-panel .form-group { margin-bottom: 18px; }
+
+.auth-form-panel__links {
+  margin-top: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.auth-form-panel__links a,
+.auth-form-panel__links p {
+  font-size: 0.84rem;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.auth-form-panel__links a { color: var(--color-primary); font-weight: 600; }
+
+/* Password field with show/hide toggle */
+.input-reveal-wrap {
+  position: relative;
+  display: flex;
+}
+
+.input-reveal-wrap .form-input { padding-right: 44px; flex: 1; }
+
+.input-reveal-btn {
+  position: absolute;
+  right: 0; top: 0; bottom: 0;
+  width: 42px;
+  background: none;
+  border: none;
+  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 70vh;
+  color: var(--color-text-muted);
+  padding: 0;
+  transition: color 120ms;
+}
+
+.input-reveal-btn:hover { color: var(--color-text-primary); }
+.input-reveal-btn .icon { width: 16px; height: 16px; }
+
+/* Collapse to single column on narrow viewports */
+@media (max-width: 640px) {
+  .auth-split { flex-direction: column; border-radius: var(--radius-md); }
+  .auth-brand-panel { flex: none; padding: 28px 24px; }
+  .auth-brand-panel__body { padding-block: 16px 0; }
+  .auth-brand-features { display: none; }
+  .auth-form-panel { padding: 32px 24px; }
 }
 
 .admin-auth-card { width: 100%; max-width: 420px; }
@@ -3602,16 +3820,6 @@ body::after {
    centring a long table would push its header off screen.
    --------------------------------------------------------------------------- */
 
-.admin-auth-view {
-  min-height: 100vh;
-  min-height: 100dvh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* Keeps the card clear of the edges on short screens. */
-  padding-block: 32px;
-}
-
 /* A short console (few shops) also reads better centred; a long one scrolls
    naturally from the top. */
 #adminConsoleView {
@@ -3622,9 +3830,6 @@ body::after {
   min-height: calc(100dvh - 76px);
 }
 
-@media (max-height: 700px) {
-  .admin-auth-view { align-items: flex-start; padding-block: 24px; }
-}
 
 /* ---------------------------------------------------------------------------
    Landing page — F3 additions
@@ -3903,19 +4108,7 @@ body::after {
   .enquiry-list { padding: 8px 16px 18px; }
 }
 
-/* Merchant sign-in gate on the dashboard */
-
-.merchant-auth-view {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 70vh;
-  min-height: 70dvh;
-  padding-block: 24px;
-}
-
-.merchant-auth-card { width: 100%; max-width: 420px; padding: 28px 26px; }
-.merchant-auth-card a { color: var(--color-primary); font-weight: 600; }
+/* Merchant sign-in gate on the dashboard — layout handled by .auth-split above */
 
 /* Document preview — reflects the print settings chosen below it */
 

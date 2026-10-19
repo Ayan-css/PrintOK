@@ -70,39 +70,65 @@
 
       <!-- SIGN IN GATE -->
       <section id="merchantLoginView" class="merchant-auth-view" hidden>
-        <div class="card card--elevated merchant-auth-card">
-          <div class="card-header" style="padding: 0 0 12px 0;">
-            <div>
-              <h1 class="card-title">Shop Sign In</h1>
-              <p class="meta-text" id="merchantAuthSubtitle">Sign in to manage your print queue.</p>
+        <div class="auth-split">
+
+          <!-- Left: brand panel -->
+          <div class="auth-brand-panel">
+            <a href="/" class="auth-brand-panel__logo" aria-label="PrintOk home">
+              <img src="/favicon.svg" alt="">
+              <span class="auth-brand-panel__logo-name">PrintOk</span>
+            </a>
+
+            <div class="auth-brand-panel__body">
+              <h2 class="auth-brand-panel__title">Your shop,<br>your queue</h2>
+              <p class="auth-brand-panel__sub">
+                Approve cash jobs, monitor your print agent, and track daily earnings — all in one place.
+              </p>
+              <ul class="auth-brand-features">
+                <li>Live print queue &amp; job approvals</li>
+                <li>Agent connectivity status</li>
+                <li>Rate card &amp; pricing control</li>
+                <li>Daily earnings &amp; payout details</li>
+              </ul>
+            </div>
+
+            <p class="auth-brand-panel__footer">Merchant console · PrintOk</p>
+          </div>
+
+          <!-- Right: sign-in form -->
+          <div class="auth-form-panel">
+            <p class="auth-form-panel__eyebrow">Merchant console</p>
+            <h1 class="auth-form-panel__title">Shop Sign In</h1>
+            <p class="auth-form-panel__sub" id="merchantAuthSubtitle">Sign in to manage your print queue.</p>
+
+            <form id="formMerchantLogin" autocomplete="on">
+              <div class="form-group">
+                <label class="form-label" for="merchantEmail">Email</label>
+                <input type="email" id="merchantEmail" class="form-input" required autocomplete="username">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="merchantPassword">Password</label>
+                <div class="input-reveal-wrap">
+                  <input type="password" id="merchantPassword" class="form-input" required autocomplete="current-password">
+                  <button type="button" class="input-reveal-btn" id="btnMerchantPasswordReveal"
+                          aria-label="Show password" aria-pressed="false">
+                    <svg class="icon" aria-hidden="true"><use href="/icons.svg#eye"/></svg>
+                  </button>
+                </div>
+              </div>
+
+              <div id="merchantAuthError" class="alert alert-danger" hidden role="alert"></div>
+
+              <button type="submit" class="btn btn-primary btn-block" id="btnMerchantLogin">Sign In</button>
+            </form>
+
+            <div class="auth-form-panel__links">
+              <p><a href="#" id="linkForgotPassword">Forgotten your password?</a></p>
+              <p>No account yet? <a href="/register">List your shop</a>.</p>
+              <p>Registered before accounts existed? <a href="#" id="linkClaimShop">Claim your shop</a>.</p>
             </div>
           </div>
 
-          <form id="formMerchantLogin" autocomplete="on">
-            <div class="form-group">
-              <label class="form-label" for="merchantEmail">Email</label>
-              <input type="email" id="merchantEmail" class="form-input" required autocomplete="username">
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="merchantPassword">Password</label>
-              <input type="password" id="merchantPassword" class="form-input" required autocomplete="current-password">
-            </div>
-
-            <div id="merchantAuthError" class="alert alert-danger" hidden role="alert"></div>
-
-            <button type="submit" class="btn btn-primary btn-block" id="btnMerchantLogin">Sign In</button>
-          </form>
-
-          <p class="meta-text" style="margin-top: 14px;">
-            <a href="#" id="linkForgotPassword">Forgotten your password?</a>
-          </p>
-          <p class="meta-text">
-            No account yet? <a href="/register">List your shop</a>.
-          </p>
-          <p class="meta-text">
-            Registered before accounts existed?
-            <a href="#" id="linkClaimShop">Claim your shop</a>.
-          </p>
         </div>
       </section>
 
@@ -114,34 +140,45 @@
         still locked out. Email delivery working is only half a recovery path.
       -->
       <section id="merchantForgotView" class="merchant-auth-view" hidden>
-        <div class="card card--elevated merchant-auth-card">
-          <div class="card-header" style="padding: 0 0 12px 0;">
-            <div>
-              <h1 class="card-title">Reset your password</h1>
-              <p class="meta-text">
-                We will email you a link. It works once and expires in 30 minutes.
-              </p>
+        <div class="auth-split">
+
+          <div class="auth-brand-panel">
+            <a href="/" class="auth-brand-panel__logo" aria-label="PrintOk home">
+              <img src="/favicon.svg" alt="">
+              <span class="auth-brand-panel__logo-name">PrintOk</span>
+            </a>
+            <div class="auth-brand-panel__body">
+              <h2 class="auth-brand-panel__title">Forgot your<br>password?</h2>
+              <p class="auth-brand-panel__sub">No worries — we'll email you a one-time link.</p>
+            </div>
+            <p class="auth-brand-panel__footer">Merchant console · PrintOk</p>
+          </div>
+
+          <div class="auth-form-panel">
+            <p class="auth-form-panel__eyebrow">Account recovery</p>
+            <h1 class="auth-form-panel__title">Reset your password</h1>
+            <p class="auth-form-panel__sub">We will email you a link. It works once and expires in 30 minutes.</p>
+
+            <form id="formForgotPassword">
+              <div class="form-group">
+                <label class="form-label" for="forgotEmail">Email</label>
+                <input type="email" id="forgotEmail" class="form-input" required autocomplete="username">
+              </div>
+              <!-- Deliberately the same message whether or not the account
+                   exists, matching the API: this form must not become a way to
+                   ask which shops are registered. -->
+              <div id="forgotNotice" class="alert alert-success" hidden role="status"></div>
+              <div id="forgotError" class="alert alert-danger" hidden role="alert"></div>
+              <button type="submit" class="btn btn-primary btn-block" id="btnForgotPassword">
+                Email me a link
+              </button>
+            </form>
+
+            <div class="auth-form-panel__links">
+              <p><a href="#" id="linkBackToLogin">Back to sign in</a></p>
             </div>
           </div>
 
-          <form id="formForgotPassword">
-            <div class="form-group">
-              <label class="form-label" for="forgotEmail">Email</label>
-              <input type="email" id="forgotEmail" class="form-input" required autocomplete="username">
-            </div>
-            <!-- Deliberately the same message whether or not the account
-                 exists, matching the API: this form must not become a way to
-                 ask which shops are registered. -->
-            <div id="forgotNotice" class="alert alert-success" hidden role="status"></div>
-            <div id="forgotError" class="alert alert-danger" hidden role="alert"></div>
-            <button type="submit" class="btn btn-primary btn-block" id="btnForgotPassword">
-              Email me a link
-            </button>
-          </form>
-
-          <p class="meta-text" style="margin-top: 14px;">
-            <a href="#" id="linkBackToLogin">Back to sign in</a>
-          </p>
         </div>
       </section>
 
@@ -151,33 +188,54 @@
         link landed on the sign-in screen and appeared to do nothing at all.
       -->
       <section id="merchantResetView" class="merchant-auth-view" hidden>
-        <div class="card card--elevated merchant-auth-card">
-          <div class="card-header" style="padding: 0 0 12px 0;">
-            <div>
-              <h1 class="card-title">Choose a new password</h1>
-              <p class="meta-text">At least 12 characters.</p>
+        <div class="auth-split">
+
+          <div class="auth-brand-panel">
+            <a href="/" class="auth-brand-panel__logo" aria-label="PrintOk home">
+              <img src="/favicon.svg" alt="">
+              <span class="auth-brand-panel__logo-name">PrintOk</span>
+            </a>
+            <div class="auth-brand-panel__body">
+              <h2 class="auth-brand-panel__title">Choose a<br>new password</h2>
+              <p class="auth-brand-panel__sub">At least 12 characters. Make it strong.</p>
             </div>
+            <p class="auth-brand-panel__footer">Merchant console · PrintOk</p>
           </div>
 
-          <form id="formResetPassword">
-            <div class="form-group">
-              <label class="form-label" for="resetPassword">New password</label>
-              <input type="password" id="resetPassword" class="form-input" required
-                     autocomplete="new-password" minlength="12">
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="resetPasswordConfirm">Repeat it</label>
-              <input type="password" id="resetPasswordConfirm" class="form-input" required
-                     autocomplete="new-password" minlength="12">
-            </div>
-            <div id="resetNotice" class="alert alert-success" hidden role="status"></div>
-            <div id="resetError" class="alert alert-danger" hidden role="alert"></div>
-            <button type="submit" class="btn btn-primary btn-block" id="btnResetPassword">
-              Set new password
-            </button>
-          </form>
+
+          <div class="auth-form-panel">
+            <p class="auth-form-panel__eyebrow">Account recovery</p>
+            <h1 class="auth-form-panel__title">Choose a new password</h1>
+            <p class="auth-form-panel__sub">At least 12 characters. Don't reuse old passwords.</p>
+
+            <form id="formResetPassword">
+              <div class="form-group">
+                <label class="form-label" for="resetPassword">New password</label>
+                <div class="input-reveal-wrap">
+                  <input type="password" id="resetPassword" class="form-input" required
+                         autocomplete="new-password" minlength="12">
+                  <button type="button" class="input-reveal-btn" id="btnResetPasswordReveal"
+                          aria-label="Show password" aria-pressed="false">
+                    <svg class="icon" aria-hidden="true"><use href="/icons.svg#eye"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="resetPasswordConfirm">Repeat it</label>
+                <input type="password" id="resetPasswordConfirm" class="form-input" required
+                       autocomplete="new-password" minlength="12">
+              </div>
+              <div id="resetNotice" class="alert alert-success" hidden role="status"></div>
+              <div id="resetError" class="alert alert-danger" hidden role="alert"></div>
+              <button type="submit" class="btn btn-primary btn-block" id="btnResetPassword">
+                Set new password
+              </button>
+            </form>
+          </div>
+
         </div>
       </section>
+
 
       <div id="dashboardView" hidden>
       <!-- GLOBAL TOP NAVIGATION BAR -->

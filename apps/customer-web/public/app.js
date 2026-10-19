@@ -9,7 +9,26 @@ document.addEventListener('DOMContentLoaded', () => {
       ? 'http://localhost:4000'
       : 'https://prinok-api.onrender.com');
 
+  /** Toggle a password field between masked and readable, update icon + aria. */
+  function wirePasswordReveal(btnId, inputId) {
+    const btn = document.getElementById(btnId);
+    const input = document.getElementById(inputId);
+    if (!btn || !input) return;
+    btn.addEventListener('click', () => {
+      const showing = input.type === 'text';
+      input.type = showing ? 'password' : 'text';
+      btn.setAttribute('aria-pressed', String(!showing));
+      btn.setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
+      const use = btn.querySelector('use');
+      if (use) use.setAttribute('href', showing ? '/icons.svg#eye' : '/icons.svg#eye-off');
+    });
+  }
+
+  wirePasswordReveal('btnMerchantPasswordReveal', 'merchantPassword');
+  wirePasswordReveal('btnResetPasswordReveal', 'resetPassword');
+
   /**
+
    * Loads a third-party script the first time it is actually needed.
    *
    * pdf.js is about 340KB and Razorpay's checkout another chunk on top, and

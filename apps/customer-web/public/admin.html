@@ -34,35 +34,67 @@
 
       <!-- SIGN IN -->
       <section id="adminAuthView" class="admin-auth-view">
-        <div class="card card--elevated admin-auth-card">
-          <div class="card-header" style="padding: 0 0 12px 0;">
-            <div>
-              <h1 class="card-title">PrintOk Platform Admin</h1>
-              <p class="meta-text" id="adminAuthSubtitle">Sign in to view the shop network.</p>
+        <div class="auth-split">
+
+          <!-- Left: brand context -->
+          <div class="auth-brand-panel">
+            <a href="/" class="auth-brand-panel__logo" aria-label="PrintOk home">
+              <img src="/favicon.svg" alt="">
+              <span class="auth-brand-panel__logo-name">PrintOk</span>
+            </a>
+
+            <div class="auth-brand-panel__body">
+              <h2 class="auth-brand-panel__title">Platform<br>Operations</h2>
+              <p class="auth-brand-panel__sub">
+                Full visibility into the shop network, payout flows, and live print jobs.
+              </p>
+              <ul class="auth-brand-features">
+                <li>Shop fleet &amp; registration oversight</li>
+                <li>Daily earnings &amp; payout tracking</li>
+                <li>Live job queue monitoring</li>
+                <li>Audit log &amp; admin actions</li>
+              </ul>
             </div>
+
+            <p class="auth-brand-panel__footer">Restricted access — operators only</p>
           </div>
 
-          <form id="formAdminAuth" autocomplete="on">
-            <div class="form-group">
-              <label class="form-label" for="adminEmail">Email</label>
-              <input type="email" id="adminEmail" class="form-input" required autocomplete="username">
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="adminPassword">Password</label>
-              <input type="password" id="adminPassword" class="form-input" required
-                     autocomplete="current-password" minlength="8">
-            </div>
-            <div class="form-group" id="adminNameGroup" hidden>
-              <label class="form-label" for="adminName">Your name</label>
-              <input type="text" id="adminName" class="form-input" autocomplete="name">
-            </div>
+          <!-- Right: form -->
+          <div class="auth-form-panel">
+            <p class="auth-form-panel__eyebrow">Admin console</p>
+            <h1 class="auth-form-panel__title" id="adminAuthSubtitle">Sign in</h1>
+            <p class="auth-form-panel__sub">Use your PrintOk operator credentials.</p>
 
-            <div id="adminAuthError" class="alert alert-danger" hidden role="alert"></div>
+            <form id="formAdminAuth" autocomplete="on">
+              <div class="form-group">
+                <label class="form-label" for="adminEmail">Email</label>
+                <input type="email" id="adminEmail" class="form-input" required autocomplete="username">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="adminPassword">Password</label>
+                <div class="input-reveal-wrap">
+                  <input type="password" id="adminPassword" class="form-input" required
+                         autocomplete="current-password" minlength="8">
+                  <button type="button" class="input-reveal-btn" id="btnAdminPasswordReveal"
+                          aria-label="Show password" aria-pressed="false">
+                    <svg class="icon" aria-hidden="true"><use href="/icons.svg#eye"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="form-group" id="adminNameGroup" hidden>
+                <label class="form-label" for="adminName">Your name</label>
+                <input type="text" id="adminName" class="form-input" autocomplete="name">
+              </div>
 
-            <button type="submit" class="btn btn-primary btn-block" id="btnAdminAuth">Sign In</button>
-          </form>
+              <div id="adminAuthError" class="alert alert-danger" hidden role="alert"></div>
+
+              <button type="submit" class="btn btn-primary btn-block" id="btnAdminAuth">Sign In</button>
+            </form>
+          </div>
+
         </div>
       </section>
+
 
       <!-- CONSOLE -->
       <section id="adminConsoleView" hidden>

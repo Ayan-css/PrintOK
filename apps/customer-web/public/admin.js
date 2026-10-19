@@ -99,14 +99,32 @@
     }
 
     if (isBootstrapMode) {
-      $('adminAuthSubtitle').textContent =
-        'No administrator exists yet. Create the first account — this form closes permanently afterwards.';
+      $('adminAuthSubtitle').textContent = 'Create administrator';
+      $('adminAuthSubtitle').nextElementSibling &&
+        ($('adminAuthSubtitle').nextElementSibling.textContent =
+          'No administrator exists yet. This form closes permanently afterwards.');
       $('btnAdminAuth').textContent = 'Create Administrator';
       $('adminNameGroup').hidden = false;
       $('adminPassword').setAttribute('autocomplete', 'new-password');
       $('adminPassword').setAttribute('minlength', '12');
     }
   }
+
+  /** Toggle password field visibility and update the eye icon + aria state. */
+  function wirePasswordReveal(btnId, inputId) {
+    const btn = $(btnId);
+    const input = $(inputId);
+    if (!btn || !input) return;
+    btn.addEventListener('click', () => {
+      const showing = input.type === 'text';
+      input.type = showing ? 'password' : 'text';
+      btn.setAttribute('aria-pressed', String(!showing));
+      btn.setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
+      const use = btn.querySelector('use');
+      if (use) use.setAttribute('href', showing ? '/icons.svg#eye' : '/icons.svg#eye-off');
+    });
+  }
+
 
   // --------------------------------------------------------------- console ---
 
@@ -678,6 +696,7 @@
 
   document.addEventListener('DOMContentLoaded', async () => {
     await detectMode();
+    wirePasswordReveal('btnAdminPasswordReveal', 'adminPassword');
 
     if (getToken()) {
       try {
