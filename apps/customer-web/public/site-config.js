@@ -14,7 +14,7 @@
   'use strict';
 
   var SUPPORT = {
-    email: 'ayan48311@gmail.com',
+    email: 'support@printok.store',
     phone: '',
   };
 
