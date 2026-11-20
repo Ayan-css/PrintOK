@@ -1,11 +1,5 @@
-/registration   /register.html  301
+# Dynamic QR poster scan routes
 /p/*            /print.html     200
-/admin          /admin.html     200
-/register       /register.html  200
-/dashboard      /dashboard.html 200
-/print          /print.html     200
-/privacy        /privacy.html   200
-/terms          /terms.html     200
-/refund         /refund.html    200
-/contact        /contact.html   200
-/setup          /setup.html     200
+
+# Legacy registration route redirect
+/registration   /register       301
