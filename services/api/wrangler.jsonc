@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "printok-api",
+  "main": "dist/worker.js",
+  "compatibility_date": "2024-11-01",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "triggers": {
+    "crons": [
+      // Runs every minute to reclaim stale jobs and purge abandoned customer documents
+      "* * * * *"
+    ]
+  },
+  "vars": {
+    "NODE_ENV": "production",
+    "S3_REGION": "auto"
+  }
+  // To bind Cloudflare Hyperdrive for pooled PostgreSQL connections:
+  // "hyperdrive": [
+  //   {
+  //     "binding": "HYPERDRIVE",
+  //     "id": "<YOUR_HYPERDRIVE_ID>"
+  //   }
+  // ]
+}

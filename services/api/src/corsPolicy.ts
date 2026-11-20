@@ -30,15 +30,17 @@ const DEFAULT_ORIGINS = [
   'https://www.printok.store',
   'https://printok.vercel.app',
   'https://print-ok-customer-web.vercel.app',
+  'https://printok.pages.dev',
 ];
 
 /**
- * Vercel preview and branch deployments of this project.
+ * Cloudflare Pages and Vercel preview and branch deployments of this project.
  *
  * Anchored at both ends and restricted to this project's prefixes, so it
  * cannot be satisfied by an attacker registering, say,
- * `printok.vercel.app.evil.com`.
+ * `printok.pages.dev.evil.com`.
  */
+const CLOUDFLARE_PAGES = /^https:\/\/(printok|print-ok)[a-z0-9-]*\.pages\.dev$/;
 const VERCEL_PREVIEW = /^https:\/\/(printok|print-ok-customer)[a-z0-9-]*\.vercel\.app$/;
 
 const LOCALHOST = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d{1,5})?$/;
@@ -59,6 +61,7 @@ export function isOriginAllowed(origin: string | undefined): boolean {
   if (!origin) return true;
 
   if (allowedOrigins().includes(origin)) return true;
+  if (CLOUDFLARE_PAGES.test(origin)) return true;
   if (VERCEL_PREVIEW.test(origin)) return true;
   if (LOCALHOST.test(origin)) return true;
 
