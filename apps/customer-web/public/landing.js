@@ -2,7 +2,7 @@
   'use strict';
 
   const API_BASE = window.PRINTOK_API_BASE
-    || (location.hostname === 'localhost' ? 'http://localhost:4000' : 'https://prinok-api.onrender.com');
+    || (location.hostname === 'localhost' ? 'http://localhost:4000' : 'https://api.printok.store');
 
   // ===========================================================================
   // CONTACT EMAIL

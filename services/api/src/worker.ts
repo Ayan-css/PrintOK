@@ -2,6 +2,7 @@ import './polyfills';
 import { createServer } from 'node:http';
 import { httpServerHandler } from 'cloudflare:node';
 import { createApp } from './app';
+import { PrismaStorage } from './prismaStorage';
 import { IStorageProvider, MemoryStorage } from './storage';
 
 export interface CloudflareEnv {
@@ -29,49 +30,48 @@ export interface CloudflareEnv {
   [key: string]: any;
 }
 
-let cachedHandler: any = null;
-let cachedStorage: IStorageProvider | null = null;
+// Lazy delegating storage provider so Express and server can be initialized
+// synchronously at module scope while allowing runtime DATABASE_URL injection
+let actualStorage: IStorageProvider | null = null;
+
+function getStorageInstance(): IStorageProvider {
+  if (!actualStorage) {
+    if (process.env.DATABASE_URL) {
+      actualStorage = new PrismaStorage();
+      console.log('[PrintOk Worker] Using PostgreSQL (Prisma) storage provider.');
+    } else {
+      actualStorage = new MemoryStorage();
+      console.warn('[PrintOk Worker] DATABASE_URL not set — using in-memory storage fallback.');
+    }
+  }
+  return actualStorage;
+}
+
+const delegatingStorage: IStorageProvider = new Proxy({} as IStorageProvider, {
+  get(_target, prop) {
+    const instance = getStorageInstance() as any;
+    const value = instance[prop];
+    return typeof value === 'function' ? value.bind(instance) : value;
+  },
+});
+
+// Initialize Express app and bind virtual internal port at module scope
+const app = createApp(delegatingStorage);
+const server = createServer(app);
+server.listen(8080);
+
+const nodeHttpHandler = httpServerHandler({ port: 8080 });
 
 function syncEnv(env: CloudflareEnv): void {
+  if (!env) return;
   for (const [key, value] of Object.entries(env)) {
-    if (typeof value === 'string' && !process.env[key]) {
+    if (typeof value === 'string') {
       process.env[key] = value;
     }
   }
-
-  // If Hyperdrive is configured, route DATABASE_URL through its pooled connection
   if (env.HYPERDRIVE?.connectionString) {
     process.env.DATABASE_URL = env.HYPERDRIVE.connectionString;
   }
-}
-
-async function getStorage(): Promise<IStorageProvider> {
-  if (cachedStorage) return cachedStorage;
-
-  if (process.env.DATABASE_URL) {
-    const { PrismaStorage } = await import('./prismaStorage');
-    cachedStorage = new PrismaStorage();
-    console.log('[PrintOk Worker] Using PostgreSQL (Prisma) storage provider.');
-  } else {
-    cachedStorage = new MemoryStorage();
-    console.warn('[PrintOk Worker] DATABASE_URL not set — using in-memory storage fallback.');
-  }
-
-  return cachedStorage;
-}
-
-async function getHandler(env: CloudflareEnv): Promise<any> {
-  if (cachedHandler) return cachedHandler;
-
-  syncEnv(env);
-  const storage = await getStorage();
-  const app = createApp(storage);
-
-  const server = createServer(app);
-  server.listen(3000);
-
-  cachedHandler = httpServerHandler(server);
-  return cachedHandler;
 }
 
 export default {
@@ -79,8 +79,22 @@ export default {
    * Handle incoming HTTP requests via Cloudflare Workers
    */
   async fetch(request: any, env: CloudflareEnv, ctx: any): Promise<any> {
-    const handler = await getHandler(env);
-    return handler.fetch(request, env, ctx);
+    try {
+      syncEnv(env);
+      return await nodeHttpHandler.fetch(request, env, ctx);
+    } catch (err: any) {
+      console.error('[PrintOk Worker Fetch Error]', err);
+      return new Response(
+        JSON.stringify({
+          error: err?.message || String(err),
+          stack: err?.stack,
+        }, null, 2),
+        {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    }
   },
 
   /**
@@ -89,7 +103,7 @@ export default {
    */
   async scheduled(event: any, env: CloudflareEnv, ctx: any): Promise<void> {
     syncEnv(env);
-    const storage = await getStorage();
+    const storage = getStorageInstance();
 
     ctx.waitUntil(
       (async () => {

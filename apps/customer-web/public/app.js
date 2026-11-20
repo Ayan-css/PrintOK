@@ -7,7 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const API_BASE = window.PRINTOK_API_BASE
     || ((window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
       ? 'http://localhost:4000'
-      : 'https://prinok-api.onrender.com');
+      : 'https://api.printok.store');
 
   /** Toggle a password field between masked and readable, update icon + aria. */
   function wirePasswordReveal(btnId, inputId) {

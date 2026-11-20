@@ -24,7 +24,7 @@
     // otherwise. A relative path would hit Vercel, which serves no API.
     const host = window.location.hostname;
     if (host === 'localhost' || host === '127.0.0.1') return 'http://localhost:4000';
-    return 'https://prinok-api.onrender.com';
+    return 'https://api.printok.store';
   })();
 
   // These must match app.js exactly. They are separate scripts with no shared
