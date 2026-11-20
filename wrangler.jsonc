@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "printok-api",
+  "main": "services/api/dist/worker.js",
+  "compatibility_date": "2024-11-01",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "triggers": {
+    "crons": [
+      // Sweeps stale jobs and purges abandoned customer documents every minute
+      "* * * * *"
+    ]
+  },
+  "vars": {
+    "NODE_ENV": "production",
+    "S3_REGION": "auto"
+  }
+}

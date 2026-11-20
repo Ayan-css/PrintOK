@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "echo \"Run specific app/service dev server\"",
     "build": "npm run build --workspace=@printok/shared-types && npm run build --workspace=@printok/api",
+    "deploy": "wrangler deploy",
     "test": "npm test --workspace=@printok/api",
     "lint": "echo \"Running linter...\"",
     "graphify": "graphify ."
