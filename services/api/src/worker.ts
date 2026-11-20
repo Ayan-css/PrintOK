@@ -1,3 +1,4 @@
+import './polyfills';
 import { createServer } from 'node:http';
 import { httpServerHandler } from 'cloudflare:node';
 import { createApp } from './app';

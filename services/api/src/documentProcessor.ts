@@ -1,9 +1,10 @@
+import './polyfills';
+
 // pdf-parse v2 exports a class. v1 exported a callable, and this file called it
 // as one — `await pdfParse(buffer)` threw TypeError on every single PDF, the
 // catch below swallowed it, and every document in the system was counted as one
 // page. A fifty-page thesis was billed as one page and printed as fifty, so the
 // shop paid for the paper out of its own pocket on every large order.
-const { PDFParse } = require('pdf-parse');
 
 export interface ProcessedDocument {
   pageCount: number;
@@ -251,6 +252,7 @@ function getExtension(fileName: string): string {
 async function countPdfPages(fileBuffer: Buffer): Promise<number> {
   let parser: any;
   try {
+    const { PDFParse } = require('pdf-parse');
     parser = new PDFParse({ data: new Uint8Array(fileBuffer) });
     const info = await parser.getInfo();
     const total = Number(info?.total);
