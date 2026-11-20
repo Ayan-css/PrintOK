@@ -7,7 +7,7 @@
     "build": "tsc",
     "clean": "rm -rf dist"
   },
-  "devDependencies": {
+  "dependencies": {
     "typescript": "^5.0.0"
   }
 }

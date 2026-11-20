@@ -22,7 +22,7 @@
   ],
   "author": "PrintOk Team",
   "license": "MIT",
-  "devDependencies": {
-    "typescript": "^7.0.2"
+  "dependencies": {
+    "typescript": "^5.0.0"
   }
 }
