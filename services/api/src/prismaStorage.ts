@@ -61,9 +61,18 @@ export class PrismaStorage implements IStorageProvider {
         const cleanConnectionString = connectionString
           .replace(/([?&])sslmode=[^&]+(&|$)/, '$1')
           .replace(/[?&]$/, '');
+        let servername: string | undefined;
+        try {
+          const parsed = new URL(cleanConnectionString.replace(/^postgres(ql)?:\/\//, 'http://'));
+          servername = parsed.hostname;
+        } catch {}
+
         const pool = new Pool({
           connectionString: cleanConnectionString,
-          ssl: isLocal ? undefined : { rejectUnauthorized: false },
+          ssl: isLocal ? undefined : {
+            rejectUnauthorized: false,
+            ...(servername ? { servername } : {}),
+          },
           max: 1,
           idleTimeoutMillis: 1000,
           connectionTimeoutMillis: 10000,
