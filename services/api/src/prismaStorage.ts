@@ -1,5 +1,7 @@
 import crypto from 'crypto';
 import { PrismaClient, Prisma } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { Pool } from 'pg';
 import {
   Shop, Printer, PrintJob, PaymentState, PrintState, PrinterTelemetry,
   MerchantPricingConfig, MerchantStats, JobEvent, PriceSnapshot, PrintConfigSnapshot,
@@ -46,8 +48,27 @@ const HEARTBEAT_ONLINE_WINDOW_MS = 45_000;
 const ADMIN_BOOTSTRAP_LOCK_KEY = 828_141_001;
 
 export class PrismaStorage implements IStorageProvider {
-  private prisma = new PrismaClient();
+  private prisma: PrismaClient;
   private s3Service = new S3StorageService();
+
+  constructor(prismaClient?: PrismaClient) {
+    if (prismaClient) {
+      this.prisma = prismaClient;
+    } else {
+      const connectionString = process.env.DATABASE_URL || process.env.DIRECT_URL;
+      if (connectionString) {
+        const isLocal = connectionString.includes('localhost') || connectionString.includes('127.0.0.1') || connectionString.includes('sslmode=disable');
+        const pool = new Pool({
+          connectionString,
+          ssl: isLocal ? undefined : { rejectUnauthorized: false },
+        });
+        const adapter = new PrismaPg(pool);
+        this.prisma = new PrismaClient({ adapter });
+      } else {
+        this.prisma = new PrismaClient();
+      }
+    }
+  }
 
   public calculateChecksum(content: string | Buffer): string {
     return crypto.createHash('sha256').update(content).digest('hex');

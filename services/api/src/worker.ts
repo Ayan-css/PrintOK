@@ -76,6 +76,10 @@ function syncEnv(env: CloudflareEnv): void {
       process.env[key] = value;
     }
   }
+  // Fallback DATABASE_URL to DIRECT_URL if only DIRECT_URL was configured
+  if (!process.env.DATABASE_URL && process.env.DIRECT_URL) {
+    process.env.DATABASE_URL = process.env.DIRECT_URL;
+  }
   // Hyperdrive overrides DATABASE_URL with a pooled connection string
   if (env.HYPERDRIVE?.connectionString) {
     process.env.DATABASE_URL = env.HYPERDRIVE.connectionString;
@@ -126,7 +130,8 @@ function fetchToExpress(request: Request): Promise<Response> {
       for (const [k, v] of Object.entries(resHeaders)) {
         hdrs[k] = Array.isArray(v) ? v.join(', ') : v;
       }
-      resolve(new Response(body.length ? body : null, { status: statusCode, headers: hdrs }));
+      const finalStatus = res.statusCode || statusCode || 200;
+      resolve(new Response(body.length ? body : null, { status: finalStatus, headers: hdrs }));
     }
 
     const res: any = {
