@@ -2,7 +2,9 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "printok",
   "main": "services/api/src/worker.ts",
-  "compatibility_date": "2024-11-01",
+  // compatibility_date controls which CF runtime APIs are available.
+  // 2025-01-01 enables nodejs_compat_v2 feature set (fuller Node.js polyfills).
+  "compatibility_date": "2025-01-01",
   "compatibility_flags": [
     "nodejs_compat"
   ],
