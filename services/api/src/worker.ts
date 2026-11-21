@@ -31,23 +31,20 @@ export interface CloudflareEnv {
 }
 
 // ---------------------------------------------------------------------------
-// Lazy delegating storage — Express app is created at module scope (no port
-// binding needed), but the actual storage driver is only resolved on the
-// first request, after syncEnv() has injected DATABASE_URL.
-// ---------------------------------------------------------------------------
-let actualStorage: IStorageProvider | null = null;
+// Per-request storage instance: Cloudflare Workers isolates freeze between
+// requests, which renders persistent TCP sockets stale. Scoping storage per-request
+// ensures clean database connections on every invocation.
+let currentStorage: IStorageProvider | null = null;
 
 function getStorageInstance(): IStorageProvider {
-  if (!actualStorage) {
+  if (!currentStorage) {
     if (process.env.DATABASE_URL) {
-      actualStorage = new PrismaStorage();
-      console.log('[PrintOk Worker] Using PostgreSQL (Prisma) storage provider.');
+      currentStorage = new PrismaStorage();
     } else {
-      actualStorage = new MemoryStorage();
-      console.warn('[PrintOk Worker] DATABASE_URL not set — using in-memory storage fallback.');
+      currentStorage = new MemoryStorage();
     }
   }
-  return actualStorage;
+  return currentStorage;
 }
 
 const delegatingStorage: IStorageProvider = new Proxy({} as IStorageProvider, {
@@ -223,6 +220,7 @@ export default {
   async fetch(request: Request, env: CloudflareEnv, _ctx: any): Promise<Response> {
     try {
       syncEnv(env);
+      currentStorage = null; // Fresh storage per request
       return await fetchToExpress(request);
     } catch (err: any) {
       console.error('[PrintOk Worker] Unhandled fetch error:', err);
@@ -230,6 +228,8 @@ export default {
         JSON.stringify({ error: err?.message ?? String(err) }),
         { status: 500, headers: { 'Content-Type': 'application/json' } },
       );
+    } finally {
+      currentStorage = null;
     }
   },
 

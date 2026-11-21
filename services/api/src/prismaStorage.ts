@@ -64,6 +64,12 @@ export class PrismaStorage implements IStorageProvider {
         const pool = new Pool({
           connectionString: cleanConnectionString,
           ssl: isLocal ? undefined : { rejectUnauthorized: false },
+          max: 1,
+          idleTimeoutMillis: 1000,
+          connectionTimeoutMillis: 10000,
+        });
+        pool.on('error', (err) => {
+          console.warn('[PrismaStorage pg.Pool error]:', err?.message || err);
         });
         const adapter = new PrismaPg(pool);
         this.prisma = new PrismaClient({ adapter });

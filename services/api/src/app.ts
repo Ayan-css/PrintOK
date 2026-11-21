@@ -767,23 +767,32 @@ export function createApp(
   // Health Check Endpoint.
   // Reports the running build so a deploy can actually be verified from outside;
   // a static 200 cannot distinguish a new release from the previous one.
-  app.get('/health', (req: Request, res: Response) => {
-    // Readiness, not just liveness. /health answered 'ok' while the API was
-    // running on in-memory storage with every shop, job and payment living
-    // until the next restart — a missing environment variable looked exactly
-    // like a healthy deploy. Boot now refuses that in production, and this
-    // says which backend is actually in use so the two cannot disagree.
+  app.get('/health', async (req: Request, res: Response) => {
     const durable = Boolean(process.env.DATABASE_URL);
+    let dbStatus = 'untested';
+    let dbError: string | null = null;
+    let dbTarget = 'none';
+
+    if (durable) {
+      try {
+        const rawUrl = process.env.DATABASE_URL || '';
+        const atParts = rawUrl.split('@');
+        dbTarget = atParts.length > 1 ? atParts[1].split('?')[0] : 'configured';
+        await storage.countAdminUsers();
+        dbStatus = 'connected';
+      } catch (e: any) {
+        dbStatus = 'error';
+        dbError = e?.message || String(e);
+      }
+    }
 
     res.json({
-      status: durable ? 'ok' : 'degraded',
+      status: durable && dbStatus === 'connected' ? 'ok' : 'degraded',
       storage: durable ? 'postgres' : 'memory',
-      // Not a failure: mail is optional to run, and not optional to recover an
-      // account. Named so an operator sees it before a shop owner does.
+      db: { status: dbStatus, target: dbTarget, error: dbError },
       email: { canSend: emailService.canSend, provider: emailService.providerName },
       service: 'PrintOk API',
       version: process.env.npm_package_version || 'unknown',
-      // Render exposes the deployed commit; other hosts may not.
       commit: (process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || 'unknown').slice(0, 7),
       startedAt: BOOT_TIME,
       timestamp: new Date().toISOString(),
