@@ -58,8 +58,11 @@ export class PrismaStorage implements IStorageProvider {
       const connectionString = process.env.DATABASE_URL || process.env.DIRECT_URL;
       if (connectionString) {
         const isLocal = connectionString.includes('localhost') || connectionString.includes('127.0.0.1') || connectionString.includes('sslmode=disable');
+        const cleanConnectionString = connectionString
+          .replace(/([?&])sslmode=[^&]+(&|$)/, '$1')
+          .replace(/[?&]$/, '');
         const pool = new Pool({
-          connectionString,
+          connectionString: cleanConnectionString,
           ssl: isLocal ? undefined : { rejectUnauthorized: false },
         });
         const adapter = new PrismaPg(pool);
